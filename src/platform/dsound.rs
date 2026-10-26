@@ -3,11 +3,12 @@
 //! Sample data stays in guest memory (the game writes it through `Lock`); the mixer reads it
 //! from the audio thread. Play positions advance in real time with the output, so the music,
 //! which the game streams into a looping buffer behind the play cursor, keeps going. Without
-//! an audio device a timer thread advances them instead.
+//! an audio device a timer thread advances them instead. A stream of host samples (`stream_*`)
+//! carries the videos' sound.
 
 use super::{Import, ResId, alloc, arg, com_new, cstr, free, guest_call, host_path, log, mem, new_cstr, resource};
 use crate::rt::Cpu;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
 
@@ -136,11 +137,82 @@ struct Mixer {
     data_refs: BTreeMap<u32, u32>,
     /// the PlaySoundA sound
     wave: Option<Voice>,
+    /// a video's sound
+    stream: Option<Stream>,
     out_rate: u32,
     started: bool,
 }
 
-static MIX: Mutex<Mixer> = Mutex::new(Mixer { voices: BTreeMap::new(), data_refs: BTreeMap::new(), wave: None, out_rate: 44100, started: false });
+static MIX: Mutex<Mixer> =
+    Mutex::new(Mixer { voices: BTreeMap::new(), data_refs: BTreeMap::new(), wave: None, stream: None, out_rate: 44100, started: false });
+
+/// Samples the host gives (a video's sound), played once.
+struct Stream {
+    queue: VecDeque<[f32; 2]>,
+    rate: u32,
+    /// position between the first two queued frames
+    frac: f64,
+    /// frames taken from the queue
+    played: u64,
+    gain: f32,
+    paused: bool,
+}
+
+impl Stream {
+    fn mix(&mut self, out: &mut [[f32; 2]], out_rate: u32) {
+        if self.paused {
+            return;
+        }
+        let step = self.rate as f64 / out_rate as f64;
+        for o in out.iter_mut() {
+            let (Some(a), b) = (self.queue.front().copied(), self.queue.get(1).copied()) else { break };
+            let b = b.unwrap_or(a);
+            let f = self.frac as f32;
+            o[0] += (a[0] + (b[0] - a[0]) * f) * self.gain;
+            o[1] += (a[1] + (b[1] - a[1]) * f) * self.gain;
+            self.frac += step;
+            while self.frac >= 1.0 && !self.queue.is_empty() {
+                self.frac -= 1.0;
+                self.queue.pop_front();
+                self.played += 1;
+            }
+        }
+    }
+}
+
+/// Start a stream of host samples at `rate` (replaces one playing).
+pub fn stream_start(rate: u32) {
+    mixer().stream = Some(Stream { queue: VecDeque::new(), rate: rate.max(1), frac: 0.0, played: 0, gain: 1.0, paused: false });
+}
+
+/// Queue samples for the stream.
+pub fn stream_push(frames: &[[f32; 2]]) {
+    if let Some(s) = &mut mixer().stream {
+        s.queue.extend(frames);
+    }
+}
+
+/// Frames queued and not played yet, and frames played since the start.
+pub fn stream_state() -> (usize, u64) {
+    mixer().stream.as_ref().map_or((0, 0), |s| (s.queue.len(), s.played))
+}
+
+/// The stream's volume in hundredths of a dB (0 full, -10000 silent).
+pub fn stream_volume(v: i32) {
+    if let Some(s) = &mut mixer().stream {
+        s.gain = 10f32.powf(v.clamp(-10000, 0) as f32 / 2000.0);
+    }
+}
+
+pub fn stream_pause(paused: bool) {
+    if let Some(s) = &mut mixer().stream {
+        s.paused = paused;
+    }
+}
+
+pub fn stream_stop() {
+    mixer().stream = None;
+}
 
 fn mixer() -> MutexGuard<'static, Mixer> {
     let mut m = MIX.lock().unwrap_or_else(|e| e.into_inner());
@@ -166,6 +238,9 @@ impl Mixer {
             if !w.playing {
                 self.wave = None;
             }
+        }
+        if let Some(s) = &mut self.stream {
+            s.mix(out, rate);
         }
     }
 }

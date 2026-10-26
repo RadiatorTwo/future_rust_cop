@@ -10,6 +10,7 @@ pub mod advapi32;
 pub mod ddraw;
 pub mod dialog;
 pub mod display;
+pub mod dshow;
 pub mod dsound;
 pub mod gdi32;
 pub mod gl;
@@ -534,6 +535,7 @@ fn find_import(dll: &str, name: &str) -> Option<&'static Import> {
         "DDRAW.DLL" => &[ddraw::IMPORTS],
         "DSOUND.DLL" => &[dsound::IMPORTS],
         "WINMM.DLL" => &[dsound::IMPORTS, misc::IMPORTS],
+        "OLE32.DLL" => &[dshow::IMPORTS, misc::IMPORTS],
         _ => &[misc::IMPORTS],
     };
     tables.iter().flat_map(|t| t.iter()).find(|i| i.0 == name)

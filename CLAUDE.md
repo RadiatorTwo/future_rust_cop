@@ -49,6 +49,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 - `src/rt.rs`: `Cpu` (repr(C), offsets used by the lifter), the 4 GB guest address space
   (guest address a = base + a; game pointers stay 32-bit), helpers (`rt_string` does the
   string instructions).
+- `src/mpeg/`: MPEG-1 movies, a Rust port of pl_mpeg (MIT, credited in `mod.rs`): `demux`
+  splits the program stream, `video.rs` decodes MPEG-1 video (I/P/B) to YCbCr frames
+  (`to_rgb`), `mp2.rs` Layer II audio; `tables.rs` holds pl_mpeg's tables (VLC trees as
+  (next index, value) pairs). Matches ffmpeg (frames within IDCT rounding, sound within float
+  noise); `examples/movie.rs <file.mpg> [dir]` decodes one and writes raw frames/samples.
 - `src/main.rs`: compiles the EXE and runs the game (`fcop [exe]`; default: the first
   FCopLAPD.exe under `game_files/`, a copy of the old project's game folder without its
   registry.txt/controls.txt). `examples/crt.rs` tests strchr/strncpy/strstr/strcspn/
@@ -66,7 +71,14 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   1600x1200), `gdi32.rs`, `advapi32.rs` (registry in `registry.txt`), `ddraw.rs`,
   `dsound.rs` (DirectSound and PlaySoundA: voices in guest memory mixed on cpal's audio
   thread, play cursors advance in real time; without a device a timer thread advances them),
-  `misc.rs` (winmm timers, ole32, comctl32; DirectInput/DirectShow report "absent"),
+  `misc.rs` (winmm timers, ole32, comctl32; DirectInput reports "absent"), `dshow.rs`
+  (DirectShow for the videos, 0x408800: CoCreateInstance gives the filter graph with
+  IMediaControl/IMediaEventEx/IVideoWindow/IBasicAudio; RenderFile demuxes the MPEG file, Run
+  plays it on a thread: frames to `window::set_video` (a layer over the frame, in the video
+  window's place in the 4:3 picture), sound to the mixer's stream (`dsound::stream_*`), which
+  is also the clock; at the end EC_COMPLETE and the notify message WM_USER. The game skips with
+  Space or a click itself (0x408ab0 calls Stop). It never releases IBasicAudio, so the graph
+  is replaced at the next CoCreateInstance),
   `window.rs` (winit window and input; main thread only, other threads' frames are shown
   at the next pump), `gl.rs` (the OpenGL 3.3 context: shows a 2D frame or a rendered texture,
   letterboxed, with the dialog overlay on top; FCOP_SHOT reads back the window), `glide.rs`
@@ -106,7 +118,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   14000:Up*5000"` (scripted input, ms after start; that one starts the first mission and
   walks forward with the user's bindings in `controls.txt`: player 1 on the arrow keys, the
   keypad belongs to player 2; times count from the game's start, after the ~5.5 s compile:
-  give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_WINDOW=1920x1080`
+  give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_WINDOW=1920x1080`
   (the window's starting size in pixels; Windows limits it to the screen). An access
   violation in guest memory is reported with the recompiled function it happened in.
 - Key bindings: `controls.txt` in the game folder (14 lines per player: forward, back,

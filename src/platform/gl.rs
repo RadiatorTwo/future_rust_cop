@@ -1,6 +1,6 @@
 //! OpenGL: the context of the game window and what it shows. A shown picture is either a 2D
 //! frame (DirectDraw: menus, the software renderer) uploaded as a texture, or a texture
-//! something else rendered (the Glide scene); the dialog overlay goes on top.
+//! something else rendered (the Glide scene); a video and the dialog overlay go on top.
 
 use glow::HasContext;
 use glutin::context::{ContextApi, ContextAttributesBuilder, GlProfile, NotCurrentGlContext, PossiblyCurrentContext, Version};
@@ -25,6 +25,9 @@ pub struct Gl {
     frame: glow::Texture,
     overlay: glow::Texture,
     has_overlay: bool,
+    video: glow::Texture,
+    /// where the video is shown: x, y, width, height as parts of the 4:3 picture
+    video_rect: Option<[f32; 4]>,
     /// what is shown: a texture, its size, whether its pixels are 0RGB/ARGB words (2D frames:
     /// the bytes are B G R A), and the gamma to show it with
     pub shown: (glow::Texture, u32, u32, bool, f32),
@@ -135,7 +138,8 @@ impl Gl {
         let frame = texture(&gl, false);
         upload(&gl, frame, &vec![0; 640 * 480], 640, 480);
         let overlay = texture(&gl, true);
-        let g = Gl { gl, surface, context, blit, vao, frame, overlay, has_overlay: false, shown: (frame, 640, 480, true, 1.0) };
+        let video = texture(&gl, true);
+        let g = Gl { gl, surface, context, blit, vao, frame, overlay, has_overlay: false, video, video_rect: None, shown: (frame, 640, 480, true, 1.0) };
         (win, g)
     }
 
@@ -149,6 +153,14 @@ impl Gl {
         self.has_overlay = o.is_some();
         if let Some((px, w, h)) = o {
             upload(&self.gl, self.overlay, px, w, h);
+        }
+    }
+
+    /// Show a video frame (0RGB, w x h) in `rect` (see `video_rect`), or no video.
+    pub fn video(&mut self, v: Option<(&[u32], u32, u32, [f32; 4])>) {
+        self.video_rect = v.map(|v| v.3);
+        if let Some((px, w, h, _)) = v {
+            upload(&self.gl, self.video, px, w, h);
         }
     }
 
@@ -185,10 +197,21 @@ impl Gl {
             gl.uniform_1_i32(u("flip").as_ref(), !words as i32);
             gl.uniform_1_f32(u("gamma").as_ref(), gamma);
             gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            // videos and dialogs stay 4:3 over a wide picture
+            let (sx, sw) = super::window::overlay_span(fw, fh);
+            let (ox0, ox1) = (x0 + (x1 - x0) * sx as f64 / fw as f64, x0 + (x1 - x0) * (sx + sw) as f64 / fw as f64);
+            if let Some([vx, vy, vw, vh]) = self.video_rect {
+                let (vx, vy, vw, vh) = (vx as f64, vy as f64, vw as f64, vh as f64);
+                let (ax, bx) = (ox0 + (ox1 - ox0) * vx, ox0 + (ox1 - ox0) * (vx + vw));
+                let (ay, by) = (y0 + (y1 - y0) * vy, y0 + (y1 - y0) * (vy + vh));
+                gl.uniform_4_f32(u("rect").as_ref(), ax as f32, by as f32, bx as f32, ay as f32);
+                gl.bind_texture(glow::TEXTURE_2D, Some(self.video));
+                gl.uniform_1_i32(u("words").as_ref(), 1);
+                gl.uniform_1_i32(u("flip").as_ref(), 0);
+                gl.uniform_1_f32(u("gamma").as_ref(), 1.0);
+                gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            }
             if self.has_overlay {
-                // dialogs stay 4:3 over a wide picture
-                let (sx, sw) = super::window::overlay_span(fw, fh);
-                let (ox0, ox1) = (x0 + (x1 - x0) * sx as f64 / fw as f64, x0 + (x1 - x0) * (sx + sw) as f64 / fw as f64);
                 gl.uniform_4_f32(u("rect").as_ref(), ox0 as f32, y1 as f32, ox1 as f32, y0 as f32);
                 gl.enable(glow::BLEND);
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);

@@ -1,4 +1,4 @@
-//! The small DLLs: WINMM timers, ole32 (COM start-up; no DirectShow yet, so no videos),
+//! The small DLLs: WINMM timers, ole32 (COM start-up; CoCreateInstance is in `dshow.rs`),
 //! COMCTL32, and for now DirectInput as an absent device.
 
 use super::{Import, arg, guest_call, mem};
@@ -65,14 +65,6 @@ fn time_kill_event(c: &mut Cpu) -> u32 {
     }
 }
 
-fn co_create_instance(c: &mut Cpu) -> u32 {
-    let out = arg(c, 4);
-    if out != 0 {
-        mem().wr32(out, 0);
-    }
-    0x8004_0154 // REGDB_E_CLASSNOTREG
-}
-
 fn no_dinput(c: &mut Cpu) -> u32 {
     let out = arg(c, 2);
     if out != 0 {
@@ -94,7 +86,6 @@ pub const IMPORTS: &[Import] = &[
     ("timeKillEvent", 1, time_kill_event),
     ("CoInitialize", 1, ret0),
     ("CoUninitialize", 0, ret0),
-    ("CoCreateInstance", 5, co_create_instance),
     ("#17", 0, ret0), // InitCommonControls
     ("DirectInputCreateA", 4, no_dinput),
 ];

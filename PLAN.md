@@ -74,7 +74,9 @@ Next:
 - [ ] Other missions
 - [ ] Later: a native Glide backend (a 64-bit glide2x.dll such as dgVoodoo2's), behind the
       same Glide layer
-- [ ] Videos (MPEG-1 from the CD's Video folder; DirectShow is reported as absent now)
+- [x] Videos (`dshow.rs`, `src/mpeg/`): EA logo, intro, briefing play with sound, Space skips;
+      all 27 files decode like ffmpeg. Still to check by ear and eye: HELP (cwrules), credits,
+      the fly-overs (po_*), multiplayer briefing
 - [ ] Frame limit fields (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) as code fields
 
 ### 2. The user's goals after that
