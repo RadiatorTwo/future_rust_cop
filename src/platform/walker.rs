@@ -20,8 +20,14 @@
 //! control records: type bit 0x10 sets the view's x origin (+0x28, in 640x480 units: 0 left,
 //! 0x140 right; the plain path adds a quarter of it), 0x08 its extent. Every call gets them,
 //! with the origin rescaled for its records.
+//!
+//! Widescreen (`wide.rs`): the 3D picture fills the wide frame, the HUD (bucket 0) is drawn in
+//! further calls with 4:3 views (`glide::View`): in single player its left, centre and right
+//! groups at the frame's left edge, centre and right edge; in split screen one per player's
+//! half. Full-height HUD records (the split-screen divider) are moved like target markers.
 
-use super::{glide, mem};
+use super::glide::{self, View};
+use super::{mem, wide};
 use crate::rt::{Cpu, ESP, call_original};
 use std::sync::OnceLock;
 
@@ -33,27 +39,21 @@ const TABLE_LEN: u32 = 7;
 const PLAIN: u32 = 0x4397cd;
 /// The node in front of bucket 0 (the HUD).
 const HUD_NODE: u32 = 0x499ad0;
-/// The game's resolution index, and its table of modes (20 bytes each: width, height, ...).
+/// The game's resolution index.
 const RES_INDEX: u32 = 0x511e58;
-const RES_TABLE: u32 = 0x487080;
+/// Nonzero in split screen.
+const SPLIT: u32 = 0x511f54;
 
-fn precise() -> bool {
+pub fn precise() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("FCOP_PRECISE").map_or(true, |v| v != "0"))
-}
-
-/// The game's resolution in pixels (the space of type-6 records).
-fn game_px() -> (u32, u32) {
-    let m = mem();
-    let r = m.rd32(RES_INDEX);
-    let (w, h) = if r <= 10 { (m.rd32(RES_TABLE + 20 * r), m.rd32(RES_TABLE + 4 + 20 * r)) } else { (1280, 960) };
-    if w < 320 || h < 200 { (1280, 960) } else { (w, h) }
 }
 
 struct Record {
     at: u32,
     next: u32,
-    hud: bool,
+    /// 0 the 3D picture; HUD: 1 left, 2 centre, 3 right
+    pass: u8,
     text: bool,
 }
 
@@ -76,17 +76,48 @@ pub fn draw_glide(c: &mut Cpu) {
     let mut recs = Vec::new();
     let mut ctls = Vec::new();
     let mut hud = false;
+    // which view the HUD gets: in split screen the control records say which player's half
+    let mut split = None;
     let mut r = head;
     while r != 0 {
         let t = m.rd8(r + 4);
         hud |= r == hud_node;
         if t & 7 != 0 {
-            recs.push(Record { at: r, next: m.rd32(r), hud, text: t & 7 == 6 });
+            recs.push(Record { at: r, next: m.rd32(r), pass: if hud { 2 } else { 0 }, text: t & 7 == 6 });
         } else if t != 0 && !hud && ctls.len() < 4 {
-            ctls.push(Control { at: r, next: m.rd32(r), x: m.rd16(r + 0x28) as i16 });
+            let x = m.rd16(r + 0x28) as i16;
+            if t & 0x10 != 0 {
+                split = Some(x != 0);
+            }
+            if t & 0x08 != 0 && x >= 0x280 {
+                split = None;
+            }
+            ctls.push(Control { at: r, next: m.rd32(r), x });
         }
         r = m.rd32(r);
     }
+    if m.rd8(SPLIT) == 0 {
+        split = None;
+    }
+    let wide = wide::k() != 1.0;
+    if wide {
+        let first_hud = recs.iter().position(|r| r.pass != 0).unwrap_or(recs.len());
+        for r in &recs[first_hud..] {
+            if wide::extent(r.at).is_some_and(|e| e[1] <= 8 && e[3] >= 1911) {
+                wide::to_screen(r.at);
+            }
+        }
+        if split.is_none() {
+            hud_sides(&mut recs[first_hud..]);
+        }
+    }
+    let hud_view = |pass: u8| match (split, pass) {
+        (_, 0) => View::Full,
+        (Some(right), _) => View::Half(right),
+        (None, 1) => View::Hud(0.0),
+        (None, 3) => View::Hud(1.0),
+        (None, _) => View::Hud(0.5),
+    };
 
     let idx = m.rd32(RES_INDEX).wrapping_sub(TABLE_FIRST);
     let entry = (idx < TABLE_LEN).then(|| TABLE + 4 * idx);
@@ -94,10 +125,11 @@ pub fn draw_glide(c: &mut Cpu) {
     if let Some(e) = entry {
         m.wr32(e, PLAIN);
     }
-    let (gw, gh) = game_px();
-    'passes: for hud in [false, true] {
+    let (gw, gh) = wide::game_px();
+    'passes: for pass in 0..4 {
+        glide::set_view(if wide { hud_view(pass) } else { View::Full });
         for text in [false, true] {
-            let mut sel = recs.iter().filter(|r| r.hud == hud && r.text == text);
+            let mut sel = recs.iter().filter(|r| r.pass == pass && r.text == text);
             let Some(first) = sel.next() else { continue };
             let mut last = first.at;
             for r in sel {
@@ -125,6 +157,7 @@ pub fn draw_glide(c: &mut Cpu) {
         }
     }
     glide::set_space(None);
+    glide::set_view(View::Full);
     if let (Some(e), Some(v)) = (entry, saved) {
         m.wr32(e, v);
     }
@@ -137,4 +170,38 @@ pub fn draw_glide(c: &mut Cpu) {
     }
     m.wr32(sp + 4, head);
     c.r[ESP] = sp + 4; // as the walker's ret leaves it
+}
+
+/// Single-player HUD records -> passes 1 left, 2 centre, 3 right, by the centre of their
+/// extent (centre band 1280 +- 160 units). Font glyphs in a row (texture page 0xd, type 6)
+/// count as one, so a word or number stays whole; records placed by `wide::to_screen` stay
+/// centred.
+fn hud_sides(recs: &mut [Record]) {
+    let m = mem();
+    let glyph = |r: &Record| r.text && m.rd8(r.at + 7) == 0xd;
+    let mut i = 0;
+    while i < recs.len() {
+        let mut j = i + 1;
+        let mut pass = 2;
+        if let Some(mut e) = wide::extent(recs[i].at) {
+            while glyph(&recs[i]) && j < recs.len() && glyph(&recs[j]) {
+                let Some(f) = wide::extent(recs[j].at) else { break };
+                let gap = if f[0] > e[2] { f[0] - e[2] } else { e[0] - f[2] };
+                if (f[1] - e[1]).abs() > 8 || gap > 48 {
+                    break;
+                }
+                e = [e[0].min(f[0]), e[1], e[2].max(f[2]), e[3]];
+                j += 1;
+            }
+            let cx = (e[0] + e[2]) / 2;
+            pass = if cx < 1280 - 160 { 1 } else if cx > 1280 + 160 { 3 } else { 2 };
+            if recs[i..j].iter().any(|r| wide::placed(r.at)) {
+                pass = 2;
+            }
+        }
+        for r in &mut recs[i..j] {
+            r.pass = pass;
+        }
+        i = j;
+    }
 }

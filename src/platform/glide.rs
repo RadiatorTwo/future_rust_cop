@@ -8,7 +8,8 @@
 //! (`grSstWinOpen`; the game opens 1280x1024 for its 1280x960 mode and stretches its picture
 //! to it) and show it at `grBufferSwap`. Vertices are in Glide screen pixels, or in the space
 //! the display list walker sets (`set_space`, see `walker.rs`); clip windows are always in
-//! screen pixels. With filtering on, the chroma key leaves the keyed texels
+//! screen pixels. Widescreen (`wide.rs`): the texture takes the window's aspect, the 3D
+//! picture fills it and the HUD is drawn into 4:3 parts of it (`set_view`). With filtering on, the chroma key leaves the keyed texels
 //! out of the bilinear filter, and their share becomes a soft alpha edge.
 
 use super::gl::{compile, texture};
@@ -42,6 +43,18 @@ struct State {
     clip: [i32; 4],
 }
 
+/// Where the following drawing goes in the frame.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum View {
+    /// the whole frame
+    Full,
+    /// a 4:3 part: 0 at the left edge, 0.5 centred, 1 at the right edge
+    Hud(f32),
+    /// split screen: a 4:3 HUD whose left (or right) half is centred in the left (right)
+    /// player's half of the frame, and cut to it
+    Half(bool),
+}
+
 struct Texture {
     tex: glow::Texture,
     w: u32,
@@ -55,6 +68,7 @@ struct Glide {
     target: (u32, u32),
     /// the vertices' coordinate space
     space: (u32, u32),
+    view: View,
     fbo: glow::Framebuffer,
     color: glow::Texture,
     prog: glow::Program,
@@ -283,6 +297,7 @@ impl Glide {
                 res: (w, h),
                 target,
                 space: (w, h),
+                view: View::Full,
                 fbo,
                 color,
                 prog,
@@ -308,14 +323,49 @@ impl Glide {
         }
     }
 
-    /// A clip rectangle (x0 y0 x1 y1 in screen pixels) as GL's scissor box in the target.
+    /// The view's rectangle in the target (x, y from the top, w, h) and the columns it is cut to.
+    fn view_rect(&self) -> ([f32; 4], (f32, f32)) {
+        let (tw, th) = (self.target.0 as f32, self.target.1 as f32);
+        let w43 = (th * 4.0 / 3.0).min(tw);
+        match self.view {
+            View::Full => ([0.0, 0.0, tw, th], (0.0, tw)),
+            View::Hud(at) => ([(tw - w43) * at, 0.0, w43, th], (0.0, tw)),
+            View::Half(false) => ([tw / 4.0 - w43 / 4.0, 0.0, w43, th], (0.0, tw / 2.0)),
+            View::Half(true) => ([tw * 0.75 - w43 * 0.75, 0.0, w43, th], (tw / 2.0, tw)),
+        }
+    }
+
+    /// GL's viewport for the view, and a clip rectangle (x0 y0 x1 y1 in screen pixels) as
+    /// its scissor box.
     fn scissor(&self, gl: &glow::Context, c: [i32; 4]) {
-        let (sx, sy) = (self.target.0 as f32 / self.res.0 as f32, self.target.1 as f32 / self.res.1 as f32);
-        let (x0, y0) = ((c[0] as f32 * sx).round() as i32, (c[1] as f32 * sy).round() as i32);
-        let (x1, y1) = ((c[2] as f32 * sx).round() as i32, (c[3] as f32 * sy).round() as i32);
+        let ([vx, vy, vw, vh], (cut0, cut1)) = self.view_rect();
+        let th = self.target.1 as f32;
+        let (sx, sy) = (vw / self.res.0 as f32, vh / self.res.1 as f32);
+        let x0 = (vx + c[0] as f32 * sx).max(cut0).round() as i32;
+        let x1 = (vx + c[2] as f32 * sx).min(cut1).round() as i32;
+        let (y0, y1) = ((vy + c[1] as f32 * sy).round() as i32, (vy + c[3] as f32 * sy).round() as i32);
         unsafe {
+            gl.viewport(vx.round() as i32, (th - vy - vh).round() as i32, vw.round() as i32, vh.round() as i32);
             gl.enable(glow::SCISSOR_TEST);
-            gl.scissor(x0, self.target.1 as i32 - y1, (x1 - x0).max(0), (y1 - y0).max(0));
+            gl.scissor(x0, th as i32 - y1, (x1 - x0).max(0), (y1 - y0).max(0));
+        }
+    }
+
+    /// Give the target an aspect (between frames): its height stays, its width follows.
+    fn set_aspect(&mut self, gl: &glow::Context, a: f32) {
+        let h = self.res.0 * 3 / 4;
+        let w = ((h as f32 * a).round() as u32).max(self.res.0);
+        if (w, h) == self.target {
+            return;
+        }
+        self.target = (w, h);
+        unsafe {
+            gl.bind_texture(glow::TEXTURE_2D, Some(self.color));
+            gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, w as i32, h as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+            gl.disable(glow::SCISSOR_TEST);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT);
         }
     }
 
@@ -325,11 +375,9 @@ impl Glide {
             return;
         }
         let s = self.state;
-        let (w, h) = self.target;
-        self.scissor(gl, s.clip);
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
-            gl.viewport(0, 0, w as i32, h as i32);
+            self.scissor(gl, s.clip);
             gl.use_program(Some(self.prog));
             gl.bind_vertex_array(Some(self.vao));
             let u = |n: &str| gl.get_uniform_location(self.prog, n);
@@ -508,7 +556,11 @@ fn sst_win_open(c: &mut Cpu) -> u32 {
         _ => (640, 480),
     };
     log!("glide: grSstWinOpen {w}x{h}");
-    let g = super::window::with_gl(|gl| Glide::open(&gl.gl, w, h));
+    let mut g = super::window::with_gl(|gl| Glide::open(&gl.gl, w, h));
+    if let Some(g) = &mut g {
+        let a = super::wide::set_aspect(Some(window_aspect()));
+        super::window::with_gl(|gl| g.set_aspect(&gl.gl, a));
+    }
     let ok = g.is_some();
     GLIDE.with(|s| *s.borrow_mut() = g);
     ok as u32
@@ -523,7 +575,13 @@ fn sst_win_close(_: &mut Cpu) -> u32 {
         }
     });
     GLIDE.with(|s| *s.borrow_mut() = None);
+    super::wide::set_aspect(None);
     1
+}
+
+fn window_aspect() -> f32 {
+    let (w, h) = super::window::window_size();
+    w as f32 / h.max(1) as f32
 }
 
 fn buffer_clear(c: &mut Cpu) -> u32 {
@@ -549,6 +607,9 @@ fn buffer_swap(_: &mut Cpu) -> u32 {
     });
     if let Some((tex, (w, h), gamma)) = shown {
         super::window::show_texture(tex, w, h, gamma);
+        // the next frame follows the window
+        let a = super::wide::set_aspect(Some(window_aspect()));
+        with(|g, gl| g.set_aspect(gl, a));
     }
     0
 }
@@ -560,6 +621,16 @@ pub fn set_space(space: Option<(u32, u32)>) {
         if s != g.space {
             g.flush(gl);
             g.space = s;
+        }
+    });
+}
+
+/// Where the vertices that follow go in the frame.
+pub fn set_view(view: View) {
+    with(|g, gl| {
+        if view != g.view {
+            g.flush(gl);
+            g.view = view;
         }
     });
 }

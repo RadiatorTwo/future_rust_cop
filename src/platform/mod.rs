@@ -17,6 +17,7 @@ pub mod kernel32;
 pub mod misc;
 pub mod user32;
 pub mod walker;
+pub mod wide;
 pub mod window;
 
 pub use crate::image::ResId;
@@ -538,7 +539,15 @@ fn find_import(dll: &str, name: &str) -> Option<&'static Import> {
 }
 
 /// Game functions replaced by our own (`jit::compile`).
-pub const HOOKS: &[(u32, crate::rt::Hook)] = &[(walker::GLIDE_WALKER, walker::draw_glide)];
+pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
+    (walker::GLIDE_WALKER, walker::draw_glide),
+    (wide::TERRAIN_VERTEX, wide::terrain_vertex),
+    (wide::SPRITE, wide::sprite),
+    (wide::POINTS, wide::points),
+    (wide::TERRAIN_VISIBLE, wide::terrain_visible),
+    (wide::OBJECT_VISIBLE, wide::object_visible),
+    (wide::MARKERS, wide::markers),
+];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread
 /// (which needs a large stack: guest calls nest on it). Returns the exit code.

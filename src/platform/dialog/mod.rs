@@ -328,7 +328,8 @@ impl Dialog {
     /// Mouse and keyboard input for the topmost dialog.
     fn input(&mut self, m: &Msg, out: &mut Vec<Notify>) {
         let (fw, fh) = super::window::frame_size();
-        let x = (m.lp & 0xffff) as i16 as i32 * OV_W / fw.max(1) as i32;
+        let (sx, sw) = super::window::overlay_span(fw, fh);
+        let x = ((m.lp & 0xffff) as i16 as i32 - sx as i32) * OV_W / sw.max(1) as i32;
         let y = (m.lp >> 16) as i16 as i32 * OV_H / fh.max(1) as i32;
         match m.msg {
             0x200 => {

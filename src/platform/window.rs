@@ -40,6 +40,8 @@ struct App {
     /// the overlay changed since the last screenshot
     overlay_changed: bool,
     cursor: PhysicalPosition<f64>,
+    /// an Alt key is held (Alt+Enter toggles fullscreen)
+    alt: bool,
 }
 
 struct Host {
@@ -80,6 +82,7 @@ fn with_host<R>(f: impl FnOnce(&mut Host) -> R) -> R {
                     early: None,
                     overlay_changed: false,
                     cursor: PhysicalPosition::new(0.0, 0.0),
+                    alt: false,
                 },
             }
         });
@@ -338,6 +341,20 @@ pub fn frame_size() -> (u32, u32) {
     with_host(|h| h.app.gl.as_ref().map_or((640, 480), |g| (g.shown.1, g.shown.2)))
 }
 
+/// The window's drawable size in pixels (1280x960 before it exists).
+pub fn window_size() -> (u32, u32) {
+    if !on_main() {
+        return (1280, 960);
+    }
+    with_host(|h| h.app.window.as_ref().map(|w| w.inner_size()).filter(|s| s.width > 0 && s.height > 0).map_or((1280, 960), |s| (s.width, s.height)))
+}
+
+/// The 4:3 part in the middle of a frame of w x h, where dialogs are shown: x offset and width.
+pub fn overlay_span(w: u32, h: u32) -> (u32, u32) {
+    let ow = w.min(h * 4 / 3);
+    ((w - ow) / 2, ow)
+}
+
 /// Where a frame of w x h lands in a window of ww x wh: offset and scale.
 pub fn fit(w: u32, h: u32, ww: u32, wh: u32) -> (f64, f64, f64) {
     let s = (ww as f64 / w as f64).min(wh as f64 / h as f64);
@@ -434,8 +451,19 @@ impl ApplicationHandler for App {
                 };
                 self.input.push_back(Input::Button(b, state == ElementState::Pressed));
             }
+            WindowEvent::ModifiersChanged(m) => self.alt = m.state().alt_key(),
             WindowEvent::KeyboardInput { event, .. } => {
                 let down = event.state == ElementState::Pressed;
+                if self.alt && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter)) {
+                    // Alt+Enter: borderless fullscreen on the window's display, or back
+                    if down && !event.repeat {
+                        if let Some(w) = &self.window {
+                            let full = w.fullscreen().is_some();
+                            w.set_fullscreen((!full).then_some(winit::window::Fullscreen::Borderless(None)));
+                        }
+                    }
+                    return;
+                }
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if let Some((vk, scan)) = vk_of(code) {
                         self.input.push_back(Input::Key { vk, scan, down, repeat: event.repeat });

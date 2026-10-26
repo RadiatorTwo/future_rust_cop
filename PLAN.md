@@ -56,6 +56,14 @@ Next:
       (`jit::compile(.., hooks)`, `rt::call_original`, `platform::HOOKS`)
 - [x] Glide precise mode (`walker.rs`): vertices in 2560x1920 units instead of rounded
       pixels, frames 4:3 (no 5:4 stretch at 1280x960), HUD text next to its icons
+- [x] Widescreen (Hor+) in Glide missions (`wide.rs`, `walker.rs`): the frame takes the
+      window's aspect, more world at the sides, HUD groups at the left/centre/right edge,
+      target markers in place, dialogs stay 4:3. Tested forced 16:9 and 21:9
+      (`FCOP_WIDE=<aspect>`, `FCOP_WIDE=0` off)
+- [x] Alt+Enter: borderless fullscreen
+- [ ] Widescreen: a "Widescreen" box in Preferences (`dialog/extend.rs`), saved in the
+      registry; check in a real 16:9 fullscreen, in split screen and while moving fast
+- [ ] Widescreen with the software renderer (not planned yet: Glide is the default)
 - [ ] Glide: other resolutions, filtering off, split screen checked with precise mode
 - [x] Default keys for player 1 without a keypad (`user32::single_player_keys`): arrows,
       A/D jink, X action, S change target; player 2 keeps the game's keypad profile
@@ -71,7 +79,7 @@ Next:
 
 - [ ] Quit option and preferences menu (controls, graphics, resolution): our own settings
       go into the game's dialogs through `dialog/extend.rs` (renderer, MSAA, resolution, ...)
-- [ ] High resolution and widescreen through the OpenGL renderer
+- [ ] High resolution through the OpenGL renderer (widescreen: done for Glide)
 - [ ] Linux, later Android
 - [ ] Texture quality (options in Preferences through `dialog/extend.rs`). The source has
       no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`

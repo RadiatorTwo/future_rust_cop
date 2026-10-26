@@ -95,6 +95,9 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code, hooks: &[(u32, Hook)]
         .keys()
         .map(|&a| (a, module.declare_function(&format!("F_{a:x}"), Linkage::Local, &guest_sig).unwrap()))
         .collect();
+    for h in hooks.iter().filter(|h| !ids.contains_key(&h.0)) {
+        eprintln!("warn: hook at {:#x}: no function there", h.0);
+    }
     // a hooked function: F_x calls the host (rt_hook), the lifted code becomes G_x
     let originals: BTreeMap<u32, FuncId> = hooks
         .iter()

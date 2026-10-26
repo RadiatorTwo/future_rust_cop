@@ -84,6 +84,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   header). Precise mode points the resolution's jump table entry (0x43a168) at the plain
   path 0x4397cd, so vertices arrive in 2560x1920 units; text (type 6, game pixels) is drawn in
   its own calls; `glide::set_space` tells the renderer which space. `FCOP_PRECISE=0` off.
+- `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
+  projections (0x453740 terrain vertex, 0x457340 object points, 0x457140 sprites) and the
+  sphere view tests (0x452fd0 terrain cells, 0x4572a0 objects); target markers (0x435330,
+  HUD level) and full-height HUD records are moved back to 3D positions (`to_screen`). The
+  aspect comes from the window at every grBufferSwap (`set_aspect`; the Glide target keeps
+  its height, its width follows). `walker.rs` draws the HUD with 4:3 views
+  (`glide::View`: left / centre / right edge, split screen one per half). Needs precise
+  mode. `FCOP_WIDE=0` off, `FCOP_WIDE=<aspect>` forces one. Dialog overlays stay 4:3 in the
+  middle of a wide frame (`window::overlay_span`). Alt+Enter toggles borderless fullscreen.
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),

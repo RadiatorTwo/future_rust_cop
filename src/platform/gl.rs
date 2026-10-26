@@ -186,6 +186,10 @@ impl Gl {
             gl.uniform_1_f32(u("gamma").as_ref(), gamma);
             gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             if self.has_overlay {
+                // dialogs stay 4:3 over a wide picture
+                let (sx, sw) = super::window::overlay_span(fw, fh);
+                let (ox0, ox1) = (x0 + (x1 - x0) * sx as f64 / fw as f64, x0 + (x1 - x0) * (sx + sw) as f64 / fw as f64);
+                gl.uniform_4_f32(u("rect").as_ref(), ox0 as f32, y1 as f32, ox1 as f32, y0 as f32);
                 gl.enable(glow::BLEND);
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
                 gl.bind_texture(glow::TEXTURE_2D, Some(self.overlay));
