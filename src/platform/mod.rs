@@ -595,6 +595,7 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (fps::TURN, fps::turn),
     (fps::CLOCK, fps::clock),
     (fps::EFFECTS, fps::effects),
+    (fps::EMIT, fps::emit),
 ];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread

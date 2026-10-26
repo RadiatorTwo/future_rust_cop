@@ -12,8 +12,8 @@
 //!   (`robot`, `physics`, `camera`);
 //! - the camera turns toward its target in 2-tick units (`turn`);
 //! - hovering, the physics adds the frame time to the turn speed in every step (`physics`);
-//! - effects (the list at [0x4a2ab0]) count their timers down by (rate * ticks) >> 8, which
-//!   is 0 for short frames, so they lived and emitted far longer (`effects`).
+//! - effect emitters count their timers down by (rate * ticks) >> 8, which is 0 for short
+//!   frames, and emit once a frame, so they lived and emitted far longer (`effects`, `emit`).
 
 use super::{advapi32, mem};
 use crate::rt::{Cpu, EAX, ESP, call_original};
@@ -28,6 +28,7 @@ pub const CAMERA: u32 = 0x4456a0;
 pub const TURN: u32 = 0x445eb0;
 pub const CLOCK: u32 = 0x4130c0;
 pub const EFFECTS: u32 = 0x43d310;
+pub const EMIT: u32 = 0x43d6f0;
 
 /// Where the mission loop's wait (0x406a30) calls the clock: the return address.
 const WAITING: u32 = 0x406a56;
@@ -250,26 +251,64 @@ pub fn physics(c: &mut Cpu) {
     show(actor);
 }
 
-/// Ticks not yet given to the effects.
-static EFFECT_TICKS: AtomicU32 = AtomicU32::new(0);
+/// The frame's ticks while the effects (0x43d310) are updated, for `emit`.
+static EFFECT_DT: AtomicU32 = AtomicU32::new(0);
 
-/// 0x43d310(dt) updates every effect (emitters such as the sparks of the robot's
-/// transformation). Their timers lose (rate * dt) >> 8 a frame, rounded down: with frames of
-/// a tick or two mostly nothing, so emitters ran for many more frames, each emitting. They
-/// are updated in whole 8-tick frames, as in the original.
+/// 0x43d310(dt) updates every effect (the list at [0x4a2ab0]: emitters such as the sparks of
+/// the robot's transformation, also what weapons and hits show). They are updated every
+/// frame; `emit` corrects their emitters.
 pub fn effects(c: &mut Cpu) {
-    if !faster() {
-        EFFECT_TICKS.store(0, Ordering::Relaxed);
-        return call_original(c, EFFECTS);
-    }
-    let t = EFFECT_TICKS.load(Ordering::Relaxed) + arg(c, 0);
-    EFFECT_TICKS.store(t % 8, Ordering::Relaxed);
-    if t < 8 {
-        c.r[ESP] += 4; // ret
-        return;
-    }
-    mem().wr32(c.r[ESP] + 4, t / 8 * 8);
+    EFFECT_DT.store(if faster() { arg(c, 0) } else { 0 }, Ordering::Relaxed);
     call_original(c, EFFECTS);
+    EFFECT_DT.store(0, Ordering::Relaxed);
+}
+
+/// Per emitter (effect, part): the fractions (of 256) its three timers did not lose yet, and
+/// the ticks since it last emitted.
+static EMITTERS: Mutex<Vec<((u32, u32), [u32; 3], u32)>> = Mutex::new(Vec::new());
+
+/// 0x43d6f0(effect, part, a, b, c), called by 0x43d420 for every part of an effect: the
+/// part's timers (bytes +0xc, +0xd, +0xe of its 16-byte record at [effect+0x10]) lose a, b
+/// and c; while one runs, the part emits (0x43d810, if bit 0x80 of [effect+0xf]) and the
+/// effect's count of emissions [effect+0x26] goes down. The amounts are (rate * dt) >> 8
+/// with the rates at effect+0x1e/0x20/0x22: rounded down to 0 for short frames, so the timers
+/// hardly ran down, and it emitted once a frame. Here the amounts keep their fractions, and
+/// a part emits once per 8 ticks, as in the original.
+pub fn emit(c: &mut Cpu) {
+    let dt = EFFECT_DT.load(Ordering::Relaxed);
+    if dt == 0 {
+        return call_original(c, EMIT);
+    }
+    let m = mem();
+    let (effect, part) = (arg(c, 0), arg(c, 1));
+    let due = {
+        let mut list = EMITTERS.lock().unwrap();
+        let k = list.iter().position(|e| e.0 == (effect, part)).unwrap_or_else(|| {
+            list.push(((effect, part), [0; 3], 0));
+            list.len() - 1
+        });
+        let e = &mut list[k];
+        for (n, rate) in [0x1e, 0x20, 0x22].into_iter().enumerate() {
+            let total = e.1[n] + m.rd16(effect + rate) as u32 * dt;
+            m.wr32(c.r[ESP] + 12 + 4 * n as u32, total >> 8);
+            e.1[n] = total & 0xff;
+        }
+        e.2 += dt;
+        let due = e.2 >= 8;
+        if due {
+            e.2 = (e.2 - 8).min(7);
+        }
+        due
+    };
+    let flags = effect + 0xf;
+    let emits = m.rd8(flags) & 0x80 != 0;
+    if !due && emits {
+        m.wr8(flags, m.rd8(flags) & !0x80);
+    }
+    call_original(c, EMIT);
+    if !due && emits {
+        m.wr8(flags, m.rd8(flags) | 0x80);
+    }
 }
 
 /// The frame's ticks while the robot's camera (0x4456a0) runs, for `turn`.

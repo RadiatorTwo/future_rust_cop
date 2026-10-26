@@ -86,6 +86,21 @@ Next:
       changes (texture array), the frame wait sleeps; 300 fps hold in the first mission
 - [x] High frame rates: hover turn speed (0x442510) and the transformation's sparks
       (effect timers 0x43d310) fixed after the user's report
+- [ ] High frame rates break game logic: it computes (rate * ticks) >> 8 in many places
+      (0x42e8f0 animated objects, effects, ...), 0 for 1-2 tick frames (user: hit display
+      hardly visible, planes cannot be shot down). Plan (option 3, chosen 2026-10-26):
+      logic stays at 8 ticks (frame limit fields 8), extra frames are rendered in between
+      with actors and camera interpolated between the last two logic frames; the
+      per-system hooks in fps.rs (weapon, robot/physics, hover, turn, effects) then go.
+      Found: mission loop 0x406820 -> frame 0x407360 (single player; 0x4076d0 the other
+      branch). Its logic block (skipped when paused): 0x457510(dt), 0x43b520, 0x43a980,
+      0x43a8c0(6, dt, 0) actors (-> handlers such as 0x446800 -> robot 0x446e00),
+      0x41ff10(dt), 0x43a910, 0x42d6d0(dt) effects. Render block: 0x426eb0,
+      0x452880(0, player [0x511fd0], &cam) visibility, 0x44fd20, 0x453260(0, player, &cam)
+      projection of terrain/objects/effects, 0x4075b0(0, 1), 0x434c90(player) HUD and
+      markers, 0x4114c0(0) display list walker (Glide). After it: 0x43bf00,
+      0x44f3b0(dt), 0x436be0(dt), 0x43ae70. Next: the actor list and the camera state
+      to interpolate; side effects of calling the render block twice
 - [ ] Frame rate: checked by the user by eye (robot and camera smooth? fire rate as
       before?); find further things made for 8-tick frames (enemies, effects, timers)
 
