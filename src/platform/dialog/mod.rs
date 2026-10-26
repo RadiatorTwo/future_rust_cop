@@ -359,9 +359,11 @@ impl Dialog {
                 self.pressed = Some(k);
                 let r = self.controls[k].rect;
                 match &mut self.controls[k].kind {
-                    Kind::Combo { open, top, sel, .. } => {
+                    Kind::Combo { open, top, sel, items, drop } => {
                         *open = true;
-                        *top = (*sel - 2).max(0);
+                        // a little above the selection, but no empty rows at the end
+                        let rows = (*drop - 4) / ROW;
+                        *top = (*sel - 2).clamp(0, (items.len() as i32 - rows).max(0));
                         out.push(self.command(k, 7)); // CBN_DROPDOWN
                     }
                     Kind::Track { .. } => {

@@ -20,7 +20,7 @@
 //! puts those records back. Only with Glide, one view (0x407360) and while playing.
 //!
 //! The player chooses the rate in Preferences (REG_DWORD `FrameRate` in the game's key,
-//! frames per second; missing or 0: the original).
+//! frames per second; missing or 0: the original; 0xffffffff: unlimited).
 
 use super::{advapi32, mem};
 use crate::rt::{Cpu, EAX, ESP, call_original};
@@ -75,8 +75,11 @@ const SEED: u32 = 0x50e370;
 const LIST_START: u32 = 0x499b0c;
 const LIST_END: u32 = 0x511dc0;
 
+/// No limit: pictures one after another while the loop waits.
+pub const UNLIMITED: u32 = u32::MAX;
+
 /// The frame rates a player can choose (0: the original's 37.5).
-pub const CHOICES: &[u32] = &[0, 60, 75, 100, 120, 144, 165, 240, 300];
+pub const CHOICES: &[u32] = &[0, 60, 75, 100, 120, 144, 165, 240, 300, UNLIMITED];
 
 /// The rate in effect (0: the original).
 static RATE: AtomicU32 = AtomicU32::new(0);
@@ -221,7 +224,10 @@ static NEXT: Mutex<f64> = Mutex::new(0.0);
 
 /// The ticks between pictures.
 fn period() -> f64 {
-    300.0 / RATE.load(Ordering::Relaxed).max(1) as f64
+    match RATE.load(Ordering::Relaxed) {
+        UNLIMITED => 0.0,
+        fps => 300.0 / fps.max(1) as f64,
+    }
 }
 
 /// 0x426eb0 starts the render block. In the game's own frame the places are taken (they are

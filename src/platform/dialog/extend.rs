@@ -116,7 +116,14 @@ pub fn init(d: &mut Dialog) {
             if let Kind::Combo { items, sel, .. } = &mut c.kind {
                 *items = crate::platform::fps::CHOICES
                     .iter()
-                    .map(|&f| (if f == 0 { "Original (37.5)".into() } else { format!("{f} fps") }, f))
+                    .map(|&f| {
+                        let name = match f {
+                            0 => "Original (37.5)".into(),
+                            crate::platform::fps::UNLIMITED => "Unlimited".into(),
+                            _ => format!("{f} fps"),
+                        };
+                        (name, f)
+                    })
                     .collect();
                 *sel = items.iter().position(|i| i.1 == fps).unwrap_or(0) as i32;
             }
