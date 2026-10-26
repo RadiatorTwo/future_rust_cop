@@ -58,6 +58,11 @@ impl Image {
     /// Bytes at a virtual address; zeros past a section's raw data (.bss); `None` outside
     /// every section.
     pub fn read(&self, addr: u32, n: usize) -> Option<Vec<u8>> {
+        // the headers, before the first section
+        let first = self.sections.iter().map(|s| s.va).min().unwrap_or(self.base);
+        if addr >= self.base && addr < first {
+            return Some((0..n as u32).map(|k| self.data.get((addr - self.base + k) as usize).copied().unwrap_or(0)).collect());
+        }
         let s = self.sections.iter().find(|s| addr >= s.va && addr < s.va + s.vsize.max(s.rsize))?;
         let off = addr - s.va;
         Some(
@@ -127,4 +132,86 @@ pub fn load_functions(path: &Path) -> std::io::Result<Vec<(u32, u32, String)>> {
         .collect();
     out.sort();
     Ok(out)
+}
+
+/// A resource name or number (`MAKEINTRESOURCE`).
+#[derive(Clone, Copy, Debug)]
+pub enum ResId<'a> {
+    Id(u32),
+    Name(&'a str),
+}
+
+impl ResId<'_> {
+    /// From a guest argument: a number up to 0xffff, else a pointer to a string.
+    pub fn from_guest(p: u32) -> ResId<'static> {
+        if p <= 0xffff { ResId::Id(p) } else { ResId::Name(Box::leak(crate::platform::cstr(p).into_boxed_str())) }
+    }
+}
+
+/// A resource's name: a number or a string.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ResName {
+    Id(u32),
+    Name(String),
+}
+
+/// The entries of one resource directory level: name and the entry's offset field.
+fn res_entries(rd: &dyn Fn(u32) -> u8, root: u32, dir: u32) -> Vec<(ResName, u32)> {
+    let r16 = |a: u32| u16::from_le_bytes([rd(a), rd(a + 1)]) as u32;
+    let r32 = |a: u32| r16(a) | r16(a + 2) << 16;
+    let n = r16(dir + 12) + r16(dir + 14);
+    (0..n)
+        .map(|k| {
+            let e = dir + 16 + 8 * k;
+            let name = r32(e);
+            let name = if name & 0x8000_0000 != 0 {
+                let p = root + (name & 0x7fff_ffff);
+                ResName::Name((0..r16(p)).map(|k| char::from_u32(r16(p + 2 + 2 * k)).unwrap_or('?')).collect())
+            } else {
+                ResName::Id(name)
+            };
+            (name, r32(e + 4))
+        })
+        .collect()
+}
+
+/// Every resource of a type (first language each): name, address and size of its data.
+/// `rd` reads a byte at a virtual address of the image at `base`.
+pub fn list_resources(rd: &dyn Fn(u32) -> u8, base: u32, ty: ResId) -> Vec<(ResName, u32, u32)> {
+    let r32 = |a: u32| u32::from_le_bytes([rd(a), rd(a + 1), rd(a + 2), rd(a + 3)]);
+    let pe = base + r32(base + 0x3c);
+    let rva = r32(pe + 24 + 96 + 2 * 8);
+    if rva == 0 {
+        return Vec::new();
+    }
+    let root = base + rva;
+    let matches = |n: &ResName, want: ResId| match (n, want) {
+        (ResName::Id(a), ResId::Id(b)) => *a == b,
+        (ResName::Name(a), ResId::Name(b)) => a.eq_ignore_ascii_case(b),
+        _ => false,
+    };
+    let sub = |off: u32| (off & 0x8000_0000 != 0).then(|| root + (off & 0x7fff_ffff));
+    let Some(types) = res_entries(rd, root, root).into_iter().find(|e| matches(&e.0, ty)).and_then(|e| sub(e.1)) else {
+        return Vec::new();
+    };
+    res_entries(rd, root, types)
+        .into_iter()
+        .filter_map(|(name, off)| {
+            let langs = sub(off)?;
+            let leaf = res_entries(rd, root, langs).first()?.1;
+            (leaf & 0x8000_0000 == 0).then(|| (name, base + r32(root + leaf), r32(root + leaf + 4)))
+        })
+        .collect()
+}
+
+/// One resource: address and size of its data.
+pub fn find_resource(rd: &dyn Fn(u32) -> u8, base: u32, ty: ResId, id: ResId) -> Option<(u32, u32)> {
+    list_resources(rd, base, ty)
+        .into_iter()
+        .find(|(n, ..)| match (n, id) {
+            (ResName::Id(a), ResId::Id(b)) => *a == b,
+            (ResName::Name(a), ResId::Name(b)) => a.eq_ignore_ascii_case(b),
+            _ => false,
+        })
+        .map(|(_, a, n)| (a, n))
 }

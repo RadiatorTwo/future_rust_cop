@@ -34,24 +34,27 @@ Done:
 - [x] DirectDraw 2D: surfaces, Blt/BltFast/Flip/Lock, colour keys, 555 pixels; the menu
       layer (always 640x480 16-bit) works through this
 - [x] Main menu shown (`FCOP_SHOT=file.png` writes the shown frame)
+- [x] Scripted input `FCOP_INPUT` (clicks, keys at fixed times); START in the menu starts
+      the first mission, which runs with the game's software renderer, keypad controls work
+- [x] Spin-waits: generated code checks `rt::POLL` at loop heads and hands the turn over
+- [x] Sound: DirectSound buffers and PlaySoundA (WAVE resources) mixed on cpal; positions
+      advance in real time (the music is streamed); music and effects confirmed by ear
+- [x] Dialogs: the game's RT_DIALOG templates run by its own dialog procedures, drawn by us
+      as an overlay in the menu's style (Preferences, Audio, Controller Configuration incl.
+      rebinding keys through the game's keyboard hook, Load/Save, the pause bar, the quit
+      box); `dialog/extend.rs` adds our own settings (first: Renderer in Preferences)
 
 Next:
-- [ ] Click through the menu (mouse input is wired up but not yet tried); scripted input
-      for tests (the old project had `FCOP_INPUT`)
-- [ ] Spin-waits: when a thread waits in a loop without calling an import, the other thread
-      never gets its turn (the old project yielded at loop heads; add when it shows up)
-- [ ] Dialogs: Preferences etc. are the game's RT_DIALOG resources (DialogBoxParamA and
-      friends are still missing); draw them in the game's style
-- [ ] Sound: DirectSound (now reported as absent) on cpal
 - [ ] DirectInput (now reported as absent; only used for joysticks)
-- [ ] Missions: the software renderer through DirectDraw, then the 3D layer on OpenGL
+- [ ] Missions: play longer (other missions, Esc menu), then the 3D layer on OpenGL
       (Glide/THRASH), separate from the menu layer
 - [ ] Videos (MPEG-1 from the CD's Video folder; DirectShow is reported as absent now)
 - [ ] Frame limit fields (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) as code fields
 
 ### 2. The user's goals after that
 
-- [ ] Quit option and preferences menu (controls, graphics, resolution)
+- [ ] Quit option and preferences menu (controls, graphics, resolution): our own settings
+      go into the game's dialogs through `dialog/extend.rs` (renderer, MSAA, resolution, ...)
 - [ ] High resolution and widescreen through the OpenGL renderer
 - [ ] Linux, later Android
 - [ ] Remastered assets (later)

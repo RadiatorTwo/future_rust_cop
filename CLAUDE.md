@@ -64,13 +64,37 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `printf`. One file per DLL: `kernel32.rs` (kernel objects in one table with one
   condition variable), `user32.rs` (windows, message queue, timers, key state; desktop
   1600x1200), `gdi32.rs`, `advapi32.rs` (registry in `registry.txt`), `ddraw.rs`,
-  `misc.rs` (winmm, ole32, comctl32; DirectSound/DirectInput/DirectShow report "absent"),
+  `dsound.rs` (DirectSound and PlaySoundA: voices in guest memory mixed on cpal's audio
+  thread, play cursors advance in real time; without a device a timer thread advances them),
+  `misc.rs` (winmm timers, ole32, comctl32; DirectInput/DirectShow report "absent"),
   `window.rs` (winit window, softbuffer frames, input; main thread only, other threads'
   frames are shown at the next pump).
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
-  `FCOP_SHOT=file.png` (the frame shown, every half second).
+  `FCOP_SHOT=file.png` (the frame shown, every half second), `FCOP_INPUT="6000:click@484,303
+  14000:Numpad8*5000"` (scripted input, ms after start; that one starts the first mission
+  and walks forward), `FCOP_WATCH=1` (last import call and turn state every 2 s). An access
+  violation in guest memory is reported with the recompiled function it happened in.
+- Spin-waits: `rt::POLL` is nonzero while a guest thread waits for its turn; generated code
+  loads it at every loop head (target of a backward branch) and calls `rt_yield`.
+- `resource(type, id)` finds resources in the loaded EXE (`image::list_resources` works on
+  the file too; `examples/dialogs.rs` lists every dialog template and control).
+- `platform/dialog/`: the game's dialogs. `template.rs` parses DLGTEMPLATE(EX); `mod.rs` builds
+  controls (button, check, radio, group, static, edit, list, combo, trackbar), handles the
+  game's messages to them, runs the modal loop (input goes to the topmost dialog, other
+  messages are dispatched as usual) and implements DialogBoxParamA, EndDialog, GetDlgItem...,
+  MessageBoxA; user32 routes window functions on dialog handles (0x00DAxxyy) here. `draw.rs`
+  draws them into a 640x480 ARGB overlay (`window::set_overlay`, stretched over the frame) with
+  `font.rs` (public-domain 8x8 font, set proportionally). `extend.rs` is where our own
+  settings go: change a template before it is built (`adjust`), fill our controls after the
+  game's WM_INITDIALOG (`init`), handle them (`command`), save them on OK (`ok`); our
+  controls have ids from 0x7E00 and the game's procedure never sees them. Keyboard hooks
+  (SetWindowsHookExA WH_KEYBOARD) get key messages as they are taken from the queue: the
+  controller dialog reads rebound keys that way, and marks the waiting box with InvertRect.
+  `FCOP_DLG_LOG=1` logs dialogs and the messages sent to their procedures.
+- DDBLTFX: dwFillColor is at 0x50 (the old project read 0x48 and drew the pause screen's
+  dark purple 0x1c2a as black).
 - The game draws in two separate layers: menus are 640x480 16-bit frames through DirectDraw
   2D (blits to the primary surface; windowed, the primary is the whole desktop and the main
   window's rectangle is shown); missions use the 3D renderer (software, Glide or THRASH).

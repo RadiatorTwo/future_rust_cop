@@ -8,17 +8,21 @@
 
 pub mod advapi32;
 pub mod ddraw;
+pub mod dialog;
+pub mod dsound;
 pub mod gdi32;
 pub mod kernel32;
 pub mod misc;
 pub mod user32;
 pub mod window;
 
+pub use crate::image::ResId;
 use crate::image::Image;
 use crate::rt::{self, Cpu, EAX, ESP, Event, Memory};
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::{Condvar, Mutex, MutexGuard, OnceLock};
 
 // guest address space
@@ -287,15 +291,29 @@ fn turn_take() {
     let me = t.0;
     t.0 += 1;
     while t.1 != me {
+        // the running thread hands over at its next loop head
+        rt::POLL.store(1, Ordering::Relaxed);
         t = TURN.cv.wait(t).unwrap_or_else(|e| e.into_inner());
     }
+    rt::POLL.store((t.0 != t.1 + 1) as u32, Ordering::Relaxed);
     HELD.set(true);
 }
 
 fn turn_give() {
     HELD.set(false);
-    lock(&TURN.tickets).1 += 1;
+    let mut t = lock(&TURN.tickets);
+    t.1 += 1;
+    rt::POLL.store((t.0 != t.1) as u32, Ordering::Relaxed);
+    drop(t);
     TURN.cv.notify_all();
+}
+
+/// At a loop head with another thread waiting: let it run first.
+fn turn_yield() {
+    if HELD.get() {
+        turn_give();
+        turn_take();
+    }
 }
 
 pub fn set_last_error(e: u32) {
@@ -346,6 +364,7 @@ fn on_event(c: &mut Cpu, e: Event) {
                     None => fatal(c, &format!("import {} is not implemented yet", th.name)),
                 }
             };
+            LAST_CALL.store(mem().rd32(c.r[ESP]), std::sync::atomic::Ordering::Relaxed);
             turn_give();
             let r = f(c);
             turn_take();
@@ -358,6 +377,42 @@ fn on_event(c: &mut Cpu, e: Event) {
         Event::Unimpl(a) => fatal(c, &format!("unsupported instruction at {a:#x}")),
     }
 }
+
+/// Return address of the last import call, for crash reports.
+static LAST_CALL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Report an access violation in guest memory (a bad game pointer) before the process dies.
+#[cfg(windows)]
+fn catch_faults() {
+    use windows_sys::Win32::Foundation::{EXCEPTION_ACCESS_VIOLATION, NTSTATUS};
+    use windows_sys::Win32::System::Diagnostics::Debug::{AddVectoredExceptionHandler, EXCEPTION_POINTERS};
+    unsafe extern "system" fn on_fault(info: *mut EXCEPTION_POINTERS) -> i32 {
+        let rec = unsafe { &*(*info).ExceptionRecord };
+        if rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION as NTSTATUS {
+            let base = mem().base as usize;
+            let a = rec.ExceptionInformation[1];
+            let kind = ["read", "write", "execute"].get(rec.ExceptionInformation[0]).unwrap_or(&"access");
+            if a >= base && a - base < rt::GUEST_SPAN {
+                // the recompiled function the host code belongs to: the nearest start below it
+                let pc = rec.ExceptionAddress as usize;
+                let func = rt::DISPATCH.get().and_then(|d| d.table.iter().filter(|e| e.1 <= pc).max_by_key(|e| e.1).map(|e| e.0));
+                log!(
+                    "fatal: guest memory {kind} at {:#x} in the function at {} (last import call returned to {:#x})",
+                    a - base,
+                    func.map_or("?".into(), |f| format!("{f:#x}")),
+                    LAST_CALL.load(std::sync::atomic::Ordering::Relaxed)
+                );
+            } else {
+                log!("fatal: host memory {kind} at {a:#x} (code {:#x})", rec.ExceptionAddress as usize);
+            }
+        }
+        0 // EXCEPTION_CONTINUE_SEARCH
+    }
+    unsafe { AddVectoredExceptionHandler(0, Some(on_fault)) };
+}
+
+#[cfg(not(windows))]
+fn catch_faults() {}
 
 fn fatal(c: &Cpu, msg: &str) -> ! {
     let m = mem();
@@ -446,10 +501,12 @@ pub fn host_path(guest: &str) -> PathBuf {
 fn find_import(dll: &str, name: &str) -> Option<&'static Import> {
     let tables: &[&[Import]] = match dll.to_ascii_uppercase().as_str() {
         "KERNEL32.DLL" => &[kernel32::IMPORTS],
-        "USER32.DLL" => &[user32::IMPORTS],
+        "USER32.DLL" => &[dialog::IMPORTS, user32::IMPORTS],
         "GDI32.DLL" => &[gdi32::IMPORTS],
         "ADVAPI32.DLL" => &[advapi32::IMPORTS],
         "DDRAW.DLL" => &[ddraw::IMPORTS],
+        "DSOUND.DLL" => &[dsound::IMPORTS],
+        "WINMM.DLL" => &[dsound::IMPORTS, misc::IMPORTS],
         _ => &[misc::IMPORTS],
     };
     tables.iter().flat_map(|t| t.iter()).find(|i| i.0 == name)
@@ -492,6 +549,16 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
     }
 
     rt::set_handler(on_event);
+    rt::set_yield(turn_yield);
+    catch_faults();
+    if std::env::var_os("FCOP_WATCH").is_some() {
+        // where the game is, every 2 s (for hangs)
+        std::thread::spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let t = *lock(&TURN.tickets);
+            log!("watch: last import call returned to {:#x}, turn {}/{}, poll {}", LAST_CALL.load(Ordering::Relaxed), t.1, t.0, rt::POLL.load(Ordering::Relaxed));
+        });
+    }
     let mut c = Cpu::new(m);
     c.fs_base = TIB;
     c.r[ESP] = STACK_HI - 64;
@@ -607,4 +674,10 @@ pub fn printf(fmt: &str, mut arg: impl FnMut(u32) -> u32) -> String {
         }
     }
     out
+}
+
+/// A resource of the loaded EXE (first language): guest address and size of its data.
+pub fn resource(ty: ResId, id: ResId) -> Option<(u32, u32)> {
+    let m = mem();
+    crate::image::find_resource(&|a| m.rd8(a), IMAGE_BASE, ty, id)
 }

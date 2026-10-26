@@ -586,6 +586,9 @@ fn s_blt(c: &mut Cpu) -> u32 {
     let full = |s: &Surface| [0, 0, s.w as i32, s.h as i32];
     if flags & DDBLT_COLORFILL != 0 {
         let color = if fx != 0 { mem().rd32(fx + 0x50) } else { 0 };
+        if trace() && fx != 0 {
+            log!("  fill {color:#x} (DDBLTFX size {}, at 0x48: {:#x})", mem().rd32(fx), mem().rd32(fx + 0x48));
+        }
         fill(dst, dr.unwrap_or(full(dst)), color);
     } else {
         let Some(s) = d.surfaces.get(&src) else { return DDERR_INVALIDPARAMS };

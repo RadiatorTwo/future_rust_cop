@@ -1,6 +1,7 @@
 //! USER32: window classes and windows, the message queue, timers, keyboard and mouse state.
 //! The game's window procedures are guest code; input comes from `window`.
 
+use super::dialog;
 use super::window::{self, Input};
 use super::{Import, arg, cstr, guest_call, log, mem, put_cstr};
 use crate::rt::Cpu;
@@ -29,6 +30,7 @@ pub const WM_SYSKEYDOWN: u32 = 0x104;
 pub const WM_SYSKEYUP: u32 = 0x105;
 pub const WM_TIMER: u32 = 0x113;
 pub const WM_MOUSEMOVE: u32 = 0x200;
+pub const WM_MOUSEWHEEL: u32 = 0x20a;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Msg {
@@ -68,6 +70,8 @@ struct State {
     /// GetAsyncKeyState: bit 7 down, bit 0 pressed since the last query
     keys: [u8; 256],
     mouse: (i32, i32),
+    /// hooks: id, kind, procedure
+    hooks: Vec<(u32, u32, u32)>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -80,6 +84,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     timers: Vec::new(),
     keys: [0; 256],
     mouse: (0, 0),
+    hooks: Vec::new(),
 });
 
 fn st() -> MutexGuard<'static, State> {
@@ -108,6 +113,9 @@ fn trace_msg() -> bool {
 
 /// Call a window's procedure.
 pub fn send(c: &mut Cpu, hwnd: u32, msg: u32, wp: u32, lp: u32) -> u32 {
+    if dialog::owns(hwnd) {
+        return dialog::send(c, hwnd, msg, wp, lp);
+    }
     let proc_ = st().wins.get(&hwnd).map(|w| w.proc_);
     if trace_msg() {
         log!("msg {hwnd:#x} {msg:#x} {wp:#x} {lp:#x}");
@@ -162,6 +170,10 @@ fn poll(wait: Duration) {
                 let (x, y) = s.mouse;
                 s.queue.push_back(m(msg, buttons(&s.keys), (x as u32 & 0xffff) | (y as u32) << 16));
             }
+            Input::Wheel(n) => {
+                let (x, y) = s.mouse;
+                s.queue.push_back(m(WM_MOUSEWHEEL, buttons(&s.keys) | ((n * 120) as u32) << 16, (x as u32 & 0xffff) | (y as u32) << 16));
+            }
             Input::Close => s.queue.push_back(m(WM_CLOSE, 0, 0)),
             Input::Focus(f) => {
                 s.queue.push_back(m(WM_ACTIVATEAPP, f as u32, 0));
@@ -194,6 +206,40 @@ fn buttons(keys: &[u8; 256]) -> u32 {
     (keys[1] >> 7) as u32 | ((keys[2] >> 7) as u32) << 1 | ((keys[0x10] >> 7) as u32) << 2 | ((keys[0x11] >> 7) as u32) << 3 | ((keys[4] >> 7) as u32) << 4
 }
 
+/// The next message for this thread, waiting up to `wait` for one (modal loops).
+pub fn next_message(c: &mut Cpu, wait: Duration) -> Option<Msg> {
+    poll(Duration::ZERO);
+    if let Some(m) = take_hooked(c, 0, 0, true) {
+        return Some(m);
+    }
+    poll(wait);
+    take_hooked(c, 0, 0, true)
+}
+
+/// Take a message; key messages pass the keyboard hooks first, which may swallow them.
+fn take_hooked(c: &mut Cpu, min: u32, max: u32, remove: bool) -> Option<Msg> {
+    loop {
+        let m = take_msg(min, max, remove)?;
+        if !remove || !(WM_KEYDOWN..=WM_SYSKEYUP).contains(&m.msg) {
+            return Some(m);
+        }
+        let hooks: Vec<u32> = st().hooks.iter().filter(|h| h.1 == WH_KEYBOARD).map(|h| h.2).collect();
+        // a keyboard hook gets the key, the repeat count and flags as in the message
+        let swallowed = hooks.into_iter().any(|p| guest_call(c, p, &[0, m.wp, m.lp]) != 0);
+        if !swallowed {
+            return Some(m);
+        }
+    }
+}
+
+/// What DispatchMessageA does with a message.
+pub fn dispatch(c: &mut Cpu, m: &Msg) -> u32 {
+    if m.msg == WM_TIMER && m.lp != 0 {
+        return guest_call(c, m.lp, &[m.hwnd, m.msg, m.wp, super::kernel32::ms_since_start()]);
+    }
+    send(c, m.hwnd, m.msg, m.wp, m.lp)
+}
+
 fn take_msg(min: u32, max: u32, remove: bool) -> Option<Msg> {
     let mut s = st();
     let k = s.queue.iter().position(|m| min == 0 && max == 0 || (min..=max).contains(&m.msg))?;
@@ -211,7 +257,7 @@ fn write_msg(p: u32, m: &Msg) {
 fn peek_message(c: &mut Cpu) -> u32 {
     let (p, min, max, flags) = (arg(c, 0), arg(c, 2), arg(c, 3), arg(c, 4));
     poll(Duration::ZERO);
-    match take_msg(min, max, flags & 1 != 0) {
+    match take_hooked(c, min, max, flags & 1 != 0) {
         Some(m) => {
             write_msg(p, &m);
             1
@@ -227,7 +273,7 @@ fn get_message(c: &mut Cpu) -> u32 {
     let (p, min, max) = (arg(c, 0), arg(c, 2), arg(c, 3));
     loop {
         poll(Duration::ZERO);
-        if let Some(m) = take_msg(min, max, true) {
+        if let Some(m) = take_hooked(c, min, max, true) {
             write_msg(p, &m);
             return (m.msg != WM_QUIT) as u32;
         }
@@ -242,10 +288,7 @@ fn read_msg(p: u32) -> Msg {
 
 fn dispatch_message(c: &mut Cpu) -> u32 {
     let m = read_msg(arg(c, 0));
-    if m.msg == WM_TIMER && m.lp != 0 {
-        return guest_call(c, m.lp, &[m.hwnd, m.msg, m.wp, super::kernel32::ms_since_start()]);
-    }
-    send(c, m.hwnd, m.msg, m.wp, m.lp)
+    dispatch(c, &m)
 }
 
 fn translate_message(_: &mut Cpu) -> u32 {
@@ -372,12 +415,27 @@ fn destroy(c: &mut Cpu, hwnd: u32) {
 }
 
 fn destroy_window(c: &mut Cpu) -> u32 {
-    destroy(c, arg(c, 0));
+    let h = arg(c, 0);
+    if dialog::owns(h) {
+        return dialog::with(h, |d, k| match k {
+            None => d.result = Some(0),
+            Some(k) => d.controls[k].visible = false,
+        })
+        .is_some() as u32;
+    }
+    destroy(c, h);
     1
 }
 
 fn show_window(c: &mut Cpu) -> u32 {
     let (h, cmd) = (arg(c, 0), arg(c, 1));
+    if dialog::owns(h) {
+        return dialog::with(h, |d, k| {
+            // the dialog itself is always shown
+            k.map_or(1, |k| std::mem::replace(&mut d.controls[k].visible, cmd != 0) as u32)
+        })
+        .unwrap_or(0);
+    }
     let was = st().wins.get(&h).is_some_and(|w| w.shown);
     if cmd != 0 {
         show(c, h);
@@ -387,6 +445,29 @@ fn show_window(c: &mut Cpu) -> u32 {
 
 fn set_window_pos(c: &mut Cpu) -> u32 {
     let (h, x, y, w, hh, flags) = (arg(c, 0), arg(c, 2) as i32, arg(c, 3) as i32, arg(c, 4) as i32, arg(c, 5) as i32, arg(c, 6));
+    if dialog::owns(h) {
+        // controls: client coordinates of the dialog; the dialog stays centred
+        dialog::with(h, |d, k| {
+            if let Some(k) = k {
+                let (cap, o) = (if d.caption { 14 } else { 0 }, d.rect);
+                let r = &mut d.controls[k].rect;
+                if flags & 2 == 0 {
+                    let (dx, dy) = (o[0] + x - r[0], o[1] + cap + y - r[1]);
+                    *r = [r[0] + dx, r[1] + dy, r[2] + dx, r[3] + dy];
+                }
+                if flags & 1 == 0 {
+                    r[2] = r[0] + w;
+                    r[3] = r[1] + hh;
+                }
+                if flags & 0x80 != 0 {
+                    d.controls[k].visible = false;
+                } else if flags & 0x40 != 0 {
+                    d.controls[k].visible = true;
+                }
+            }
+        });
+        return 1;
+    }
     let mut s = st();
     if let Some(win) = s.wins.get_mut(&h) {
         let r = win.rect;
@@ -404,12 +485,20 @@ fn write_rect(p: u32, r: [i32; 4]) {
 }
 
 fn get_window_rect(c: &mut Cpu) -> u32 {
+    if let Some(r) = dialog::rect(arg(c, 0)) {
+        write_rect(arg(c, 1), r);
+        return 1;
+    }
     let r = st().wins.get(&arg(c, 0)).map_or([0, 0, DESKTOP_W as i32, DESKTOP_H as i32], |w| w.rect);
     write_rect(arg(c, 1), r);
     1
 }
 
 fn get_client_rect(c: &mut Cpu) -> u32 {
+    if let Some(r) = dialog::rect(arg(c, 0)) {
+        write_rect(arg(c, 1), [0, 0, r[2] - r[0], r[3] - r[1]]);
+        return 1;
+    }
     let r = st().wins.get(&arg(c, 0)).map_or([0, 0, DESKTOP_W as i32, DESKTOP_H as i32], |w| w.rect);
     write_rect(arg(c, 1), [0, 0, r[2] - r[0], r[3] - r[1]]);
     1
@@ -446,7 +535,12 @@ fn set_window_long(c: &mut Cpu) -> u32 {
 }
 
 fn set_window_text(c: &mut Cpu) -> u32 {
-    let (h, t) = (arg(c, 0), cstr(arg(c, 1)));
+    let (h, p) = (arg(c, 0), arg(c, 1));
+    if dialog::owns(h) {
+        dialog::send(c, h, 0x0c, 0, p);
+        return 1;
+    }
+    let t = cstr(p);
     if let Some(w) = st().wins.get_mut(&h) {
         w.title = t;
     }
@@ -545,11 +639,34 @@ fn begin_paint(c: &mut Cpu) -> u32 {
     super::gdi32::SCREEN_DC
 }
 
-fn get_dc(_: &mut Cpu) -> u32 {
+/// InvertRect on a dialog control's DC: the game marks the key box waiting for a key.
+fn invert_rect(c: &mut Cpu) -> u32 {
+    let dc = arg(c, 0);
+    if dialog::owns(dc) {
+        dialog::with(dc, |d, k| {
+            if let Some(k) = k {
+                d.controls[k].inverted ^= true;
+            }
+        });
+    }
+    1
+}
+
+fn get_dc(c: &mut Cpu) -> u32 {
+    // a dialog control's DC is its window handle (for InvertRect)
+    let h = arg(c, 0);
+    if dialog::owns(h) {
+        return h;
+    }
     super::gdi32::SCREEN_DC
 }
 
 fn set_focus(c: &mut Cpu) -> u32 {
+    let h = arg(c, 0);
+    if dialog::owns(h) {
+        dialog::with(h, |d, k| d.focus = k);
+        return 0;
+    }
     let mut s = st();
     std::mem::replace(&mut s.focus, arg(c, 0))
 }
@@ -558,13 +675,10 @@ fn find_window(_: &mut Cpu) -> u32 {
     0 // no other copy of the game is running
 }
 
-fn message_box(c: &mut Cpu) -> u32 {
-    let (text, title, kind) = (cstr(arg(c, 1)), if arg(c, 2) != 0 { cstr(arg(c, 2)) } else { String::new() }, arg(c, 3));
-    log!("MessageBox [{title}] {text} (type {kind:#x})");
-    match kind & 0xf {
-        4 | 3 => 6, // yes
-        _ => 1,     // ok
-    }
+fn enable_window(c: &mut Cpu) -> u32 {
+    let (h, on) = (arg(c, 0), arg(c, 1) != 0);
+    // returns whether it was disabled before
+    dialog::with(h, |d, k| k.map_or(0, |k| !std::mem::replace(&mut d.controls[k].enabled, on) as u32)).unwrap_or(0)
 }
 
 fn wsprintf(c: &mut Cpu) -> u32 {
@@ -582,8 +696,23 @@ fn ret1(_: &mut Cpu) -> u32 {
 fn first_arg(c: &mut Cpu) -> u32 {
     arg(c, 0)
 }
-fn hook(_: &mut Cpu) -> u32 {
-    0x4400
+const WH_KEYBOARD: u32 = 2;
+
+fn set_hook(c: &mut Cpu) -> u32 {
+    let (kind, proc_) = (arg(c, 0), arg(c, 1));
+    if kind != WH_KEYBOARD {
+        log!("warn: SetWindowsHookExA({kind}) not supported");
+    }
+    let mut s = st();
+    let id = 0x4400 + s.hooks.len() as u32;
+    s.hooks.push((id, kind, proc_));
+    id
+}
+
+fn unhook(c: &mut Cpu) -> u32 {
+    let id = arg(c, 0);
+    st().hooks.retain(|h| h.0 != id);
+    1
 }
 fn load_resource_handle(_: &mut Cpu) -> u32 {
     0x5500
@@ -613,7 +742,7 @@ pub const IMPORTS: &[Import] = &[
     ("SetActiveWindow", 1, first_arg),
     ("SetForegroundWindow", 1, ret1),
     ("SetFocus", 1, set_focus),
-    ("EnableWindow", 2, ret0),
+    ("EnableWindow", 2, enable_window),
     ("IsIconic", 1, ret0),
     ("FindWindowA", 2, find_window),
     ("DefWindowProcA", 4, def_window_proc),
@@ -633,7 +762,7 @@ pub const IMPORTS: &[Import] = &[
     ("ReleaseDC", 2, ret1),
     ("BeginPaint", 2, begin_paint),
     ("EndPaint", 2, ret1),
-    ("InvertRect", 2, ret1),
+    ("InvertRect", 2, invert_rect),
     ("SetRect", 5, set_rect),
     ("LoadIconA", 2, load_resource_handle),
     ("LoadCursorA", 2, load_resource_handle),
@@ -645,9 +774,8 @@ pub const IMPORTS: &[Import] = &[
     ("keybd_event", 4, keybd_event),
     ("SystemParametersInfoA", 4, system_parameters_info),
     ("GetSystemMetrics", 1, get_system_metrics),
-    ("SetWindowsHookExA", 4, hook),
-    ("UnhookWindowsHookEx", 1, ret1),
+    ("SetWindowsHookExA", 4, set_hook),
+    ("UnhookWindowsHookEx", 1, unhook),
     ("CallNextHookEx", 4, ret0),
-    ("MessageBoxA", 4, message_box),
     ("wsprintfA", -1, wsprintf),
 ];

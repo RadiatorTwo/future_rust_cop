@@ -61,6 +61,7 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
     jb.symbol("rt_rdtsc", rt::rt_rdtsc as *const u8);
     jb.symbol("rt_x87", rt::rt_x87 as *const u8);
     jb.symbol("rt_fpu_round", rt::rt_fpu_round as *const u8);
+    jb.symbol("rt_yield", rt::rt_yield as *const u8);
     let mut module = JITModule::new(jb);
     let tcfg = module.target_config();
     let ptr = tcfg.pointer_type();
@@ -82,6 +83,7 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
     let h_cpuid = decl("rt_cpuid", &sig(host_cc, &[ptr], None));
     let h_rdtsc = decl("rt_rdtsc", &sig(host_cc, &[ptr], None));
     let h_x87 = decl("rt_x87", &sig(host_cc, &[ptr, I32, I32], None));
+    let h_yield = decl("rt_yield", &sig(host_cc, &[ptr], None));
     let h_fpu_round = decl("rt_fpu_round", &sig(host_cc, &[I32, F64, F64, I32], Some(F64)));
 
     let ids: BTreeMap<u32, FuncId> = prog
@@ -114,6 +116,7 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
                 rdtsc: module.declare_func_in_func(h_rdtsc, b.func),
                 x87: module.declare_func_in_func(h_x87, b.func),
                 fpu_round: module.declare_func_in_func(h_fpu_round, b.func),
+                yield_: module.declare_func_in_func(h_yield, b.func),
                 guest_sig: b.import_signature(guest_sig.clone()),
             };
             let mut get_fn = |func: &mut cranelift_codegen::ir::Function, a: u32| module.declare_func_in_func(ids[&a], func);

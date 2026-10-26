@@ -1,7 +1,7 @@
-//! The small DLLs: WINMM (timers, PlaySound), ole32 (COM start-up; no DirectShow yet, so no
-//! videos), COMCTL32, and for now DirectSound and DirectInput as absent devices.
+//! The small DLLs: WINMM timers, ole32 (COM start-up; no DirectShow yet, so no videos),
+//! COMCTL32, and for now DirectInput as an absent device.
 
-use super::{Import, arg, guest_call, log, mem};
+use super::{Import, arg, guest_call, mem};
 use crate::rt::Cpu;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,28 +65,12 @@ fn time_kill_event(c: &mut Cpu) -> u32 {
     }
 }
 
-fn play_sound(c: &mut Cpu) -> u32 {
-    let p = arg(c, 0);
-    if p != 0 && super::trace_api() {
-        log!("PlaySoundA({})", super::cstr(p));
-    }
-    1
-}
-
 fn co_create_instance(c: &mut Cpu) -> u32 {
     let out = arg(c, 4);
     if out != 0 {
         mem().wr32(out, 0);
     }
     0x8004_0154 // REGDB_E_CLASSNOTREG
-}
-
-fn no_dsound(c: &mut Cpu) -> u32 {
-    let out = arg(c, 1);
-    if out != 0 {
-        mem().wr32(out, 0);
-    }
-    0x8878_0078 // DSERR_NODRIVER
 }
 
 fn no_dinput(c: &mut Cpu) -> u32 {
@@ -108,12 +92,9 @@ pub const IMPORTS: &[Import] = &[
     ("timeEndPeriod", 1, ret0),
     ("timeSetEvent", 5, time_set_event),
     ("timeKillEvent", 1, time_kill_event),
-    ("PlaySoundA", 3, play_sound),
     ("CoInitialize", 1, ret0),
     ("CoUninitialize", 0, ret0),
     ("CoCreateInstance", 5, co_create_instance),
     ("#17", 0, ret0), // InitCommonControls
-    ("DirectSoundCreate", 3, no_dsound),
-    ("DirectSoundEnumerateA", 2, ret0),
     ("DirectInputCreateA", 4, no_dinput),
 ];

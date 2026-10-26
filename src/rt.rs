@@ -176,6 +176,23 @@ pub extern "C" fn rt_lookup(cpu: *mut Cpu, addr: u32) -> *const u8 {
     }
 }
 
+/// Nonzero while a guest thread waits for its turn (see `platform`): generated code checks it
+/// at loop heads and calls `rt_yield`, so a thread spinning on a flag lets the others run.
+pub static POLL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+static YIELD: OnceLock<fn()> = OnceLock::new();
+
+/// What `rt_yield` does (hand the turn to a waiting thread).
+pub fn set_yield(f: fn()) {
+    let _ = YIELD.set(f);
+}
+
+pub extern "C" fn rt_yield(_cpu: *mut Cpu) {
+    if let Some(f) = YIELD.get() {
+        f()
+    }
+}
+
 /// Run the guest code at `addr` (recompiled or not) until it returns; its return address
 /// must already be on the guest stack.
 pub fn run(cpu: &mut Cpu, addr: u32) {

@@ -25,6 +25,8 @@ pub enum Input {
     Move(i32, i32),
     /// 0 left, 1 right, 2 middle
     Button(u8, bool),
+    /// mouse wheel: lines, positive away from the user
+    Wheel(i32),
     Close,
     Focus(bool),
 }
@@ -36,6 +38,8 @@ struct App {
     input: VecDeque<Input>,
     /// the last frame shown: 0RGB pixels, width, height
     frame: (Vec<u32>, u32, u32),
+    /// drawn over the frame, stretched to the same area: ARGB pixels, width, height
+    overlay: Option<(Vec<u32>, u32, u32)>,
     cursor: PhysicalPosition<f64>,
 }
 
@@ -75,6 +79,7 @@ fn with_host<R>(f: impl FnOnce(&mut Host) -> R) -> R {
                     surface: None,
                     input: VecDeque::new(),
                     frame: (vec![0; 640 * 480], 640, 480),
+                    overlay: None,
                     cursor: PhysicalPosition::new(0.0, 0.0),
                 },
             }
@@ -107,7 +112,95 @@ pub fn pump(wait: Duration) {
             h.app.draw();
         }
         let _ = h.event_loop.pump_app_events(Some(wait), &mut h.app);
+        scripted(&mut h.app.input);
     });
+}
+
+/// FCOP_INPUT="9000:click@484,303 12000:Enter 15000:Numpad8*3000": input at fixed times (ms
+/// after start) for tests. `click@x,y` / `rclick@x,y` (frame pixels, after a move there),
+/// `move@x,y`, a key held 100 ms or `*ms` (Enter, Escape, Space, Tab, Up, Down, Left, Right,
+/// Ctrl, Alt, Shift, A-Z, 0-9, Numpad0-9, F1-F12), `close` (the window's close button).
+fn scripted(input: &mut VecDeque<Input>) {
+    static SCRIPT: Mutex<Option<VecDeque<(u64, Input)>>> = Mutex::new(None);
+    let mut s = SCRIPT.lock().unwrap();
+    let script = s.get_or_insert_with(|| std::env::var("FCOP_INPUT").map(|v| parse_script(&v)).unwrap_or_default());
+    let now = super::kernel32::start_time().elapsed().as_millis() as u64;
+    while script.front().is_some_and(|e| e.0 <= now) {
+        input.push_back(script.pop_front().unwrap().1);
+    }
+}
+
+fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
+    let mut ev = Vec::new();
+    for item in text.split_whitespace() {
+        let Some((t, what)) = item.split_once(':') else { continue };
+        let Ok(t) = t.parse::<u64>() else { continue };
+        let at = |s: &str| -> Option<(i32, i32)> {
+            let (x, y) = s.split_once(',')?;
+            Some((x.parse().ok()?, y.parse().ok()?))
+        };
+        if let Some((b, xy)) = what.split_once('@') {
+            let Some((x, y)) = at(xy) else { continue };
+            ev.push((t, Input::Move(x, y)));
+            let b = match b {
+                "click" => 0,
+                "rclick" => 1,
+                _ => continue,
+            };
+            ev.push((t + 30, Input::Button(b, true)));
+            ev.push((t + 130, Input::Button(b, false)));
+        } else if what == "close" {
+            ev.push((t, Input::Close));
+        } else {
+            let (name, hold) = what.split_once('*').map_or((what, 100), |(n, h)| (n, h.parse().unwrap_or(100)));
+            let Some((vk, scan)) = key_by_name(name).and_then(vk_of) else {
+                eprintln!("FCOP_INPUT: unknown key {name}");
+                continue;
+            };
+            ev.push((t, Input::Key { vk, scan, down: true, repeat: false }));
+            ev.push((t + hold, Input::Key { vk, scan, down: false, repeat: false }));
+        }
+    }
+    ev.sort_by_key(|e| e.0);
+    ev.into()
+}
+
+fn key_by_name(n: &str) -> Option<KeyCode> {
+    use KeyCode::*;
+    const LETTERS: [KeyCode; 26] = [
+        KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU,
+        KeyV, KeyW, KeyX, KeyY, KeyZ,
+    ];
+    const DIGITS: [KeyCode; 10] = [Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9];
+    const PAD: [KeyCode; 10] = [Numpad0, Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9];
+    const FN: [KeyCode; 12] = [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12];
+    let b = n.as_bytes();
+    if b.len() == 1 && b[0].is_ascii_alphabetic() {
+        return Some(LETTERS[(b[0].to_ascii_uppercase() - b'A') as usize]);
+    }
+    if b.len() == 1 && b[0].is_ascii_digit() {
+        return Some(DIGITS[(b[0] - b'0') as usize]);
+    }
+    if let Some(d) = n.strip_prefix("Numpad").and_then(|d| d.parse::<usize>().ok()) {
+        return PAD.get(d).copied();
+    }
+    if let Some(d) = n.strip_prefix('F').and_then(|d| d.parse::<usize>().ok()) {
+        return FN.get(d.wrapping_sub(1)).copied();
+    }
+    Some(match n {
+        "Enter" | "Return" => Enter,
+        "Escape" | "Esc" => Escape,
+        "Space" => Space,
+        "Tab" => Tab,
+        "Up" => ArrowUp,
+        "Down" => ArrowDown,
+        "Left" => ArrowLeft,
+        "Right" => ArrowRight,
+        "Ctrl" => ControlLeft,
+        "Alt" => AltLeft,
+        "Shift" => ShiftLeft,
+        _ => return None,
+    })
 }
 
 /// The next input event, if any (call `pump` first).
@@ -120,7 +213,6 @@ pub fn next_input() -> Option<Input> {
 
 /// Show a frame of 0RGB pixels, scaled to the window with its aspect kept.
 pub fn present(pixels: &[u32], w: u32, h: u32) {
-    shot(pixels, w, h);
     if !on_main() {
         *PENDING.lock().unwrap() = Some((pixels.to_vec(), w, h));
         return;
@@ -134,12 +226,12 @@ pub fn present(pixels: &[u32], w: u32, h: u32) {
 
 /// FCOP_SHOT=file.png: write the frame shown there, at most every half second (for checks
 /// without looking at the window).
-fn shot(pixels: &[u32], w: u32, h: u32) {
+fn shot(pixels: &[u32], w: u32, h: u32, force: bool) {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
     static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     let Some(path) = PATH.get_or_init(|| std::env::var("FCOP_SHOT").ok()) else { return };
     let mut last = LAST.lock().unwrap();
-    if last.is_some_and(|t| t.elapsed() < Duration::from_millis(500)) {
+    if !force && last.is_some_and(|t| t.elapsed() < Duration::from_millis(500)) {
         return;
     }
     *last = Some(std::time::Instant::now());
@@ -199,6 +291,42 @@ fn png(pixels: &[u32], w: u32, h: u32) -> Vec<u8> {
     out
 }
 
+/// `over` (ARGB) over `under` (0RGB).
+fn blend(under: u32, over: u32) -> u32 {
+    let a = over >> 24;
+    if a == 0 {
+        return under;
+    }
+    if a == 255 {
+        return over & 0xff_ffff;
+    }
+    let mix = |sh: u32| {
+        let (u, o) = ((under >> sh) & 0xff, (over >> sh) & 0xff);
+        ((o * a + u * (255 - a)) / 255) << sh
+    };
+    mix(16) | mix(8) | mix(0)
+}
+
+/// Draw `pixels` (ARGB, w x h) over the game's frames, stretched to the frame's area; `None`
+/// removes it.
+pub fn set_overlay(overlay: Option<(Vec<u32>, u32, u32)>) {
+    if !on_main() {
+        return;
+    }
+    with_host(|h| {
+        h.app.overlay = overlay;
+        h.app.draw();
+    });
+}
+
+/// Size of the last frame shown (input positions are in its pixels).
+pub fn frame_size() -> (u32, u32) {
+    if !on_main() {
+        return (640, 480);
+    }
+    with_host(|h| (h.app.frame.1, h.app.frame.2))
+}
+
 /// Where a frame of w x h lands in a window of ww x wh: offset and scale.
 fn fit(w: u32, h: u32, ww: u32, wh: u32) -> (f64, f64, f64) {
     let s = (ww as f64 / w as f64).min(wh as f64 / h as f64);
@@ -207,6 +335,7 @@ fn fit(w: u32, h: u32, ww: u32, wh: u32) -> (f64, f64, f64) {
 
 impl App {
     fn draw(&mut self) {
+        self.shot();
         let (Some(win), Some(surface)) = (&self.window, &mut self.surface) else { return };
         let size = win.inner_size();
         let (Some(ww), Some(wh)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else { return };
@@ -235,8 +364,38 @@ impl App {
             for (d, c) in row.iter_mut().zip(&cols) {
                 *d = c.map_or(0, |c| src[c as usize]);
             }
+            if let Some((ov, ow, oh)) = &self.overlay {
+                // the overlay covers the frame's area at its own resolution
+                let oy = (fy as u64 * *oh as u64 / h as u64) as usize;
+                let orow = &ov[oy * *ow as usize..];
+                for (d, c) in row.iter_mut().zip(&cols) {
+                    let Some(c) = c else { continue };
+                    let o = orow[(*c as u64 * *ow as u64 / w as u64) as usize];
+                    *d = blend(*d, o);
+                }
+            }
         }
         let _ = buf.present();
+    }
+
+    /// FCOP_SHOT: the frame with the overlay over it, at the frame's size.
+    fn shot(&self) {
+        let (ref px, w, h) = self.frame;
+        match &self.overlay {
+            None => shot(px, w, h, false),
+            Some((ov, ow, oh)) => {
+                let mut out = px.clone();
+                for y in 0..h {
+                    for x in 0..w {
+                        let o = ov[(y as u64 * *oh as u64 / h as u64 * *ow as u64 + x as u64 * *ow as u64 / w as u64) as usize];
+                        let p = &mut out[(y * w + x) as usize];
+                        *p = blend(*p, o);
+                    }
+                }
+                // overlays change rarely (dialogs): every change is written
+                shot(&out, w, h, true);
+            }
+        }
     }
 
     fn create(&mut self, el: &ActiveEventLoop) {
@@ -278,6 +437,15 @@ impl ApplicationHandler for App {
                 self.cursor = position;
                 let (x, y) = self.frame_pos();
                 self.input.push_back(Input::Move(x, y));
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let lines = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y.round() as i32,
+                    winit::event::MouseScrollDelta::PixelDelta(p) => (p.y / 40.0).round() as i32,
+                };
+                if lines != 0 {
+                    self.input.push_back(Input::Wheel(lines));
+                }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let b = match button {

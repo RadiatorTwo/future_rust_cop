@@ -153,6 +153,16 @@ pub fn value(sub: &str, name: &str) -> Option<(u32, Vec<u8>)> {
     r.keys[k].iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone())
 }
 
+/// Set a value of the game's key or one below it and save the registry file.
+pub fn set_value(sub: &str, name: &str, t: u32, data: &[u8]) {
+    let mut r = reg();
+    let path = if sub.is_empty() { FCOP_KEY.to_string() } else { format!("{FCOP_KEY}\\{sub}") };
+    let key = r.key_mut(&path);
+    let existing = key.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
+    key.insert(existing, (t, data.to_vec()));
+    r.save();
+}
+
 fn trace() -> bool {
     static T: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *T.get_or_init(|| std::env::var_os("FCOP_TRACE_REG").is_some())

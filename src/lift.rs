@@ -28,6 +28,7 @@ pub struct Refs {
     pub rdtsc: FuncRef,
     pub x87: FuncRef,
     pub fpu_round: FuncRef,
+    pub yield_: FuncRef,
     pub guest_sig: SigRef,
 }
 
@@ -572,10 +573,18 @@ impl<'a, 'f> Lifter<'a, 'f> {
             }
             None => self.trap(self.f.entry, TRAP_INT),
         }
+        // loop heads: targets of backward branches inside the function
+        let heads: std::collections::HashSet<u32> = addrs
+            .iter()
+            .filter_map(|&a| direct_target(&code.at(a).unwrap()).filter(|&t| t <= a && self.f.inside(t)))
+            .collect();
         for &a in &addrs {
             let i = code.at(a).unwrap();
             let blk = self.blocks[&a];
             self.b.switch_to_block(blk);
+            if heads.contains(&a) {
+                self.poll();
+            }
             // an instruction the game rewrites: the version its current bytes encode
             for (bytes, v) in self.smc.variants.get(&a).into_iter().flatten() {
                 let same = self.code_is(a, bytes);
@@ -610,6 +619,19 @@ impl<'a, 'f> Lifter<'a, 'f> {
         let missing = std::mem::take(&mut self.missing);
         self.b.finalize(self.cfg);
         missing
+    }
+
+    /// At a loop head: let another guest thread run if one is waiting for its turn.
+    fn poll(&mut self) {
+        let ptr = self.cfg.pointer_type();
+        let at = self.b.ins().iconst(ptr, &crate::rt::POLL as *const _ as i64);
+        let v = self.b.ins().load(I32, mf(), at, 0);
+        let (slow, on) = (self.b.create_block(), self.b.create_block());
+        self.b.ins().brif(v, slow, &[], on, &[]);
+        self.b.switch_to_block(slow);
+        self.helper(self.refs.yield_, None);
+        self.b.ins().jump(on, &[]);
+        self.b.switch_to_block(on);
     }
 
     /// One instruction, continuing at the next unless it ends its block.
