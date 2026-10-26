@@ -129,7 +129,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   in the render block is logic (the actor grid 0x4a31b0 for hits, per-frame lists): it runs
   only in the game's frame, with the real places (in pictures it multiplied enemy damage
   and made temporary things flicker). Otherwise drawing only changes the random seed
-  0x50e370 (kept). Only with Glide, one view, playing ([0x511fb8] = 4), not paused. Choices 60 ... 300 (REG_DWORD
+  0x50e370 and the display list (records from [0x499b0c] to [0x511dc0]; 0x40ca10 links them
+  by depth, resets the end, draws), both kept: the loop adds records after the frame's
+  render (0x407d70: messages, indicator 0x4357f0) for the next frame, and a picture would
+  use them up (they flickered), so each picture puts them back. Only with Glide, one view, playing ([0x511fb8] = 4), not paused. Choices 60 ... 300 (REG_DWORD
   `FrameRate`, 0 = original 37.5; our combo below the 3DFX Options group in Preferences).
   Between frames it sleeps (turn handed over) until 2 ms before the next picture or frame.
   `FCOP_FPS=1` logs the frames shown per second (Glide).

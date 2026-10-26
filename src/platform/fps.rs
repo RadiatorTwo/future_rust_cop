@@ -13,8 +13,11 @@
 //! 0x44fd20 is logic, though: it rebuilds the grid of where the actors are (0x4a31b0), which
 //! the next frame's hits use, and empties per-frame lists. It runs only in the game's own
 //! frame, with the real places. Drawing changes nothing else but the game's random seed (a
-//! muzzle flash picks its look), which is kept. Only with Glide, one view (0x407360) and
-//! while playing.
+//! muzzle flash picks its look) and the display list, both kept: the list (0x38-byte records
+//! from [0x499b0c] up to [0x511dc0]) already holds what the loop added after the frame's
+//! render (0x407d70: messages, an indicator at 0x4357f0) for the next frame to draw; drawing
+//! empties it (0x40ca10 links the records by depth and resets the end), so every picture
+//! puts those records back. Only with Glide, one view (0x407360) and while playing.
 //!
 //! The player chooses the rate in Preferences (REG_DWORD `FrameRate` in the game's key,
 //! frames per second; missing or 0: the original).
@@ -63,6 +66,9 @@ const VIEWS: u32 = 0x511f50;
 const GLIDE: u32 = 0x511fa4;
 const HUD_OWNER: u32 = 0x511c08;
 const SEED: u32 = 0x50e370;
+/// The display list: the start of its records and their end.
+const LIST_START: u32 = 0x499b0c;
+const LIST_END: u32 = 0x511dc0;
 
 /// The frame rates a player can choose (0: the original's 37.5).
 pub const CHOICES: &[u32] = &[0, 60, 75, 100, 120, 144, 165, 240, 300];
@@ -259,6 +265,8 @@ pub fn unpaused(c: &mut Cpu) {
 fn picture(c: &mut Cpu, f: f64) {
     let m = mem();
     let (regs, seed) = (c.r, m.rd32(SEED));
+    let (start, end) = (m.rd32(LIST_START), m.rd32(LIST_END));
+    let waiting = m.slice(start, end.saturating_sub(start) as usize).to_vec();
     let esp = c.r[ESP];
     let view = esp - 0x200;
     c.r[ESP] = esp - 0x400;
@@ -275,6 +283,8 @@ fn picture(c: &mut Cpu, f: f64) {
     super::guest_call(c, RENDER_END, &[0]);
     super::guest_call(c, 0x4153a0, &[]);
     m.wr32(SEED, seed);
+    m.slice(start, waiting.len()).copy_from_slice(&waiting);
+    m.wr32(LIST_END, end);
     c.r = regs;
 }
 
