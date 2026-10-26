@@ -5,8 +5,10 @@ recompiled: the player's `FCopLAPD.exe` is decoded with [iced-x86], every functi
 lifted to [Cranelift] IR and compiled to native code. No game code or data is part of this
 repository; players use their own copy of the game.
 
-Status: prototype. The whole EXE (2176 functions, 174k instructions) is found and compiled;
-x87 floating point, self-modifying code and the Windows/DirectX layer are next.
+Status: prototype. The whole EXE (2176 functions, 174k instructions) is found and compiled,
+every instruction supported (x87 included, and the renderer's self-modifying code). A
+differential test against Unicorn agrees for every function it can run. The Windows/DirectX
+layer is next; see PLAN.md.
 
 ```
 cargo run --release -- path/to/FCopLAPD.exe

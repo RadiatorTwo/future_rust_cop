@@ -1,6 +1,6 @@
 # CLAUDE.md — Future Cop in Rust
 
-Hand-over for future sessions.
+Hand-over for future sessions. What is done and what is open: **PLAN.md** (keep it current).
 
 ## Goal (the user's)
 
@@ -75,7 +75,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 - `src/rt.rs` `Event`/`set_handler`: imports, traps and unsupported instructions go to a
   handler; setting `Cpu::stop` unwinds out of guest code (checked after every call).
 - `examples/missing.rs <exe>`: lists every instruction the lifter does not support yet;
-  `examples/smc.rs <exe>`: lists the self-modifying code fields.
+  `examples/smc.rs <exe>`: lists the self-modifying code fields;
+  `examples/dis.rs <exe> <addr>`: disassembles a function as discovery sees it;
+  `examples/at.rs <exe> <addr>...`: decodes single instructions.
 - Odd instructions: MMX is only movq/movd copies (`Cpu::mm`); `in` reads 0xff (gameport,
   nothing connected), `out` does nothing; `push/pop es` only occur in data decoded as code.
 
@@ -100,9 +102,5 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 ## Next steps
 
-Every instruction in all 2176 functions is supported and the difftest passes for every
-function Unicorn can run from random states, apart from the expected differences.
-
-1. The platform layer in Rust (Win32/DirectDraw/DirectSound/Glide on SDL2 + OpenGL), then
-   running the game.
-2. Compile functions in parallel; cache compiled code.
+See PLAN.md. Next: the platform layer (Win32/DirectDraw/DirectSound/Glide on SDL2 +
+OpenGL), first goal the main menu.
