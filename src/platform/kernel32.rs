@@ -912,14 +912,23 @@ fn get_current_thread(_: &mut Cpu) -> u32 {
 fn first_arg(c: &mut Cpu) -> u32 {
     arg(c, 0)
 }
+/// The DLLs the game loads itself: glide2x.dll is ours (`glide.rs`).
 fn load_library(c: &mut Cpu) -> u32 {
-    log!("LoadLibraryA({}): not available", cstr(arg(c, 0)));
+    let name = cstr(arg(c, 0));
+    if name.eq_ignore_ascii_case("glide2x.dll") {
+        return super::glide::MODULE;
+    }
+    log!("LoadLibraryA({name}): not available");
     set_last_error(126);
     0
 }
 fn get_proc_address(c: &mut Cpu) -> u32 {
-    let name = arg(c, 1);
-    log!("GetProcAddress({:#x}, {}): not available", arg(c, 0), if name > 0xffff { cstr(name) } else { format!("#{name}") });
+    let (module, name) = (arg(c, 0), arg(c, 1));
+    let name = if name > 0xffff { cstr(name) } else { format!("#{name}") };
+    if module == super::glide::MODULE {
+        return super::glide::proc_address(&name);
+    }
+    log!("GetProcAddress({module:#x}, {name}): not available");
     0
 }
 

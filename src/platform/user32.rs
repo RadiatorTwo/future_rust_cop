@@ -175,10 +175,18 @@ fn poll(wait: Duration) {
                 s.queue.push_back(m(WM_MOUSEWHEEL, buttons(&s.keys) | ((n * 120) as u32) << 16, (x as u32 & 0xffff) | (y as u32) << 16));
             }
             Input::Close => s.queue.push_back(m(WM_CLOSE, 0, 0)),
-            Input::Focus(f) => {
-                s.queue.push_back(m(WM_ACTIVATEAPP, f as u32, 0));
-                s.queue.push_back(m(WM_ACTIVATE, f as u32, 0));
+            // The game pauses itself when it is deactivated (WM_ACTIVATEAPP 0), as Windows 98
+            // games did; here it keeps running in the background. Keys held when the window
+            // loses the focus would never see their release: they are let go.
+            Input::Focus(false) => {
+                for vk in 0..256 {
+                    if s.keys[vk] & 0x80 != 0 {
+                        s.keys[vk] &= !0x80;
+                        s.queue.push_back(m(WM_KEYUP, vk as u32, 0xc000_0001));
+                    }
+                }
             }
+            Input::Focus(true) => {}
         }
     }
     let now = super::kernel32::ms_since_start();

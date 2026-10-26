@@ -67,8 +67,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `dsound.rs` (DirectSound and PlaySoundA: voices in guest memory mixed on cpal's audio
   thread, play cursors advance in real time; without a device a timer thread advances them),
   `misc.rs` (winmm timers, ole32, comctl32; DirectInput/DirectShow report "absent"),
-  `window.rs` (winit window, softbuffer frames, input; main thread only, other threads'
-  frames are shown at the next pump).
+  `window.rs` (winit window and input; main thread only, other threads' frames are shown
+  at the next pump), `gl.rs` (the OpenGL 3.3 context: shows a 2D frame or a rendered texture,
+  letterboxed, with the dialog overlay on top; FCOP_SHOT reads back the window), `glide.rs`
+  (Glide 2.x on OpenGL: LoadLibraryA("glide2x.dll") gives `glide::MODULE`, GetProcAddress a
+  thunk per decorated name `_grX@N`; unknown names get `thunk_not_implemented`, logged at
+  their first call. Triangles are batched per state into a texture of the grSstWinOpen size,
+  shown at grBufferSwap with the game's gamma; the fragment shader does Glide's colour and
+  alpha combine units and the chroma key, with bilinear filtering of the unkeyed texels and
+  their coverage as a soft edge). Registry `Group` = `3Dfx` (default) or `Software`.
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
@@ -76,6 +83,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   14000:Numpad8*5000"` (scripted input, ms after start; that one starts the first mission
   and walks forward), `FCOP_WATCH=1` (last import call and turn state every 2 s). An access
   violation in guest memory is reported with the recompiled function it happened in.
+- Focus: the game pauses itself on WM_ACTIVATEAPP 0; we never send it, so it keeps running
+  in the background, and keys held when the focus goes are released (WM_KEYUP).
 - Spin-waits: `rt::POLL` is nonzero while a guest thread waits for its turn; generated code
   loads it at every loop head (target of a backward branch) and calls `rt_yield`.
 - `resource(type, id)` finds resources in the loaded EXE (`image::list_resources` works on

@@ -24,12 +24,12 @@ const VISIBLE: u32 = 0x1000_0000;
 const TABSTOP: u32 = 0x0001_0000;
 
 /// The renderers a player can choose (the registry's `Group` value of the game's key).
-const RENDERERS: &[&str] = &["Software"];
+const RENDERERS: &[&str] = &["Software", "3Dfx"];
 
 fn renderer() -> String {
     advapi32::value("", "Group")
         .map(|(_, d)| d.iter().take_while(|&&b| b != 0).map(|&b| b as char).collect())
-        .unwrap_or_else(|| "Software".into())
+        .unwrap_or_else(|| "3Dfx".into())
 }
 
 pub fn adjust(template: u32, t: &mut Template) {

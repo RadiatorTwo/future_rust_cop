@@ -46,8 +46,17 @@ Done:
 
 Next:
 - [ ] DirectInput (now reported as absent; only used for joysticks)
-- [ ] Missions: play longer (other missions, Esc menu), then the 3D layer on OpenGL
-      (Glide/THRASH), separate from the menu layer
+- [x] First mission played 90 s by script (walking, turning, all weapons, jump, pause bar):
+      no crash; the game keeps running when the window loses the focus
+- [x] Presentation through OpenGL (glutin + glow): 2D frames, the dialog overlay, 3D scenes
+- [x] Glide 2.x on OpenGL (`glide.rs`, the default renderer; Software stays selectable):
+      combine units, blending, chroma key with soft edges when filtered, textures in TMU
+      memory, clip window, gamma. THRASH is left out (the game gives it ARGB4444 textures)
+- [ ] Glide: the game's own HUD bug at 1280x960 (it opens 1280x1024, text sits above its
+      icons; the old project's "precise" walker fixed it), other resolutions, filtering off
+- [ ] Other missions
+- [ ] Later: a native Glide backend (a 64-bit glide2x.dll such as dgVoodoo2's), behind the
+      same Glide layer
 - [ ] Videos (MPEG-1 from the CD's Video folder; DirectShow is reported as absent now)
 - [ ] Frame limit fields (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) as code fields
 
@@ -57,7 +66,18 @@ Next:
       go into the game's dialogs through `dialog/extend.rs` (renderer, MSAA, resolution, ...)
 - [ ] High resolution and widescreen through the OpenGL renderer
 - [ ] Linux, later Android
-- [ ] Remastered assets (later)
+- [ ] Texture quality (options in Preferences through `dialog/extend.rs`). The source has
+      no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`
+      resource with `PX16` (16-bit PlayStation 1555 pixels), a 256-entry 16-bit palette
+      `PLUT` and a lookup table `LkUp`. Ideas, most useful first:
+  - [ ] Mipmaps and anisotropic filtering (distant floors and walls shimmer): built per
+        sub-texture, since a page is an atlas and must not bleed
+  - [ ] Debanding: a little noise when the 5-bit gradients are widened to 8 bits
+  - [ ] An upscaling filter such as xBRZ (sharper edges than bilinear; a matter of taste)
+- [ ] Remastered assets (later): replace textures recognised by their content. Replacements
+      must not be limited to the game's formats: full colour (8 bits per channel and more,
+      e.g. PNG), real alpha, higher resolution than the 256x256 page; the renderer keeps
+      them as their own textures instead of converting them to 1555
 
 ### 3. Smaller open points
 

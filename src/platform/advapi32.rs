@@ -3,7 +3,7 @@
 //! ```text
 //! [HKEY_LOCAL_MACHINE\Software\Electronic Arts\Future Cop\Settings]
 //! Resolution = dword:00000009
-//! Group = sz:Software
+//! Group = sz:3Dfx
 //! Other = hex(3):0a0b0c
 //! ```
 
@@ -49,9 +49,9 @@ fn unhex(s: &str) -> Vec<u8> {
 
 impl Registry {
     fn load(&mut self) {
-        // the installer created the game's key and chose the renderer
+        // the installer created the game's key and chose the renderer: Glide (ours, on OpenGL)
         let k = self.key_mut(FCOP_KEY);
-        k.insert("Group".into(), (REG_SZ, b"Software\0".to_vec()));
+        k.insert("Group".into(), (REG_SZ, b"3Dfx\0".to_vec()));
         if let Ok(text) = std::fs::read_to_string(game_dir().join("registry.txt")) {
             let mut cur = None;
             for line in text.lines().map(str::trim) {

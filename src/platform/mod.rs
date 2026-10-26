@@ -11,6 +11,8 @@ pub mod ddraw;
 pub mod dialog;
 pub mod dsound;
 pub mod gdi32;
+pub mod gl;
+pub mod glide;
 pub mod kernel32;
 pub mod misc;
 pub mod user32;
@@ -226,6 +228,8 @@ struct Thunk {
     name: String,
     nargs: i32,
     f: Option<ImpFn>,
+    /// not implemented: returns 0, and its first call is logged
+    stub: bool,
 }
 
 static THUNKS: Mutex<Vec<Thunk>> = Mutex::new(Vec::new());
@@ -233,8 +237,20 @@ static THUNKS: Mutex<Vec<Thunk>> = Mutex::new(Vec::new());
 fn thunk_add(name: String, nargs: i32, f: Option<ImpFn>) -> u32 {
     let mut t = lock(&THUNKS);
     assert!((t.len() as u32) < THUNK_N, "out of thunks");
-    t.push(Thunk { name, nargs, f });
+    t.push(Thunk { name, nargs, stub: false, f });
     THUNK_LO + 4 * (t.len() as u32 - 1)
+}
+
+fn ret0(_: &mut Cpu) -> u32 {
+    0
+}
+
+/// A guest address for a function without an implementation yet: it returns 0, and its first
+/// call is logged by name.
+pub fn thunk_not_implemented(name: &str, nargs: i32) -> u32 {
+    let a = thunk_add(name.to_string(), nargs, Some(ret0));
+    lock(&THUNKS).last_mut().unwrap().stub = true;
+    a
 }
 
 /// A guest address that runs `f` when called.
@@ -360,7 +376,15 @@ fn on_event(c: &mut Cpu, e: Event) {
                     log!("api {} from {:#x}", th.name, mem().rd32(c.r[ESP]));
                 }
                 match th.f {
-                    Some(f) => (f, th.nargs),
+                    Some(f) => {
+                        if th.stub {
+                            static SEEN: Mutex<BTreeMap<String, ()>> = Mutex::new(BTreeMap::new());
+                            if lock(&SEEN).insert(th.name.clone(), ()).is_none() {
+                                log!("warn: {} is not implemented (returns 0)", th.name);
+                            }
+                        }
+                        (f, th.nargs)
+                    }
                     None => fatal(c, &format!("import {} is not implemented yet", th.name)),
                 }
             };

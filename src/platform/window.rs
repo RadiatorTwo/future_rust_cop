@@ -1,11 +1,10 @@
-//! The game window (winit) and the frames shown in it (softbuffer). Everything here lives on
-//! the game's main thread: the game creates its window, pumps its messages and presents its
+//! The game window (winit) and what is shown in it (OpenGL, `gl.rs`). Everything here lives
+//! on the game's main thread: the game creates its window, pumps its messages and presents its
 //! frames there.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::num::NonZeroU32;
-use std::rc::Rc;
+use super::gl::Gl;
 use std::sync::{Mutex, OnceLock};
 use std::thread::ThreadId;
 use std::time::Duration;
@@ -33,13 +32,13 @@ pub enum Input {
 
 struct App {
     want: Option<String>,
-    window: Option<Rc<Window>>,
-    surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
+    window: Option<Window>,
+    gl: Option<Gl>,
     input: VecDeque<Input>,
-    /// the last frame shown: 0RGB pixels, width, height
-    frame: (Vec<u32>, u32, u32),
-    /// drawn over the frame, stretched to the same area: ARGB pixels, width, height
-    overlay: Option<(Vec<u32>, u32, u32)>,
+    /// a frame shown before the window exists
+    early: Option<(Vec<u32>, u32, u32)>,
+    /// the overlay changed since the last screenshot
+    overlay_changed: bool,
     cursor: PhysicalPosition<f64>,
 }
 
@@ -76,10 +75,10 @@ fn with_host<R>(f: impl FnOnce(&mut Host) -> R) -> R {
                 app: App {
                     want: None,
                     window: None,
-                    surface: None,
+                    gl: None,
                     input: VecDeque::new(),
-                    frame: (vec![0; 640 * 480], 640, 480),
-                    overlay: None,
+                    early: None,
+                    overlay_changed: false,
                     cursor: PhysicalPosition::new(0.0, 0.0),
                 },
             }
@@ -107,9 +106,8 @@ pub fn pump(wait: Duration) {
         return;
     }
     with_host(|h| {
-        if let Some(f) = PENDING.lock().unwrap().take() {
-            h.app.frame = f;
-            h.app.draw();
+        if let Some((px, w, hh)) = PENDING.lock().unwrap().take() {
+            h.app.frame(&px, w, hh);
         }
         let _ = h.event_loop.pump_app_events(Some(wait), &mut h.app);
         scripted(&mut h.app.input);
@@ -119,7 +117,8 @@ pub fn pump(wait: Duration) {
 /// FCOP_INPUT="9000:click@484,303 12000:Enter 15000:Numpad8*3000": input at fixed times (ms
 /// after start) for tests. `click@x,y` / `rclick@x,y` (frame pixels, after a move there),
 /// `move@x,y`, a key held 100 ms or `*ms` (Enter, Escape, Space, Tab, Up, Down, Left, Right,
-/// Ctrl, Alt, Shift, A-Z, 0-9, Numpad0-9, F1-F12), `close` (the window's close button).
+/// Ctrl, Alt, Shift, A-Z, 0-9, Numpad0-9, F1-F12), `close` (the window's close button),
+/// `blur` / `focus` (the window loses or gets the focus).
 fn scripted(input: &mut VecDeque<Input>) {
     static SCRIPT: Mutex<Option<VecDeque<(u64, Input)>>> = Mutex::new(None);
     let mut s = SCRIPT.lock().unwrap();
@@ -151,6 +150,8 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
             ev.push((t + 130, Input::Button(b, false)));
         } else if what == "close" {
             ev.push((t, Input::Close));
+        } else if what == "blur" || what == "focus" {
+            ev.push((t, Input::Focus(what == "focus")));
         } else {
             let (name, hold) = what.split_once('*').map_or((what, 100), |(n, h)| (n, h.parse().unwrap_or(100)));
             let Some((vk, scan)) = key_by_name(name).and_then(vk_of) else {
@@ -217,25 +218,48 @@ pub fn present(pixels: &[u32], w: u32, h: u32) {
         *PENDING.lock().unwrap() = Some((pixels.to_vec(), w, h));
         return;
     }
+    with_host(|host| host.app.frame(pixels, w, h));
+}
+
+/// Run `f` with the OpenGL context (None before the window exists or off the main thread).
+pub fn with_gl<R>(f: impl FnOnce(&mut Gl) -> R) -> Option<R> {
+    if !on_main() {
+        return None;
+    }
+    with_host(|h| h.app.gl.as_mut().map(f))
+}
+
+/// Show a texture something rendered (first row at the bottom), w x h, with a gamma.
+pub fn show_texture(tex: glow::Texture, w: u32, h: u32, gamma: f32) {
+    if !on_main() {
+        return;
+    }
     with_host(|host| {
-        let app = &mut host.app;
-        app.frame = (pixels.to_vec(), w, h);
-        app.draw();
+        if let Some(gl) = &mut host.app.gl {
+            gl.shown = (tex, w, h, false, gamma);
+            host.app.draw();
+        }
     });
 }
 
-/// FCOP_SHOT=file.png: write the frame shown there, at most every half second (for checks
-/// without looking at the window).
-fn shot(pixels: &[u32], w: u32, h: u32, force: bool) {
+/// FCOP_SHOT=file.png: the picture shown is written there (as the window shows it), at most
+/// every half second, and at every change of the overlay (for checks without looking).
+fn shot_path() -> Option<&'static String> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
-    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-    let Some(path) = PATH.get_or_init(|| std::env::var("FCOP_SHOT").ok()) else { return };
-    let mut last = LAST.lock().unwrap();
-    if !force && last.is_some_and(|t| t.elapsed() < Duration::from_millis(500)) {
-        return;
+    PATH.get_or_init(|| std::env::var("FCOP_SHOT").ok()).as_ref()
+}
+
+static LAST_SHOT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+fn shot_due(force: bool) -> bool {
+    shot_path().is_some() && (force || LAST_SHOT.lock().unwrap().is_none_or(|t| t.elapsed() >= Duration::from_millis(500)))
+}
+
+fn write_shot(px: &[u32], w: u32, h: u32) {
+    *LAST_SHOT.lock().unwrap() = Some(std::time::Instant::now());
+    if let Some(path) = shot_path() {
+        let _ = std::fs::write(path, png(px, w, h));
     }
-    *last = Some(std::time::Instant::now());
-    let _ = std::fs::write(path, png(pixels, w, h));
 }
 
 /// An uncompressed PNG of 0RGB pixels.
@@ -291,22 +315,6 @@ fn png(pixels: &[u32], w: u32, h: u32) -> Vec<u8> {
     out
 }
 
-/// `over` (ARGB) over `under` (0RGB).
-fn blend(under: u32, over: u32) -> u32 {
-    let a = over >> 24;
-    if a == 0 {
-        return under;
-    }
-    if a == 255 {
-        return over & 0xff_ffff;
-    }
-    let mix = |sh: u32| {
-        let (u, o) = ((under >> sh) & 0xff, (over >> sh) & 0xff);
-        ((o * a + u * (255 - a)) / 255) << sh
-    };
-    mix(16) | mix(8) | mix(0)
-}
-
 /// Draw `pixels` (ARGB, w x h) over the game's frames, stretched to the frame's area; `None`
 /// removes it.
 pub fn set_overlay(overlay: Option<(Vec<u32>, u32, u32)>) {
@@ -314,8 +322,11 @@ pub fn set_overlay(overlay: Option<(Vec<u32>, u32, u32)>) {
         return;
     }
     with_host(|h| {
-        h.app.overlay = overlay;
-        h.app.draw();
+        if let Some(gl) = &mut h.app.gl {
+            gl.overlay(overlay.as_ref().map(|(px, w, hh)| (&px[..], *w, *hh)));
+            h.app.overlay_changed = true;
+            h.app.draw();
+        }
     });
 }
 
@@ -324,94 +335,55 @@ pub fn frame_size() -> (u32, u32) {
     if !on_main() {
         return (640, 480);
     }
-    with_host(|h| (h.app.frame.1, h.app.frame.2))
+    with_host(|h| h.app.gl.as_ref().map_or((640, 480), |g| (g.shown.1, g.shown.2)))
 }
 
 /// Where a frame of w x h lands in a window of ww x wh: offset and scale.
-fn fit(w: u32, h: u32, ww: u32, wh: u32) -> (f64, f64, f64) {
+pub fn fit(w: u32, h: u32, ww: u32, wh: u32) -> (f64, f64, f64) {
     let s = (ww as f64 / w as f64).min(wh as f64 / h as f64);
     ((ww as f64 - w as f64 * s) / 2.0, (wh as f64 - h as f64 * s) / 2.0, s)
 }
 
 impl App {
-    fn draw(&mut self) {
-        self.shot();
-        let (Some(win), Some(surface)) = (&self.window, &mut self.surface) else { return };
-        let size = win.inner_size();
-        let (Some(ww), Some(wh)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else { return };
-        if surface.resize(ww, wh).is_err() {
-            return;
+    fn frame(&mut self, px: &[u32], w: u32, h: u32) {
+        match &mut self.gl {
+            Some(gl) => {
+                gl.frame(px, w, h);
+                self.draw();
+            }
+            None => self.early = Some((px.to_vec(), w, h)),
         }
-        let Ok(mut buf) = surface.buffer_mut() else { return };
-        let (ref px, w, h) = self.frame;
-        let (ww, wh) = (ww.get(), wh.get());
-        let (ox, oy, s) = fit(w, h, ww, wh);
-        // nearest neighbour; columns once per frame
-        let cols: Vec<Option<u32>> = (0..ww)
-            .map(|x| {
-                let fx = ((x as f64 + 0.5 - ox) / s).floor();
-                (fx >= 0.0 && fx < w as f64).then_some(fx as u32)
-            })
-            .collect();
-        for y in 0..wh {
-            let fy = ((y as f64 + 0.5 - oy) / s).floor();
-            let row = &mut buf[(y * ww) as usize..((y + 1) * ww) as usize];
-            if fy < 0.0 || fy >= h as f64 {
-                row.fill(0);
-                continue;
-            }
-            let src = &px[(fy as u32 * w) as usize..];
-            for (d, c) in row.iter_mut().zip(&cols) {
-                *d = c.map_or(0, |c| src[c as usize]);
-            }
-            if let Some((ov, ow, oh)) = &self.overlay {
-                // the overlay covers the frame's area at its own resolution
-                let oy = (fy as u64 * *oh as u64 / h as u64) as usize;
-                let orow = &ov[oy * *ow as usize..];
-                for (d, c) in row.iter_mut().zip(&cols) {
-                    let Some(c) = c else { continue };
-                    let o = orow[(*c as u64 * *ow as u64 / w as u64) as usize];
-                    *d = blend(*d, o);
-                }
-            }
-        }
-        let _ = buf.present();
     }
 
-    /// FCOP_SHOT: the frame with the overlay over it, at the frame's size.
-    fn shot(&self) {
-        let (ref px, w, h) = self.frame;
-        match &self.overlay {
-            None => shot(px, w, h, false),
-            Some((ov, ow, oh)) => {
-                let mut out = px.clone();
-                for y in 0..h {
-                    for x in 0..w {
-                        let o = ov[(y as u64 * *oh as u64 / h as u64 * *ow as u64 + x as u64 * *ow as u64 / w as u64) as usize];
-                        let p = &mut out[(y * w + x) as usize];
-                        *p = blend(*p, o);
-                    }
-                }
-                // overlays change rarely (dialogs): every change is written
-                shot(&out, w, h, true);
-            }
+    fn draw(&mut self) {
+        let (Some(win), Some(gl)) = (&self.window, &mut self.gl) else { return };
+        let size = win.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        let want_shot = shot_due(self.overlay_changed);
+        if let Some((px, w, h)) = gl.draw(size.width, size.height, want_shot) {
+            write_shot(&px, w, h);
+            self.overlay_changed = false;
         }
     }
 
     fn create(&mut self, el: &ActiveEventLoop) {
         let Some(title) = self.want.take() else { return };
         let attrs = Window::default_attributes().with_title(title).with_inner_size(LogicalSize::new(1280.0, 960.0));
-        let win = Rc::new(el.create_window(attrs).expect("cannot create the window"));
-        let ctx = softbuffer::Context::new(win.clone()).expect("softbuffer context");
-        self.surface = Some(softbuffer::Surface::new(&ctx, win.clone()).expect("softbuffer surface"));
+        let (win, gl) = Gl::new(el, attrs);
         self.window = Some(win);
+        self.gl = Some(gl);
+        if let Some((px, w, h)) = self.early.take() {
+            self.frame(&px, w, h);
+        }
     }
 
     /// The cursor in frame pixels.
     fn frame_pos(&self) -> (i32, i32) {
         let Some(win) = &self.window else { return (0, 0) };
         let size = win.inner_size();
-        let (_, w, h) = self.frame;
+        let (w, h) = self.gl.as_ref().map_or((640, 480), |g| (g.shown.1, g.shown.2));
         let (ox, oy, s) = fit(w, h, size.width.max(1), size.height.max(1));
         let x = ((self.cursor.x - ox) / s).clamp(0.0, w as f64 - 1.0);
         let y = ((self.cursor.y - oy) / s).clamp(0.0, h as f64 - 1.0);
@@ -432,7 +404,13 @@ impl ApplicationHandler for App {
         match e {
             WindowEvent::CloseRequested => self.input.push_back(Input::Close),
             WindowEvent::Focused(f) => self.input.push_back(Input::Focus(f)),
-            WindowEvent::RedrawRequested | WindowEvent::Resized(_) => self.draw(),
+            WindowEvent::Resized(size) => {
+                if let Some(gl) = &self.gl {
+                    gl.resize(size.width, size.height);
+                }
+                self.draw();
+            }
+            WindowEvent::RedrawRequested => self.draw(),
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = position;
                 let (x, y) = self.frame_pos();
