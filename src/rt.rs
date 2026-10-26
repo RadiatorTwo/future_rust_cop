@@ -33,6 +33,8 @@ pub struct Cpu {
     /// x87 status word without TOP (condition codes C0-C3, exception bits) and control word
     pub fsw: u16,
     pub fcw: u16,
+    /// MMX registers (their aliasing with the x87 registers is not modelled)
+    pub mm: [u64; 8],
 }
 
 pub const EAX: usize = 0;
@@ -63,6 +65,7 @@ impl Cpu {
             top: 0,
             fsw: 0,
             fcw: 0x37f,
+            mm: [0; 8],
         }
     }
 }

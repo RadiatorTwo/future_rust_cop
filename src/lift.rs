@@ -44,7 +44,9 @@ pub fn unsupported(i: &Instruction) -> Option<String> {
         match i.op_kind(k) {
             OpKind::Register => {
                 let r = i.op_register(k);
-                if !(r.is_gpr8() || r.is_gpr16() || r.is_gpr32() || r.is_st()) {
+                // segment registers only as push/pop es (bytes in code that is never run)
+                let seg = r.is_segment_register() && matches!(i.mnemonic(), Mnemonic::Push | Mnemonic::Pop);
+                if !(r.is_gpr8() || r.is_gpr16() || r.is_gpr32() || r.is_st() || r.is_mm() || seg) {
                     return Some(format!("register {r:?}"));
                 }
             }
@@ -81,7 +83,10 @@ pub fn unsupported(i: &Instruction) -> Option<String> {
         | Cld | Std | Xchg | Bt | Bts | Btr | Btc | Cdq | Cwde | Cbw | Cwd | Xlatb | Div | Idiv | Leave | Nop | Wait
         | Pause | Cli | Sti | Cpuid | Rdtsc | Movsb | Movsw | Movsd | Stosb | Stosw | Stosd | Lodsb | Lodsw | Lodsd
         | Scasb | Scasw | Scasd | Cmpsb | Cmpsw | Cmpsd | Jmp | Call | Ret | Loop | Loope | Loopne | Jecxz | Jcxz
-        | Int3 | Hlt | Ud2 | Int | Into => true,
+        | Int3 | Hlt | Ud2 | Int | Into | Emms | In | Out => true,
+        // port input without rep (the gameport)
+        Insb | Insw | Insd => !(i.has_rep_prefix() || i.has_repe_prefix() || i.has_repne_prefix()),
+        Movd | Movq => (0..i.op_count()).all(|k| i.op_kind(k) != OpKind::Register || !i.op_register(k).is_xmm()),
         Bswap => i.op0_register().is_gpr32(),
         Shld | Shrd => i.op0_register().is_gpr32() || (i.op0_kind() == OpKind::Memory && i.memory_size().size() == 4),
         Mul => i.op_count() == 1 && op_size(i, 0) != 2,
@@ -628,6 +633,15 @@ impl<'a, 'f> Lifter<'a, 'f> {
         }
         match m {
             Nop | Wait | Pause | Cli | Sti => {}
+            Push | Pop if i.op0_kind() == OpKind::Register && i.op0_register().is_segment_register() => {
+                // a flat selector; what is popped is dropped
+                if m == Push {
+                    let v = self.iconst(I32, 0x23);
+                    self.push32(v);
+                } else {
+                    self.pop32();
+                }
+            }
             Mov => {
                 let v = self.rd(i, 1, op_size(i, 0));
                 self.wr(i, 0, v);
@@ -845,6 +859,26 @@ impl<'a, 'f> Lifter<'a, 'f> {
                 let sp = self.b.ins().iadd_imm_s(sp, -(i.immediate16() as i64));
                 self.set_reg(4, sp);
             }
+            Movd | Movq => self.mmx_move(i),
+            Emms => {} // MMX and x87 registers are kept apart
+            // hardware ports: the game polls the gameport (0x201); nothing is connected
+            In => {
+                let v = self.iconst(ty(op_size(i, 0)), -1i64 & ((1i64 << (8 * op_size(i, 0))) - 1));
+                self.wr(i, 0, v);
+            }
+            Out => {}
+            Insb | Insw | Insd => {
+                let n = i.memory_size().size() as u32;
+                let v = self.iconst(ty(n), (1i64 << (8 * n)) - 1);
+                let di = self.reg(7);
+                self.store(di, v);
+                let df = self.b.ins().load(I8, mf(), self.cpu, offset_of!(Cpu, df) as i32);
+                let df = self.b.ins().uextend(I32, df);
+                let step = self.b.ins().imul_imm_u(df, -2 * n as i64);
+                let step = self.b.ins().iadd_imm_s(step, n as i64);
+                let di = self.b.ins().iadd(di, step);
+                self.set_reg(7, di);
+            }
             Cpuid => self.helper(self.refs.cpuid, None),
             Rdtsc => self.helper(self.refs.rdtsc, None),
             _ => {
@@ -871,6 +905,26 @@ impl<'a, 'f> Lifter<'a, 'f> {
             }
         }
         false
+    }
+
+    /// movd/movq between MMX registers (`Cpu::mm`), general registers and memory.
+    fn mmx_move(&mut self, i: &Instruction) {
+        let n = if i.mnemonic() == Mnemonic::Movd { 4 } else { 8 };
+        let mm = |r: Register| (offset_of!(Cpu, mm) + 8 * (r.number() - Register::MM0.number())) as i32;
+        let v = match i.op_kind(1) {
+            OpKind::Register if i.op1_register().is_mm() => {
+                let v = self.b.ins().load(I64, mf(), self.cpu, mm(i.op1_register()));
+                if n == 4 { self.b.ins().ireduce(I32, v) } else { v }
+            }
+            _ => self.rd(i, 1, n),
+        };
+        match i.op_kind(0) {
+            OpKind::Register if i.op0_register().is_mm() => {
+                let v = if n == 4 { self.b.ins().uextend(I64, v) } else { v };
+                self.b.ins().store(mf(), v, self.cpu, mm(i.op0_register()));
+            }
+            _ => self.wr(i, 0, v),
+        }
     }
 
     fn bit8(&mut self, v: Value, bit: i64) -> Value {

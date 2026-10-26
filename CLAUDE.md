@@ -47,8 +47,12 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 - `src/main.rs`: prototype driver; tests strchr/strncpy/strstr/strcspn/strncmp/strpbrk
   (0x4780d0 ...), __aulldiv/__aullrem and _ftol (0x478090) against Rust on random inputs.
   Pass the EXE path (the old project's copy: ../FUTURE-COP-RECOMP/game_files/FCopLAPD/).
-- `tests/x87.rs`: assembles x87 snippets with iced's code_asm, recompiles and checks them
-  against Rust (`cargo test --release`); needs no game files.
+- `tests/`: x86 snippets assembled with iced's code_asm, recompiled and checked against Rust
+  (`cargo test --release`, harness in `tests/common/`); needs no game files. `x87.rs` for
+  the FPU, `misc.rs` for MMX moves, ports, push/pop es.
+- `examples/missing.rs <exe>`: lists every instruction the lifter does not support yet.
+- Odd instructions: MMX is only movq/movd copies (`Cpu::mm`); `in` reads 0xff (gameport,
+  nothing connected), `out` does nothing; `push/pop es` only occur in data decoded as code.
 
 ## Known facts about the game (from the earlier project)
 
@@ -67,10 +71,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 ## Next steps
 
-1. The last 0.4% (8 functions): MMX (mm0-mm6, emms), `in`/`out`/`insb`, ES as an operand.
-   x87 is done (99.6% of functions complete; FPU precision control is ignored).
-2. Self-modifying code fields (renderer), then a differential test against a reference
+Every instruction in all 2176 functions is supported now (FPU precision control is ignored).
+
+1. Self-modifying code fields (renderer), then a differential test against a reference
    emulator for broad coverage.
-3. The platform layer in Rust (Win32/DirectDraw/DirectSound/Glide on SDL2 + OpenGL), then
+2. The platform layer in Rust (Win32/DirectDraw/DirectSound/Glide on SDL2 + OpenGL), then
    running the game.
-4. Compile functions in parallel; cache compiled code.
+3. Compile functions in parallel; cache compiled code.

@@ -1,20 +1,13 @@
 //! x87 lifting checked against Rust: small assembled snippets are recompiled like the game's
 //! code and run on random inputs. Needs no game files.
 
-use fcop::discover::{Code, Program};
-use fcop::image::{Image, Section};
-use fcop::jit::{Compiled, compile};
-use fcop::rt::{Cpu, EAX, ESP, Memory, f64_to_f80};
+mod common;
+
+use common::{Guest, Rng, SCRATCH, Snippet, dbl};
+use fcop::rt::{EAX, f64_to_f80};
 use iced_x86::IcedError;
 use iced_x86::code_asm::*;
 
-const TEXT: u32 = 0x401000;
-const STACK_LO: u32 = 0x0010_0000;
-const STACK_HI: u32 = 0x0020_0000;
-const SCRATCH: u32 = 0x0100_0000;
-const RET_MAGIC: u32 = 0x7ffe_0000;
-
-type Snippet = fn(&mut CodeAssembler) -> Result<(), IcedError>;
 
 /// ST0 = -sqrt(|(a - a*b) + b/a|), through fld st(i), fxch and the popping forms.
 fn arith(a: &mut CodeAssembler) -> Result<(), IcedError> {
@@ -116,79 +109,6 @@ fn stack8(a: &mut CodeAssembler) -> Result<(), IcedError> {
 const SNIPPETS: [(&str, Snippet); 7] =
     [("arith", arith), ("copy64", copy64), ("round", round), ("compare", compare), ("mixed", mixed), ("f80", f80), ("stack8", stack8)];
 
-struct Guest {
-    c: Compiled,
-    mem: Memory,
-    addr: Vec<u32>,
-}
-
-impl Guest {
-    fn new() -> Guest {
-        let mut data = Vec::new();
-        let mut ranges = Vec::new();
-        for (name, f) in SNIPPETS {
-            let at = TEXT + data.len() as u32;
-            let mut a = CodeAssembler::new(32).unwrap();
-            f(&mut a).unwrap();
-            data.extend(a.assemble(at as u64).unwrap());
-            ranges.push((at, TEXT + data.len() as u32, name.to_string()));
-            data.resize(data.len().next_multiple_of(16), 0xcc);
-        }
-        let n = data.len() as u32;
-        let img = Image { data, base: 0x400000, entry: TEXT, sections: vec![Section { name: ".text".into(), va: TEXT, vsize: n, raw: 0, rsize: n }] };
-        let mut code = Code::new(&img);
-        let prog = Program::build(&mut code, &ranges);
-        let c = compile(&prog, &mut code);
-        assert_eq!(c.stats.complete, SNIPPETS.len(), "not supported: {:?}", c.stats.missing);
-        let mem = Memory::reserve();
-        mem.map(TEXT, TEXT + n);
-        mem.slice(TEXT, n as usize).copy_from_slice(&img.data);
-        mem.map(STACK_LO, STACK_HI);
-        mem.map(SCRATCH, SCRATCH + 0x1000);
-        Guest { c, mem, addr: ranges.iter().map(|r| r.0).collect() }
-    }
-
-    /// cdecl call of snippet `k` with dword arguments; returns the CPU afterwards.
-    fn call(&self, k: usize, args: &[u32]) -> Cpu {
-        let mut cpu = Cpu::new(&self.mem);
-        let mut top = STACK_HI - 0x100;
-        for &a in args.iter().rev() {
-            top -= 4;
-            self.mem.wr32(top, a);
-        }
-        top -= 4;
-        self.mem.wr32(top, RET_MAGIC);
-        cpu.r[ESP] = top;
-        self.c.call(&mut cpu, self.addr[k]);
-        cpu
-    }
-}
-
-fn dbl(x: f64) -> [u32; 2] {
-    let b = x.to_bits();
-    [b as u32, (b >> 32) as u32]
-}
-
-struct Rng(u64);
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-    /// doubles of every kind: specials, small integers and halves, any bit pattern
-    fn f64(&mut self) -> f64 {
-        const SPECIAL: [f64; 10] = [0.0, -0.0, 1.0, -1.0, 0.5, 2.5, -2.5, f64::INFINITY, f64::NEG_INFINITY, f64::NAN];
-        match self.next() % 4 {
-            0 => SPECIAL[(self.next() % 10) as usize],
-            1 => ((self.next() % 2001) as f64 - 1000.0) / 2.0,
-            2 => ((self.next() >> 11) as f64 - (1u64 << 52) as f64) * 2f64.powi((self.next() % 80) as i32 - 40),
-            _ => f64::from_bits(self.next()),
-        }
-    }
-}
-
 fn same(x: f64, y: f64) -> bool {
     x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan())
 }
@@ -207,7 +127,7 @@ fn round_ref(x: f64, rc: u16, bits: u32) -> i64 {
 
 #[test]
 fn x87() {
-    let g = Guest::new();
+    let g = Guest::new(&SNIPPETS);
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     let m = &g.mem;
     for _ in 0..3000 {
