@@ -60,10 +60,13 @@ Next:
       window's aspect, more world at the sides, HUD groups at the left/centre/right edge,
       target markers in place, dialogs stay 4:3. Tested forced 16:9 and 21:9
       (`FCOP_WIDE=<aspect>`, `FCOP_WIDE=0` off)
-- [x] Alt+Enter: borderless fullscreen
+- [x] Alt+Enter: borderless fullscreen (checked by the user on a real display, widescreen
+      included, 2026-10-26)
 - [x] "Widescreen" box in Preferences (3DFX Options, `dialog/extend.rs`): REG_DWORD
       `Widescreen` in the game's key (default on), applies at OK
-- [ ] Widescreen: check in a real 16:9 fullscreen, in split screen and while moving fast
+- [x] Widescreen checked by the user: split screen, fullscreen, fast movement (2026-10-26)
+- [x] Split screen (Crime War): both players share one health bar and die together: the
+      original's design (Precinct Assault has separate bars; checked by the user)
 - [ ] Widescreen with the software renderer (not planned yet: Glide is the default)
 - [ ] Glide: other resolutions, filtering off, split screen checked with precise mode
 - [x] Default keys for player 1 without a keypad (`user32::single_player_keys`): arrows,
