@@ -116,6 +116,18 @@ Next:
 
 ### 3. Smaller open points
 
+- [ ] Bug (user, 2026-10-27, not looked into yet): after finishing a level, back in the
+      menu, the menu is not drawn again; the whole picture is the pause menu's purple
+      background instead
+- [ ] Bug (user, 2026-10-27, not looked into yet): the game is not saved (the Load/Save
+      dialog shows, but no save game is kept)
+- [ ] Network play missing (user, 2026-10-27): Host Game and Join Game. The game takes
+      DirectPlay through CoCreateInstance (no import of its own), which only gives
+      DirectShow so far; its receive thread is 0x405180, its frame wait 0x406b20. Needs a
+      DirectPlay over our own transport (UDP/TCP)
+      Now: Host Game shows the game's message that it needs DirectX 5 (probably because
+      DirectPlay cannot be created; not checked)
+
 - [ ] FPU exception bits (status word bits 0-5) are not modelled (0x47c070, 0x469f60)
 - [ ] Difftest: Linux support (demand paging uses a Windows exception handler)
 - [ ] Difftest: start from a memory snapshot of the running game, so the 189 untested
