@@ -10,7 +10,10 @@
 //! - player weapons fired once per frame while their reload timer had run out (`weapon`);
 //! - the player robot's physics runs in whole 8-tick steps, so it and the camera juddered
 //!   (`robot`, `physics`, `camera`);
-//! - the camera turns toward its target in 2-tick units (`turn`).
+//! - the camera turns toward its target in 2-tick units (`turn`);
+//! - hovering, the physics adds the frame time to the turn speed in every step (`physics`);
+//! - effects (the list at [0x4a2ab0]) count their timers down by (rate * ticks) >> 8, which
+//!   is 0 for short frames, so they lived and emitted far longer (`effects`).
 
 use super::{advapi32, mem};
 use crate::rt::{Cpu, EAX, ESP, call_original};
@@ -23,6 +26,13 @@ pub const ROBOT: u32 = 0x446e00;
 pub const PHYSICS: u32 = 0x442120;
 pub const CAMERA: u32 = 0x4456a0;
 pub const TURN: u32 = 0x445eb0;
+pub const CLOCK: u32 = 0x4130c0;
+pub const EFFECTS: u32 = 0x43d310;
+
+/// Where the mission loop's wait (0x406a30) calls the clock: the return address.
+const WAITING: u32 = 0x406a56;
+/// The ticks at the start of the last frame.
+const LAST: u32 = 0x511e4c;
 
 /// The clock's ticks at the start of this frame.
 const NOW: u32 = 0x511ee4;
@@ -75,6 +85,45 @@ fn faster() -> bool {
 
 fn arg(c: &Cpu, n: u32) -> u32 {
     mem().rd32(c.r[ESP] + 4 + 4 * n)
+}
+
+/// The clock's time (doubles): now (set at every read) and at its start.
+const TIME: u32 = 0x49fe60;
+const START: u32 = 0x49fe50;
+/// Its factors from time to ticks (3 and 0.0001).
+const SCALE: [u32; 2] = [0x484618, 0x484620];
+
+fn f64_at(a: u32) -> f64 {
+    let m = mem();
+    f64::from_bits(m.rd32(a) as u64 | (m.rd32(a + 4) as u64) << 32)
+}
+
+/// 0x4130c0() reads the clock (ticks). The mission loop calls it in a busy loop until the
+/// frame's ticks have passed; there it sleeps instead (with the turn handed over) until
+/// shortly before the tick the frame is due, which keeps a core free. Sleeps can last longer
+/// than asked, so the last 2 ms are still spun.
+pub fn clock(c: &mut Cpu) {
+    let m = mem();
+    let from = m.rd32(c.r[ESP]);
+    call_original(c, CLOCK);
+    if from != WAITING {
+        return;
+    }
+    let limit = TICKS.load(Ordering::Relaxed);
+    let passed = c.r[EAX].wrapping_sub(m.rd32(LAST)) as i32;
+    // the loop's own test; outside 0..limit (a clock that started again) it is left alone
+    if !(0..limit as i32).contains(&passed) {
+        return;
+    }
+    let due = m.rd32(LAST).wrapping_add(limit);
+    let ticks = (f64_at(TIME) - f64_at(START)) * f64_at(SCALE[0]) * f64_at(SCALE[1]);
+    // nominal 300 ticks a second; never longer than a frame
+    let left = ((due as f64 - ticks) / 300.0).min(limit as f64 / 300.0) - 0.002;
+    if left > 0.0 {
+        super::turn_give();
+        std::thread::sleep(std::time::Duration::from_secs_f64(left));
+        super::turn_take();
+    }
 }
 
 // ---- weapons ----------------------------------------------------------------------------------
@@ -188,11 +237,39 @@ fn show(actor: u32) {
     }
 }
 
-/// 0x442120(actor, ...): the robot's physics.
+/// 0x442120(actor, dt, steps, ...): the robot's physics, `steps` steps of 8 ticks. Hovering
+/// (mode 1 at [actor+0xac]+0xad, 0x442510), every step adds dt to the turn speed: with
+/// 8-tick frames that was 8 a step. It gets 8 ticks for each step (the same in sum).
 pub fn physics(c: &mut Cpu) {
+    let m = mem();
     let actor = arg(c, 0);
+    if faster() && m.rd8(m.rd32(actor + 0xac) + 0xad) == 1 {
+        m.wr32(c.r[ESP] + 8, 8 * arg(c, 2));
+    }
     call_original(c, PHYSICS);
     show(actor);
+}
+
+/// Ticks not yet given to the effects.
+static EFFECT_TICKS: AtomicU32 = AtomicU32::new(0);
+
+/// 0x43d310(dt) updates every effect (emitters such as the sparks of the robot's
+/// transformation). Their timers lose (rate * dt) >> 8 a frame, rounded down: with frames of
+/// a tick or two mostly nothing, so emitters ran for many more frames, each emitting. They
+/// are updated in whole 8-tick frames, as in the original.
+pub fn effects(c: &mut Cpu) {
+    if !faster() {
+        EFFECT_TICKS.store(0, Ordering::Relaxed);
+        return call_original(c, EFFECTS);
+    }
+    let t = EFFECT_TICKS.load(Ordering::Relaxed) + arg(c, 0);
+    EFFECT_TICKS.store(t % 8, Ordering::Relaxed);
+    if t < 8 {
+        c.r[ESP] += 4; // ret
+        return;
+    }
+    mem().wr32(c.r[ESP] + 4, t / 8 * 8);
+    call_original(c, EFFECTS);
 }
 
 /// The frame's ticks while the robot's camera (0x4456a0) runs, for `turn`.

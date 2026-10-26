@@ -82,6 +82,10 @@ Next:
 - [x] Frame rate in Preferences (`fps.rs`): 60/75/100/150/300 fps through the frame limit
       fields; weapon fire rate, robot physics steps and camera turn corrected. Measured by
       script: 61, 101, 151, 301 fps (the game's clock runs 1 % fast)
+- [x] Performance at high frame rates: Glide batches across combine/constant/texture
+      changes (texture array), the frame wait sleeps; 300 fps hold in the first mission
+- [x] High frame rates: hover turn speed (0x442510) and the transformation's sparks
+      (effect timers 0x43d310) fixed after the user's report
 - [ ] Frame rate: checked by the user by eye (robot and camera smooth? fire rate as
       before?); find further things made for 8-tick frames (enemies, effects, timers)
 

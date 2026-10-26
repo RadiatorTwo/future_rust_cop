@@ -567,6 +567,14 @@ impl<'a, 'f> Lifter<'a, 'f> {
             let b = self.b.create_block();
             self.blocks.insert(a, b);
         }
+        let start = crate::discover::TEXT_START;
+        if crate::rt::count_file().is_some() && self.f.entry >= start && ((self.f.entry - start) as usize) < crate::rt::COUNTS.len() {
+            let ptr = self.cfg.pointer_type();
+            let at = self.b.ins().iconst(ptr, &crate::rt::COUNTS[(self.f.entry - start) as usize] as *const _ as i64);
+            let n = self.b.ins().load(I32, mf(), at, 0);
+            let n = self.b.ins().iadd_imm_u(n, 1);
+            self.b.ins().store(mf(), n, at, 0);
+        }
         match self.blocks.get(&self.f.entry) {
             Some(&b) => {
                 self.b.ins().jump(b, &[]);

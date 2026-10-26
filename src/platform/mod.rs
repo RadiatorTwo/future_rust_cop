@@ -370,6 +370,38 @@ fn trace_api() -> bool {
     *T.get_or_init(|| std::env::var_os("FCOP_TRACE_API").is_some())
 }
 
+/// `FCOP_PROF=1`: time spent in imports (and waiting for the turn after them), per import,
+/// logged every 2 s with the share of the wall time.
+fn prof() -> bool {
+    static P: OnceLock<bool> = OnceLock::new();
+    *P.get_or_init(|| std::env::var_os("FCOP_PROF").is_some_and(|v| v != "0"))
+}
+
+fn prof_add(k: usize, call: std::time::Duration, wait: std::time::Duration) {
+    use std::time::{Duration, Instant};
+    static P: Mutex<Option<(Instant, BTreeMap<usize, (u32, Duration, Duration)>)>> = Mutex::new(None);
+    let mut p = lock(&P);
+    let (t0, per) = p.get_or_insert_with(|| (Instant::now(), BTreeMap::new()));
+    let e = per.entry(k).or_default();
+    e.0 += 1;
+    e.1 += call;
+    e.2 += wait;
+    let wall = t0.elapsed();
+    if wall.as_secs_f32() < 2.0 {
+        return;
+    }
+    let mut v: Vec<_> = per.iter().collect();
+    v.sort_by_key(|e| std::cmp::Reverse(e.1.1 + e.1.2));
+    let names = lock(&THUNKS);
+    let pct = |d: Duration| 100.0 * d.as_secs_f32() / wall.as_secs_f32();
+    let (call, wait) = v.iter().fold((Duration::ZERO, Duration::ZERO), |a, e| (a.0 + e.1.1, a.1 + e.1.2));
+    log!("prof: imports {:.1}% (+{:.1}% waiting for the turn) of {:.1} s", pct(call), pct(wait), wall.as_secs_f32());
+    for (k, (n, call, wait)) in v.iter().take(8) {
+        log!("prof:   {:<28} {:>8} calls {:>5.1}% +{:.1}%", names[**k].name, n, pct(*call), pct(*wait));
+    }
+    *p = None;
+}
+
 fn on_event(c: &mut Cpu, e: Event) {
     match e {
         Event::Foreign(a) if (THUNK_LO..THUNK_LO + 4 * THUNK_N).contains(&a) => {
@@ -394,9 +426,14 @@ fn on_event(c: &mut Cpu, e: Event) {
                 }
             };
             LAST_CALL.store(mem().rd32(c.r[ESP]), std::sync::atomic::Ordering::Relaxed);
+            let t0 = prof().then(std::time::Instant::now);
             turn_give();
             let r = f(c);
+            let t1 = prof().then(std::time::Instant::now);
             turn_take();
+            if let (Some(t0), Some(t1)) = (t0, t1) {
+                prof_add(k, t1 - t0, t1.elapsed());
+            }
             c.r[EAX] = r;
             c.r[ESP] += 4 + 4 * nargs.max(0) as u32;
         }
@@ -556,6 +593,8 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (fps::PHYSICS, fps::physics),
     (fps::CAMERA, fps::camera),
     (fps::TURN, fps::turn),
+    (fps::CLOCK, fps::clock),
+    (fps::EFFECTS, fps::effects),
 ];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread
@@ -605,6 +644,23 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
             std::thread::sleep(std::time::Duration::from_secs(2));
             let t = *lock(&TURN.tickets);
             log!("watch: last import call returned to {:#x}, turn {}/{}, poll {}", LAST_CALL.load(Ordering::Relaxed), t.1, t.0, rt::POLL.load(Ordering::Relaxed));
+        });
+    }
+    if let Some(path) = rt::count_file() {
+        // calls per function, every second: "second address calls" lines
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let mut out = std::io::BufWriter::new(std::fs::File::create(path).expect("FCOP_COUNT file"));
+            for sec in 1.. {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                for (k, n) in rt::COUNTS.iter().enumerate() {
+                    let n = n.swap(0, Ordering::Relaxed);
+                    if n != 0 {
+                        let _ = writeln!(out, "{sec} {:x} {n}", crate::discover::TEXT_START + k as u32);
+                    }
+                }
+                let _ = out.flush();
+            }
         });
     }
     let mut c = Cpu::new(m);

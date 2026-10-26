@@ -85,7 +85,12 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   letterboxed, with the dialog overlay on top; FCOP_SHOT reads back the window), `glide.rs`
   (Glide 2.x on OpenGL: LoadLibraryA("glide2x.dll") gives `glide::MODULE`, GetProcAddress a
   thunk per decorated name `_grX@N`; unknown names get `thunk_not_implemented`, logged at
-  their first call. Triangles are batched per state into a texture of the grSstWinOpen size,
+  their first call. Triangles are batched into a texture of the grSstWinOpen size; only
+  blending, chroma key, filtering, clamping, clip window and primitive type end a batch (one
+  draw call): the colour/alpha combine units, the constant colour and the texture are vertex
+  attributes, and every texture is a layer of one 256x256 texture array (64 layers, by TMU
+  address; a download frees the textures it overwrites in TMU memory). Before that the game's
+  per-triangle state changes made ~240 draw calls a frame and capped 300 fps at ~200. Frames are
   shown at grBufferSwap with the game's gamma; the fragment shader does Glide's colour and
   alpha combine units and the chroma key, with bilinear filtering of the unkeyed texels and
   their coverage as a soft edge). Registry `Group` = `3Dfx` (default) or `Software`.
@@ -120,8 +125,16 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   for 8-tick frames: weapon fire rate 0x458ed0 (once per frame while the reload timer ran
   out), the player robot's physics in whole 8-tick steps (0x446e00 / 0x442120: shown between
   its last two steps, actor+0x2c..0x5b; camera 0x4456a0), the camera turn 0x445eb0 (2-tick
-  units). Other per-frame effects may still show up (enemy fire, damage over time).
-  `FCOP_FPS=1` logs the frames shown per second (Glide).
+  units), hovering (0x442120 dispatches mode [actor+0xac]+0xad = 1 to 0x442510, whose steps
+  add dt to the turn speed: it gets dt = 8 * steps), effects (0x43d310 updates the list at
+  [0x4a2ab0]; timers lose (rate * dt) >> 8, 0 for short frames, so the transformation's
+  sparks never ended: updated in whole 8-tick frames). Other per-frame effects may still
+  show up (enemy fire, damage over time): `FCOP_COUNT` and a run at 300 fps against one at
+  the original rate find the functions (calls x8 = per frame, x1 = per 8-tick step).
+  The loop reads the clock (hook 0x4130c0, called from 0x406a56) in a busy loop: there we
+  sleep, turn handed over, until 2 ms before the frame's tick (CPU in a mission: 0.14 cores
+  at the original rate, 0.22 at 60, 1.0 at 300). `FCOP_FPS=1` logs the frames shown per
+  second (Glide).
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
@@ -129,7 +142,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   14000:Up*5000"` (scripted input, ms after start; that one starts the first mission and
   walks forward with the user's bindings in `controls.txt`: player 1 on the arrow keys, the
   keypad belongs to player 2; times count from the game's start, after the ~5.5 s compile:
-  give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_WINDOW=1920x1080`
+  give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_PROF=1` (time in
+  each import, every 2 s), `FCOP_COUNT=<file>` (calls per function and second: "second
+  address calls"; counting is compiled in only then), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_WINDOW=1920x1080`
   (the window's starting size in pixels; Windows limits it to the screen). An access
   violation in guest memory is reported with the recompiled function it happened in.
 - Key bindings: `controls.txt` in the game folder (14 lines per player: forward, back,
