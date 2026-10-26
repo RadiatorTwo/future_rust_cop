@@ -8,6 +8,7 @@ use fcop::discover::{Code, Program};
 use fcop::image::{Image, load_functions};
 use fcop::jit::{Compiled, compile};
 use fcop::rt::{Cpu, EAX, EDX, ESP, Memory};
+use fcop::smc::Smc;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -212,7 +213,14 @@ fn run() -> bool {
     let prog = Program::build(&mut code, &ranges);
     println!("found {} functions ({} extra entry points) in {} ms", prog.fns.len(), prog.fns.len() - ranges.len(), t.elapsed().as_millis());
 
-    let compiled = compile(&prog, &mut code);
+    let smc = Smc::find(&prog, &mut code);
+    println!(
+        "self-modifying code: {} immediates and branch offsets, {} displacements read at run time; {} rewritten instructions",
+        smc.imm.len(),
+        smc.disp.len(),
+        smc.variants.len()
+    );
+    let compiled = compile(&prog, &smc, &mut code);
     let s = &compiled.stats;
     println!("compiled {} functions, {} instructions: lifting {} ms, Cranelift {} ms", s.functions, s.instructions, s.lift_ms, s.compile_ms);
     println!("{} functions ({:.1}%) have every instruction supported", s.complete, 100.0 * s.complete as f64 / s.functions as f64);

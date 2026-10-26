@@ -38,6 +38,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   variable (ST(i) = slot `(top+i)&7`, computed at run time); fistp/frndint honour the control
   word's rounding mode; `fild qword` remembers the exact integer (`st_int`/`st_int_of`) for
   the memcpy idiom. Transcendentals and 80-bit operands go to `rt_x87`.
+- `src/smc.rs`: self-modifying code. Fields = targets of `mov [code address], x` plus the
+  patch table at 0x48ea20 (555/565). Finds 177 immediates/branch offsets (incl. shift
+  counts) and 67 displacements, which the lifter reads from guest memory (`Lifter::field`),
+  and 8 rewritten instructions (cmp/jb <-> test/je), lifted in every version and chosen by
+  comparing the current bytes. Rewritten jumps/calls go through `jump_dyn`/`rt_lookup`.
 - `src/jit.rs`: declares all functions, lifts and compiles them in one JITModule, plus a
   `foreign_stub` (calls to non-recompiled addresses -> `rt_foreign`) and an `enter`
   trampoline (host calling convention -> tail convention).
@@ -49,8 +54,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   Pass the EXE path (the old project's copy: ../FUTURE-COP-RECOMP/game_files/FCopLAPD/).
 - `tests/`: x86 snippets assembled with iced's code_asm, recompiled and checked against Rust
   (`cargo test --release`, harness in `tests/common/`); needs no game files. `x87.rs` for
-  the FPU, `misc.rs` for MMX moves, ports, push/pop es.
-- `examples/missing.rs <exe>`: lists every instruction the lifter does not support yet.
+  the FPU, `misc.rs` for MMX moves, ports, push/pop es, `smc.rs` for self-modifying code.
+- `examples/missing.rs <exe>`: lists every instruction the lifter does not support yet;
+  `examples/smc.rs <exe>`: lists the self-modifying code fields.
 - Odd instructions: MMX is only movq/movd copies (`Cpu::mm`); `in` reads 0xff (gameport,
   nothing connected), `out` does nothing; `push/pop es` only occur in data decoded as code.
 
@@ -60,7 +66,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   0x100000-0x400000, TIB at 0x10000, heap 0x01000000-0x40000000.
 - The software renderer (0x45b000-0x461000) patches immediates, displacements and branch
   offsets in its own code; FUN_0045b1c0 rewrites code for 555/565 pixel formats from a
-  table at 0x48ea20. The lifter must read those fields from guest memory (not done yet).
+  table at 0x48ea20 (handled by `src/smc.rs`). The old project also rewrote the frame
+  limit (the 8 ticks = 37.5 fps immediates at 0x406a7f, 0x406b30, 0x4071aa, 0x407278,
+  0x407295) from its platform layer; add them as fields when the platform layer does that.
 - The game's threads raced when run truly in parallel (async file reader 0x415f30 and its
   callback 0x416bf0 share a one-slot mailbox): guest threads must take turns.
 - x87 runs at 53-bit precision (the CRT sets it): doubles are enough, with an exact s64
@@ -73,8 +81,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 Every instruction in all 2176 functions is supported now (FPU precision control is ignored).
 
-1. Self-modifying code fields (renderer), then a differential test against a reference
-   emulator for broad coverage.
+1. A differential test against a reference emulator for broad coverage (the old project
+   used Unicorn: recomp/difftest.py).
 2. The platform layer in Rust (Win32/DirectDraw/DirectSound/Glide on SDL2 + OpenGL), then
    running the game.
 3. Compile functions in parallel; cache compiled code.

@@ -4,6 +4,7 @@
 use crate::discover::{Code, Program};
 use crate::lift::{Lifter, Refs};
 use crate::rt::{self, Cpu, DISPATCH, Dispatch};
+use crate::smc::Smc;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, UserFuncName, types::*};
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::settings::{self, Configurable};
@@ -39,7 +40,7 @@ impl Compiled {
     }
 }
 
-pub fn compile(prog: &Program, code: &mut Code) -> Compiled {
+pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed").unwrap();
     flags.set("is_pic", "false").unwrap();
@@ -113,7 +114,7 @@ pub fn compile(prog: &Program, code: &mut Code) -> Compiled {
                 guest_sig: b.import_signature(guest_sig.clone()),
             };
             let mut get_fn = |func: &mut cranelift_codegen::ir::Function, a: u32| module.declare_func_in_func(ids[&a], func);
-            Lifter::new(b, f, prog, &refs, &mut get_fn, tcfg).lift(code)
+            Lifter::new(b, f, prog, smc, &refs, &mut get_fn, tcfg).lift(code)
         };
         lift_time += t.elapsed();
         stats.instructions += f.ins.len();

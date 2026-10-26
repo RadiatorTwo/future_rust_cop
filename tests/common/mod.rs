@@ -7,6 +7,7 @@ use fcop::discover::{Code, Program};
 use fcop::image::{Image, Section};
 use fcop::jit::{Compiled, compile};
 use fcop::rt::{Cpu, ESP, Memory};
+use fcop::smc::Smc;
 use iced_x86::IcedError;
 use iced_x86::code_asm::CodeAssembler;
 
@@ -21,6 +22,7 @@ pub type Snippet = fn(&mut CodeAssembler) -> Result<(), IcedError>;
 pub struct Guest {
     c: Compiled,
     pub mem: Memory,
+    pub smc: Smc,
     addr: Vec<u32>,
 }
 
@@ -41,14 +43,16 @@ impl Guest {
         let img = Image { data, base: 0x400000, entry: TEXT, sections: vec![Section { name: ".text".into(), va: TEXT, vsize: n, raw: 0, rsize: n }] };
         let mut code = Code::new(&img);
         let prog = Program::build(&mut code, &ranges);
-        let c = compile(&prog, &mut code);
+        // code that writes its own fields is recompiled like the game's renderer
+        let smc = Smc::find(&prog, &mut code);
+        let c = compile(&prog, &smc, &mut code);
         assert_eq!(c.stats.complete, snippets.len(), "not supported: {:?}", c.stats.missing);
         let mem = Memory::reserve();
         mem.map(TEXT, TEXT + n);
         mem.slice(TEXT, n as usize).copy_from_slice(&img.data);
         mem.map(STACK_LO, STACK_HI);
         mem.map(SCRATCH, SCRATCH + 0x1000);
-        Guest { c, mem, addr: ranges.iter().map(|r| r.0).collect() }
+        Guest { c, mem, addr: ranges.iter().map(|r| r.0).collect(), smc }
     }
 
     /// cdecl call of snippet `k` with dword arguments; returns the CPU afterwards.

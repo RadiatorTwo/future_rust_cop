@@ -8,6 +8,7 @@
 
 use crate::discover::{Func, Program, direct_target};
 use crate::rt::Cpu;
+use crate::smc::{Field, Smc};
 use cranelift_codegen::ir::{self, Block, FuncRef, InstBuilder, MemFlagsData, SigRef, Type, Value, condcodes::IntCC, types::*};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_frontend::{FunctionBuilder, Switch, Variable};
@@ -136,6 +137,7 @@ pub struct Lifter<'a, 'f> {
     pub b: FunctionBuilder<'f>,
     f: &'a Func,
     prog: &'a Program,
+    smc: &'a Smc,
     refs: &'a Refs,
     get_fn: &'a mut dyn FnMut(&mut ir::Function, u32) -> FuncRef,
     fns: HashMap<u32, FuncRef>,
@@ -167,6 +169,7 @@ impl<'a, 'f> Lifter<'a, 'f> {
         mut b: FunctionBuilder<'f>,
         f: &'a Func,
         prog: &'a Program,
+        smc: &'a Smc,
         refs: &'a Refs,
         get_fn: &'a mut dyn FnMut(&mut ir::Function, u32) -> FuncRef,
         cfg: TargetFrontendConfig,
@@ -183,6 +186,7 @@ impl<'a, 'f> Lifter<'a, 'f> {
             b,
             f,
             prog,
+            smc,
             refs,
             get_fn,
             fns: HashMap::new(),
@@ -280,7 +284,10 @@ impl<'a, 'f> Lifter<'a, 'f> {
 
     /// The effective address of the instruction's memory operand (guest address, i32).
     fn addr(&mut self, i: &Instruction) -> Value {
-        let mut a = self.iconst(I32, i.memory_displacement32() as i64);
+        let mut a = match self.smc.disp.get(&i.ip32()) {
+            Some(&f) => self.field(f, 4),
+            None => self.iconst(I32, i.memory_displacement32() as i64),
+        };
         if i.memory_base() != Register::None {
             let b = self.reg(gpr(i.memory_base()));
             a = self.b.ins().iadd(a, b);
@@ -298,6 +305,26 @@ impl<'a, 'f> Lifter<'a, 'f> {
             a = self.b.ins().iadd(a, fs);
         }
         a
+    }
+
+    /// A code field the game rewrites, read from guest memory now; narrower fields are
+    /// sign-extended like the CPU does.
+    fn field(&mut self, f: Field, size: u32) -> Value {
+        let a = self.iconst(I32, f.at as i64);
+        let v = self.load(a, f.size);
+        if f.size < size {
+            self.b.ins().sextend(ty(size), v)
+        } else if f.size > size {
+            self.b.ins().ireduce(ty(size), v)
+        } else {
+            v
+        }
+    }
+
+    /// The instruction's immediate when the game rewrites it (else None: use the decoded one).
+    fn dyn_imm(&mut self, i: &Instruction, size: u32) -> Option<Value> {
+        let f = *self.smc.imm.get(&i.ip32())?;
+        Some(self.field(f, size))
     }
 
     // ---- operands --------------------------------------------------------------------------
@@ -351,6 +378,9 @@ impl<'a, 'f> Lifter<'a, 'f> {
                 self.load(a, size)
             }
             _ => {
+                if let Some(v) = self.dyn_imm(i, size) {
+                    return v;
+                }
                 let v = i.immediate(k);
                 let v = if size >= 8 { v } else { v & ((1u64 << (8 * size)) - 1) };
                 self.iconst(ty(size), v as i64)
@@ -538,20 +568,16 @@ impl<'a, 'f> Lifter<'a, 'f> {
             let i = code.at(a).unwrap();
             let blk = self.blocks[&a];
             self.b.switch_to_block(blk);
-            let ends = match unsupported(&i) {
-                Some(why) => {
-                    self.missing.push(why);
-                    self.store_state();
-                    let x = self.iconst(I32, a as i64);
-                    self.b.ins().call(self.refs.unimpl, &[self.cpu, x]);
-                    self.b.ins().return_(&[]);
-                    true
-                }
-                None => self.insn(&i),
-            };
-            if !ends {
-                self.goto(i.next_ip32());
+            // an instruction the game rewrites: the version its current bytes encode
+            for (bytes, v) in self.smc.variants.get(&a).into_iter().flatten() {
+                let same = self.code_is(a, bytes);
+                let (this, other) = (self.b.create_block(), self.b.create_block());
+                self.b.ins().brif(same, this, &[], other, &[]);
+                self.b.switch_to_block(this);
+                self.emit(v);
+                self.b.switch_to_block(other);
             }
+            self.emit(&i);
         }
         let mut exits: Vec<(u32, Block)> = self.exits.iter().map(|(&t, &b)| (t, b)).collect();
         exits.sort_unstable();
@@ -578,6 +604,36 @@ impl<'a, 'f> Lifter<'a, 'f> {
         missing
     }
 
+    /// One instruction, continuing at the next unless it ends its block.
+    fn emit(&mut self, i: &Instruction) {
+        let ends = match unsupported(i) {
+            Some(why) => {
+                self.missing.push(why);
+                self.store_state();
+                let x = self.iconst(I32, i.ip32() as i64);
+                self.b.ins().call(self.refs.unimpl, &[self.cpu, x]);
+                self.b.ins().return_(&[]);
+                true
+            }
+            None => self.insn(i),
+        };
+        if !ends {
+            self.goto(i.next_ip32());
+        }
+    }
+
+    /// Whether guest memory at `a` holds these bytes now.
+    fn code_is(&mut self, a: u32, bytes: &[u8]) -> Value {
+        let mut all = self.iconst(I8, 1);
+        for (k, &x) in bytes.iter().enumerate() {
+            let p = self.iconst(I32, (a + k as u32) as i64);
+            let v = self.load(p, 1);
+            let eq = self.b.ins().icmp_imm_u(IntCC::Equal, v, x as i64);
+            all = self.b.ins().band(all, eq);
+        }
+        all
+    }
+
     /// One instruction; true if it ended its block (jump, return, trap).
     fn insn(&mut self, i: &Instruction) -> bool {
         use Mnemonic::*;
@@ -588,6 +644,10 @@ impl<'a, 'f> Lifter<'a, 'f> {
             }
             FlowControl::Call | FlowControl::IndirectCall => {
                 match direct_target(i) {
+                    Some(_) if self.smc.imm.contains_key(&i.ip32()) => {
+                        let t = self.rel_target(i);
+                        self.call_to(i, t, None);
+                    }
                     Some(t) => {
                         let v = self.iconst(I32, t as i64);
                         self.call_to(i, v, Some(t));
@@ -934,32 +994,29 @@ impl<'a, 'f> Lifter<'a, 'f> {
     }
 
     fn jump_insn(&mut self, i: &Instruction) -> bool {
-        use Mnemonic::*;
         let next = i.next_ip32();
+        if direct_target(i).is_some() && self.smc.imm.contains_key(&i.ip32()) {
+            // a branch whose offset the game rewrites: the target is only known at run time
+            let t = self.rel_target(i);
+            let go = self.branch_cond(i);
+            let far = self.b.create_block();
+            match go {
+                Some(c) => {
+                    let n = self.target_block(next);
+                    self.b.ins().brif(c, far, &[], n, &[]);
+                }
+                None => {
+                    self.b.ins().jump(far, &[]);
+                }
+            }
+            self.b.switch_to_block(far);
+            self.jump_dyn(t);
+            return true;
+        }
         if let Some(t) = direct_target(i) {
-            match i.mnemonic() {
-                Jmp => self.goto(t),
-                Loop | Loope | Loopne => {
-                    let c = self.reg(1);
-                    let c = self.b.ins().iadd_imm_s(c, -1);
-                    self.set_reg(1, c);
-                    let mut go = self.b.ins().icmp_imm_u(IntCC::NotEqual, c, 0);
-                    if i.mnemonic() != Loop {
-                        let z = self.flag(self.zf);
-                        let z = if i.mnemonic() == Loopne { self.b.ins().bxor_imm_u(z, 1) } else { z };
-                        go = self.b.ins().band(go, z);
-                    }
-                    self.branch(go, t, next);
-                }
-                Jecxz | Jcxz => {
-                    let c = if i.mnemonic() == Jecxz { self.reg(1) } else { self.read_reg(Register::CX) };
-                    let go = self.b.ins().icmp_imm_u(IntCC::Equal, c, 0);
-                    self.branch(go, t, next);
-                }
-                _ => {
-                    let c = self.cond(i.condition_code());
-                    self.branch(c, t, next);
-                }
+            match self.branch_cond(i) {
+                Some(go) => self.branch(go, t, next),
+                None => self.goto(t),
             }
             return true;
         }
@@ -983,6 +1040,37 @@ impl<'a, 'f> Lifter<'a, 'f> {
             self.exit_to(t, None);
         }
         true
+    }
+
+    /// next + the rewritten offset of a jump or call
+    fn rel_target(&mut self, i: &Instruction) -> Value {
+        let off = self.dyn_imm(i, 4).unwrap();
+        self.b.ins().iadd_imm_s(off, i.next_ip32() as i64)
+    }
+
+    /// When a direct branch is taken (None: always), updating ecx for loop.
+    fn branch_cond(&mut self, i: &Instruction) -> Option<Value> {
+        use Mnemonic::*;
+        Some(match i.mnemonic() {
+            Jmp => return None,
+            Loop | Loope | Loopne => {
+                let c = self.reg(1);
+                let c = self.b.ins().iadd_imm_s(c, -1);
+                self.set_reg(1, c);
+                let mut go = self.b.ins().icmp_imm_u(IntCC::NotEqual, c, 0);
+                if i.mnemonic() != Loop {
+                    let z = self.flag(self.zf);
+                    let z = if i.mnemonic() == Loopne { self.b.ins().bxor_imm_u(z, 1) } else { z };
+                    go = self.b.ins().band(go, z);
+                }
+                go
+            }
+            Jecxz | Jcxz => {
+                let c = if i.mnemonic() == Jecxz { self.reg(1) } else { self.read_reg(Register::CX) };
+                self.b.ins().icmp_imm_u(IntCC::Equal, c, 0)
+            }
+            _ => self.cond(i.condition_code()),
+        })
     }
 
     fn alu(&mut self, i: &Instruction, m: Mnemonic) {
@@ -1066,6 +1154,10 @@ impl<'a, 'f> Lifter<'a, 'f> {
             OpKind::Register => {
                 let c = self.read_reg(i.op1_register());
                 let c = self.b.ins().uextend(I32, c);
+                self.b.ins().band_imm_u(c, 31)
+            }
+            _ if self.smc.imm.contains_key(&i.ip32()) => {
+                let c = self.dyn_imm(i, 4).unwrap();
                 self.b.ins().band_imm_u(c, 31)
             }
             _ => {
@@ -1197,6 +1289,10 @@ impl<'a, 'f> Lifter<'a, 'f> {
             OpKind::Register => {
                 let c = self.read_reg(i.op_register(2));
                 let c = self.b.ins().uextend(I32, c);
+                self.b.ins().band_imm_u(c, 31)
+            }
+            _ if self.smc.imm.contains_key(&i.ip32()) => {
+                let c = self.dyn_imm(i, 4).unwrap();
                 self.b.ins().band_imm_u(c, 31)
             }
             _ => {
