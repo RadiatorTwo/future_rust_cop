@@ -49,9 +49,34 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 - `src/rt.rs`: `Cpu` (repr(C), offsets used by the lifter), the 4 GB guest address space
   (guest address a = base + a; game pointers stay 32-bit), helpers (`rt_string` does the
   string instructions).
-- `src/main.rs`: prototype driver; tests strchr/strncpy/strstr/strcspn/strncmp/strpbrk
-  (0x4780d0 ...), __aulldiv/__aullrem and _ftol (0x478090) against Rust on random inputs.
-  Pass the EXE path (the old project's copy: ../FUTURE-COP-RECOMP/game_files/FCopLAPD/).
+- `src/main.rs`: compiles the EXE and runs the game (`fcop [exe]`; default: the first
+  FCopLAPD.exe under `game_files/`, a copy of the old project's game folder without its
+  registry.txt/controls.txt). `examples/crt.rs` tests strchr/strncpy/strstr/strcspn/
+  strncmp/strpbrk (0x4780d0 ...), __aulldiv/__aullrem and _ftol (0x478090) against Rust.
+- `src/platform/`: the Windows/DirectX layer. `mod.rs`: guest memory layout (TIB 0x10000,
+  stack 0x100000-0x400000, heap 0x01000000-0x40000000, thunks 0x7f000000), loading the EXE,
+  binding imports to thunks (`Import` = name, stdcall argument count or -1, `fn(&mut Cpu)
+  -> u32`), the event handler (runs the import, sets eax, pops return address and
+  arguments), `guest_call` (host -> guest: window procedures, threads, callbacks), COM
+  objects (`com_new`: one guest vtable of thunks per method table), the turn lock (one guest
+  thread runs at a time; handed over around every import), `host_path` (case-insensitive,
+  `D:\FCopLAPD\` = game folder, falls back to its parent for the CD's Video folder),
+  `printf`. One file per DLL: `kernel32.rs` (kernel objects in one table with one
+  condition variable), `user32.rs` (windows, message queue, timers, key state; desktop
+  1600x1200), `gdi32.rs`, `advapi32.rs` (registry in `registry.txt`), `ddraw.rs`,
+  `misc.rs` (winmm, ole32, comctl32; DirectSound/DirectInput/DirectShow report "absent"),
+  `window.rs` (winit window, softbuffer frames, input; main thread only, other threads'
+  frames are shown at the next pump).
+- Imports not implemented yet are listed at start and stop the game when called.
+  Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
+  (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
+  `FCOP_SHOT=file.png` (the frame shown, every half second).
+- The game draws in two separate layers: menus are 640x480 16-bit frames through DirectDraw
+  2D (blits to the primary surface; windowed, the primary is the whole desktop and the main
+  window's rectangle is shown); missions use the 3D renderer (software, Glide or THRASH).
+  Blits to the primary only mark it changed; it is shown when the game polls its messages,
+  at a Flip, or 50 ms after the first unshown change (showing every blit made the menu
+  flicker while it built up).
 - `tests/`: x86 snippets assembled with iced's code_asm, recompiled and checked against Rust
   (`cargo test --release`, harness in `tests/common/`); needs no game files. `x87.rs` for
   the FPU, `misc.rs` for MMX moves, ports, push/pop es, `smc.rs` for self-modifying code.
@@ -102,5 +127,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 ## Next steps
 
-See PLAN.md. Next: the platform layer (Win32/DirectDraw/DirectSound/Glide on SDL2 +
-OpenGL), first goal the main menu.
+See PLAN.md. The main menu shows; next: clicking through the menu, dialogs, sound,
+then missions. The old C project's platform layer (../FUTURE-COP-RECOMP/recomp/platform/,
+its CLAUDE.md "Lessons") is a good source of facts about the game's behaviour; its code is
+not copied.

@@ -193,9 +193,9 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
     let mut table: Vec<(u32, usize)> = fns.iter().map(|(&a, &p)| (a, p as usize)).collect();
     table.sort_unstable();
     let foreign_stub = module.get_finalized_function(foreign_id) as usize;
-    let _ = DISPATCH.set(Dispatch { table, foreign_stub });
     let enter = unsafe {
         std::mem::transmute::<*const u8, extern "C" fn(*mut Cpu, *const u8)>(module.get_finalized_function(enter_id))
     };
+    let _ = DISPATCH.set(Dispatch { table, foreign_stub, enter });
     Compiled { _module: module, enter, fns, stats }
 }

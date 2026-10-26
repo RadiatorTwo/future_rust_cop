@@ -13,25 +13,41 @@ Updated 2026-10-26. Details on how things work: CLAUDE.md.
 - [x] Tests without game files (`cargo test --release`)
 - [x] Differential test against Unicorn: 1978 of 2176 functions agree, 6 expected
       differences, 189 untested (fault in Unicorn from random states)
+- [x] Platform layer, first stage (`src/platform/`): the game starts, runs its C runtime
+      start-up, reads the registry, passes the CD check, loads its menu graphics and shows
+      the main menu (2026-10-26)
 
 ## Open
 
-### 1. Platform layer (next, the big one)
+### 1. Platform layer (in progress)
 
-The game calls Windows and DirectX through its import table; each import needs a Rust
-implementation behind `rt::set_handler` / `Event::Foreign`.
+The game calls Windows and DirectX through its import table (200 imports from 10 DLLs,
+`examples/imports.rs`); each has a Rust implementation in `src/platform/`.
 
-- [ ] List the imports the game uses and group them (kernel32, user32, ddraw, dsound,
-      dinput?, glide, winmm, ...)
-- [ ] Process start: TIB/FS segment (SEH uses `fs:[0]`), main stack, heap, command line
-- [ ] Files and the CD check (volume label FCOP_CD, paths `D:\FCopLAPD\...`)
-- [ ] Threads that take turns (the game's threads race when truly parallel)
-- [ ] Window, input, timing (SDL2)
-- [ ] Graphics: DirectDraw (software renderer) and Glide on OpenGL
-- [ ] Sound: DirectSound on SDL2
-- [ ] Videos (MPEG-1 from the CD's Video folder)
+Done:
+- [x] Process start: EXE loaded, TIB/FS, main stack, guest heap, imports bound to thunks
+- [x] kernel32 (C runtime start-up, heap, files, events/mutexes/threads, TLS, time)
+- [x] Files and the CD check (volume label FCOP_CD on D:, paths `D:\FCopLAPD\...`)
+- [x] Threads take turns (one guest thread at a time, handed over at every import call)
+- [x] Registry in `registry.txt` (readable text); default renderer `Group` = Software
+- [x] Window, mouse and keyboard (winit), frames shown with softbuffer, scaled with aspect
+- [x] DirectDraw 2D: surfaces, Blt/BltFast/Flip/Lock, colour keys, 555 pixels; the menu
+      layer (always 640x480 16-bit) works through this
+- [x] Main menu shown (`FCOP_SHOT=file.png` writes the shown frame)
+
+Next:
+- [ ] Click through the menu (mouse input is wired up but not yet tried); scripted input
+      for tests (the old project had `FCOP_INPUT`)
+- [ ] Spin-waits: when a thread waits in a loop without calling an import, the other thread
+      never gets its turn (the old project yielded at loop heads; add when it shows up)
+- [ ] Dialogs: Preferences etc. are the game's RT_DIALOG resources (DialogBoxParamA and
+      friends are still missing); draw them in the game's style
+- [ ] Sound: DirectSound (now reported as absent) on cpal
+- [ ] DirectInput (now reported as absent; only used for joysticks)
+- [ ] Missions: the software renderer through DirectDraw, then the 3D layer on OpenGL
+      (Glide/THRASH), separate from the menu layer
+- [ ] Videos (MPEG-1 from the CD's Video folder; DirectShow is reported as absent now)
 - [ ] Frame limit fields (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) as code fields
-- [ ] First goal: reach the main menu
 
 ### 2. The user's goals after that
 

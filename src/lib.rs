@@ -7,5 +7,6 @@ pub mod discover;
 pub mod image;
 pub mod jit;
 pub mod lift;
+pub mod platform;
 pub mod rt;
 pub mod smc;

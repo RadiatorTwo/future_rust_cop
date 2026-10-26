@@ -83,6 +83,10 @@ pub struct Memory {
     pub base: *mut u8,
 }
 
+// guest memory is shared by the guest threads, which take turns (see `platform`)
+unsafe impl Send for Memory {}
+unsafe impl Sync for Memory {}
+
 impl Memory {
     pub fn reserve() -> Memory {
         #[cfg(windows)]
@@ -130,6 +134,12 @@ impl Memory {
     pub fn wr8(&self, a: u32, v: u8) {
         unsafe { *self.base.add(a as usize) = v }
     }
+    pub fn rd16(&self, a: u32) -> u16 {
+        unsafe { (self.base.add(a as usize) as *const u16).read_unaligned() }
+    }
+    pub fn wr16(&self, a: u32, v: u16) {
+        unsafe { (self.base.add(a as usize) as *mut u16).write_unaligned(v) }
+    }
     pub fn rd32(&self, a: u32) -> u32 {
         unsafe { (self.base.add(a as usize) as *const u32).read_unaligned() }
     }
@@ -138,10 +148,12 @@ impl Memory {
     }
 }
 
-/// Recompiled functions by guest address (sorted), and the stub for everything else.
+/// Recompiled functions by guest address (sorted), the stub for everything else, and the
+/// trampoline the host enters guest code through.
 pub struct Dispatch {
     pub table: Vec<(u32, usize)>,
     pub foreign_stub: usize,
+    pub enter: extern "C" fn(*mut Cpu, *const u8),
 }
 
 pub static DISPATCH: OnceLock<Dispatch> = OnceLock::new();
@@ -164,7 +176,14 @@ pub extern "C" fn rt_lookup(cpu: *mut Cpu, addr: u32) -> *const u8 {
     }
 }
 
-/// A call or jump to an address that is not recompiled code (import thunks come here later).
+/// Run the guest code at `addr` (recompiled or not) until it returns; its return address
+/// must already be on the guest stack.
+pub fn run(cpu: &mut Cpu, addr: u32) {
+    let d = DISPATCH.get().expect("dispatch table not set");
+    let f = rt_lookup(cpu, addr);
+    (d.enter)(cpu, f);
+}
+
 /// Something guest code cannot go on with by itself.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Event {
