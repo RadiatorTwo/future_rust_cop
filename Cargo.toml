@@ -26,3 +26,7 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[dev-dependencies]
+# assembling test snippets
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "intel", "instr_info", "code_asm"] }

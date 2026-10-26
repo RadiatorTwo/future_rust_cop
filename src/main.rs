@@ -1,5 +1,6 @@
 //! Prototype driver: recompiles the whole EXE with Cranelift, prints statistics, and checks
-//! the C runtime's string and 64-bit division functions against Rust on random inputs.
+//! the C runtime's string, 64-bit division and float-to-integer functions against Rust on
+//! random inputs.
 //!
 //!     fcop [path to FCopLAPD.exe]     (default: $FCOP_EXE, or the first one under game_files/)
 
@@ -180,6 +181,15 @@ fn run_tests(c: &Compiled, mem: &Memory) -> bool {
         let (x, y) = (wide(rng), wide(rng).max(1));
         let got = call(c, cpu, mem, 0x47e9d0, &[x as u32, (x >> 32) as u32, y as u32, (y >> 32) as u32]);
         (got == x % y).then_some(()).ok_or(format!("{x} % {y} = {got}"))
+    });
+    check("ftol", &mut |cpu, rng| {
+        // ST0 -> edx:eax, truncated, through fnstcw/fldcw/fistp qword
+        let x = (rng.next() as i64 >> rng.below(64)) as f64 / (1u64 << rng.below(20)) as f64;
+        let top = cpu.top;
+        cpu.fpush(x);
+        let got = call(c, cpu, mem, 0x478090, &[]) as i64;
+        let ok = got == x.trunc() as i64 && cpu.top == top && cpu.fcw == 0x37f;
+        ok.then_some(()).ok_or(format!("ftol({x}) = {got}, top {}, cw {:#x}", cpu.top, cpu.fcw))
     });
     all_ok
 }

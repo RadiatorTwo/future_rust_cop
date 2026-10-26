@@ -15,6 +15,8 @@ use iced_x86::{ConditionCode, FlowControl, Instruction, Mnemonic, OpKind, Regist
 use std::collections::HashMap;
 use std::mem::offset_of;
 
+mod x87;
+
 /// Host helpers and the guest function signature, imported into each function.
 pub struct Refs {
     pub lookup: FuncRef,
@@ -23,6 +25,7 @@ pub struct Refs {
     pub string: FuncRef,
     pub cpuid: FuncRef,
     pub rdtsc: FuncRef,
+    pub x87: FuncRef,
     pub guest_sig: SigRef,
 }
 
@@ -41,7 +44,7 @@ pub fn unsupported(i: &Instruction) -> Option<String> {
         match i.op_kind(k) {
             OpKind::Register => {
                 let r = i.op_register(k);
-                if !(r.is_gpr8() || r.is_gpr16() || r.is_gpr32()) {
+                if !(r.is_gpr8() || r.is_gpr16() || r.is_gpr32() || r.is_st()) {
                     return Some(format!("register {r:?}"));
                 }
             }
@@ -69,6 +72,9 @@ pub fn unsupported(i: &Instruction) -> Option<String> {
         }
     }
     let m = i.mnemonic();
+    if x87::is_x87(m) {
+        return x87::unsupported(i);
+    }
     let ok = match m {
         Mov | Movzx | Movsx | Lea | Add | Adc | Sub | Sbb | Cmp | And | Or | Xor | Test | Inc | Dec | Neg | Not | Shl
         | Sal | Shr | Sar | Rol | Ror | Rcl | Rcr | Push | Pop | Pushad | Popad | Pushfd | Popfd | Lahf | Sahf | Clc | Stc | Cmc
@@ -136,6 +142,8 @@ pub struct Lifter<'a, 'f> {
     zf: Variable,
     sf: Variable,
     of: Variable,
+    /// x87 TOP (0..7)
+    top: Variable,
     cfg: TargetFrontendConfig,
     blocks: HashMap<u32, Block>,
     /// blocks that leave the function towards an address
@@ -165,6 +173,7 @@ impl<'a, 'f> Lifter<'a, 'f> {
         let mem = b.ins().load(I64, mf(), cpu, offset_of!(Cpu, mem) as i32);
         let r = std::array::from_fn(|_| b.declare_var(I32));
         let (cf, pf, zf, sf, of) = (b.declare_var(I8), b.declare_var(I8), b.declare_var(I8), b.declare_var(I8), b.declare_var(I8));
+        let top = b.declare_var(I32);
         let mut l = Lifter {
             b,
             f,
@@ -180,6 +189,7 @@ impl<'a, 'f> Lifter<'a, 'f> {
             zf,
             sf,
             of,
+            top,
             cfg,
             blocks: HashMap::new(),
             exits: HashMap::new(),
@@ -210,6 +220,8 @@ impl<'a, 'f> Lifter<'a, 'f> {
             let v = self.b.ins().load(I8, mf(), self.cpu, off as i32);
             self.b.def_var(var, v);
         }
+        let t = self.b.ins().load(I32, mf(), self.cpu, offset_of!(Cpu, top) as i32);
+        self.b.def_var(self.top, t);
     }
 
     fn store_state(&mut self) {
@@ -221,6 +233,8 @@ impl<'a, 'f> Lifter<'a, 'f> {
             let v = self.b.use_var(var);
             self.b.ins().store(mf(), v, self.cpu, off as i32);
         }
+        let t = self.b.use_var(self.top);
+        self.b.ins().store(mf(), t, self.cpu, offset_of!(Cpu, top) as i32);
     }
 
     fn reg(&mut self, k: usize) -> Value {
@@ -594,6 +608,10 @@ impl<'a, 'f> Lifter<'a, 'f> {
         if matches!(m, Int3 | Hlt | Ud2 | Int | Into) {
             self.trap(i.ip32(), TRAP_INT);
             return true;
+        }
+        if x87::is_x87(m) {
+            self.x87(i);
+            return false;
         }
         if is_setcc(i) {
             let c = self.cond(i.condition_code());

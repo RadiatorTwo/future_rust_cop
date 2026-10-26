@@ -34,6 +34,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   jumps into other functions are tail calls (`return_call`, `CallConv::Tail`), indirect
   targets go through `rt_lookup`. `unsupported()` checks an instruction before emitting
   anything; such instructions call `rt_unimpl`.
+- `src/lift/x87.rs`: the FPU. ST registers are doubles in `Cpu::st`, TOP is a Cranelift
+  variable (ST(i) = slot `(top+i)&7`, computed at run time); fistp/frndint honour the control
+  word's rounding mode; `fild qword` remembers the exact integer (`st_int`/`st_int_of`) for
+  the memcpy idiom. Transcendentals and 80-bit operands go to `rt_x87`.
 - `src/jit.rs`: declares all functions, lifts and compiles them in one JITModule, plus a
   `foreign_stub` (calls to non-recompiled addresses -> `rt_foreign`) and an `enter`
   trampoline (host calling convention -> tail convention).
@@ -41,7 +45,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (guest address a = base + a; game pointers stay 32-bit), helpers (`rt_string` does the
   string instructions).
 - `src/main.rs`: prototype driver; tests strchr/strncpy/strstr/strcspn/strncmp/strpbrk
-  (0x4780d0 ...) and __aulldiv/__aullrem against Rust on random inputs.
+  (0x4780d0 ...), __aulldiv/__aullrem and _ftol (0x478090) against Rust on random inputs.
+  Pass the EXE path (the old project's copy: ../FUTURE-COP-RECOMP/game_files/FCopLAPD/).
+- `tests/x87.rs`: assembles x87 snippets with iced's code_asm, recompiles and checks them
+  against Rust (`cargo test --release`); needs no game files.
 
 ## Known facts about the game (from the earlier project)
 
@@ -60,7 +67,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 ## Next steps
 
-1. x87 (most of the 6% of functions that are still incomplete).
+1. The last 0.4% (8 functions): MMX (mm0-mm6, emms), `in`/`out`/`insb`, ES as an operand.
+   x87 is done (99.6% of functions complete; FPU precision control is ignored).
 2. Self-modifying code fields (renderer), then a differential test against a reference
    emulator for broad coverage.
 3. The platform layer in Rust (Win32/DirectDraw/DirectSound/Glide on SDL2 + OpenGL), then

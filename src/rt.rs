@@ -22,6 +22,17 @@ pub struct Cpu {
     pub mem: *mut u8,
     /// address of the foreign call in progress (see `rt_lookup`)
     pub foreign: u32,
+    /// x87 registers: ST(i) is `st[(top + i) & 7]`. Doubles: the CRT sets 53-bit precision.
+    pub st: [f64; 8],
+    /// The integer a `fild qword` loaded into a slot and the bits of the double it became:
+    /// while the slot still holds that double, `fistp qword` stores the integer, so the
+    /// FPU memcpy idiom (fild/fistp qword) keeps all 64 bits.
+    pub st_int: [i64; 8],
+    pub st_int_of: [u64; 8],
+    pub top: u32,
+    /// x87 status word without TOP (condition codes C0-C3, exception bits) and control word
+    pub fsw: u16,
+    pub fcw: u16,
 }
 
 pub const EAX: usize = 0;
@@ -34,7 +45,25 @@ pub const EDI: usize = 7;
 
 impl Cpu {
     pub fn new(mem: &Memory) -> Cpu {
-        Cpu { r: [0; 8], cf: 0, pf: 0, zf: 0, sf: 0, of: 0, df: 0, _pad: [0; 2], fs_base: 0, mem: mem.base, foreign: 0 }
+        Cpu {
+            r: [0; 8],
+            cf: 0,
+            pf: 0,
+            zf: 0,
+            sf: 0,
+            of: 0,
+            df: 0,
+            _pad: [0; 2],
+            fs_base: 0,
+            mem: mem.base,
+            foreign: 0,
+            st: [0.0; 8],
+            st_int: [0; 8],
+            st_int_of: [0; 8],
+            top: 0,
+            fsw: 0,
+            fcw: 0x37f,
+        }
     }
 }
 
@@ -231,6 +260,216 @@ pub extern "C" fn rt_string(cpu: *mut Cpu, op: u32) {
         c.r[ECX] -= 1;
         if (kind == 3 || kind == 4) && ((rep == 1 && c.zf == 0) || (rep == 2 && c.zf != 0)) {
             break;
+        }
+    }
+}
+
+/// The x87 operations generated code leaves to `rt_x87`.
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub enum X87 {
+    /// push the 80-bit float at `addr`
+    LoadF80,
+    /// store ST(0) as an 80-bit float at `addr`, pop
+    StoreF80,
+    Fxam,
+    Fsin,
+    Fcos,
+    Fsincos,
+    Fptan,
+    Fpatan,
+    F2xm1,
+    Fyl2x,
+    Fyl2xp1,
+    Fscale,
+    Fprem,
+    Fprem1,
+    Fxtract,
+}
+
+const X87_OPS: [X87; 15] = [
+    X87::LoadF80,
+    X87::StoreF80,
+    X87::Fxam,
+    X87::Fsin,
+    X87::Fcos,
+    X87::Fsincos,
+    X87::Fptan,
+    X87::Fpatan,
+    X87::F2xm1,
+    X87::Fyl2x,
+    X87::Fyl2xp1,
+    X87::Fscale,
+    X87::Fprem,
+    X87::Fprem1,
+    X87::Fxtract,
+];
+
+const C0: u16 = 0x100;
+const C1: u16 = 0x200;
+const C2: u16 = 0x400;
+const C3: u16 = 0x4000;
+
+impl Cpu {
+    fn st_slot(&self, i: u32) -> usize {
+        ((self.top + i) & 7) as usize
+    }
+    pub fn st(&self, i: u32) -> f64 {
+        self.st[self.st_slot(i)]
+    }
+    pub fn set_st(&mut self, i: u32, v: f64) {
+        self.st[self.st_slot(i)] = v;
+    }
+    pub fn fpush(&mut self, v: f64) {
+        self.top = (self.top + 7) & 7;
+        self.set_st(0, v);
+    }
+    pub fn fpop(&mut self) {
+        self.top = (self.top + 1) & 7;
+    }
+    fn set_cc(&mut self, cc: u16) {
+        self.fsw = (self.fsw & !(C0 | C1 | C2 | C3)) | cc;
+    }
+}
+
+/// x * 2^trunc(n), without overflowing in the scale factor itself.
+fn scale(x: f64, n: f64) -> f64 {
+    let mut n = n.trunc().clamp(-4000.0, 4000.0) as i32;
+    let mut x = x;
+    while n != 0 {
+        let k = n.clamp(-1000, 1000);
+        x *= 2f64.powi(k);
+        n -= k;
+    }
+    x
+}
+
+/// An 80-bit extended float (little-endian bytes) as the nearest double.
+pub fn f80_to_f64(b: &[u8; 10]) -> f64 {
+    let mant = u64::from_le_bytes(b[..8].try_into().unwrap());
+    let se = u16::from_le_bytes([b[8], b[9]]);
+    let sign = if se & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exp = (se & 0x7fff) as i32;
+    if exp == 0x7fff {
+        return if mant << 1 == 0 { sign * f64::INFINITY } else { f64::NAN };
+    }
+    // value = mant * 2^(exp - 16383 - 63); u64 -> f64 rounds to nearest, which is all the
+    // rounding needed outside the double's denormal range
+    sign * scale(mant as f64, (exp.max(1) - 16383 - 63) as f64)
+}
+
+/// A double as an 80-bit extended float (exact: every double fits).
+pub fn f64_to_f80(v: f64) -> [u8; 10] {
+    let bits = v.to_bits();
+    let sign = ((bits >> 63) as u16) << 15;
+    let exp = ((bits >> 52) & 0x7ff) as i32;
+    let frac = bits & ((1 << 52) - 1);
+    let (e, m) = if exp == 0x7ff {
+        (0x7fff, 1 << 63 | frac << 11)
+    } else if exp == 0 && frac == 0 {
+        (0, 0)
+    } else if exp == 0 {
+        // a denormal double is a normal extended float
+        let shift = frac.leading_zeros() as i32;
+        (16383 - 1022 - (shift - 11), frac << shift)
+    } else {
+        (exp - 1023 + 16383, 1 << 63 | frac << 11)
+    };
+    let mut out = [0u8; 10];
+    out[..8].copy_from_slice(&m.to_le_bytes());
+    out[8..].copy_from_slice(&(sign | e as u16).to_le_bytes());
+    out
+}
+
+/// x87 operations that are rare or need libm; `op` is an `X87`.
+pub extern "C" fn rt_x87(cpu: *mut Cpu, op: u32, addr: u32) {
+    let c = unsafe { &mut *cpu };
+    let Some(&op) = X87_OPS.get(op as usize) else { die(format!("rt_x87: unknown operation {op}")) };
+    let x = c.st(0);
+    match op {
+        X87::LoadF80 => {
+            let b: [u8; 10] = unsafe { std::slice::from_raw_parts(c.mem.add(addr as usize), 10) }.try_into().unwrap();
+            c.fpush(f80_to_f64(&b));
+        }
+        X87::StoreF80 => {
+            let b = f64_to_f80(x);
+            unsafe { std::slice::from_raw_parts_mut(c.mem.add(addr as usize), 10) }.copy_from_slice(&b);
+            c.fpop();
+        }
+        X87::Fxam => {
+            // empty registers are not tracked: an empty one reads as what it last held
+            let class = if x.is_nan() {
+                C0
+            } else if x.is_infinite() {
+                C2 | C0
+            } else if x == 0.0 {
+                C3
+            } else if x.is_subnormal() {
+                C3 | C2
+            } else {
+                C2
+            };
+            c.set_cc(class | if x.is_sign_negative() { C1 } else { 0 });
+        }
+        X87::Fsin | X87::Fcos | X87::Fsincos | X87::Fptan => {
+            match op {
+                X87::Fsin => c.set_st(0, x.sin()),
+                X87::Fcos => c.set_st(0, x.cos()),
+                X87::Fsincos => {
+                    c.set_st(0, x.sin());
+                    c.fpush(x.cos());
+                }
+                _ => {
+                    c.set_st(0, x.tan());
+                    c.fpush(1.0);
+                }
+            }
+            c.set_cc(0);
+        }
+        X87::Fpatan => {
+            let y = c.st(1);
+            c.set_st(1, y.atan2(x));
+            c.fpop();
+        }
+        X87::F2xm1 => c.set_st(0, (x * std::f64::consts::LN_2).exp_m1()),
+        X87::Fyl2x => {
+            let y = c.st(1);
+            c.set_st(1, y * x.log2());
+            c.fpop();
+        }
+        X87::Fyl2xp1 => {
+            let y = c.st(1);
+            c.set_st(1, y * x.ln_1p() / std::f64::consts::LN_2);
+            c.fpop();
+        }
+        X87::Fscale => {
+            let n = c.st(1);
+            c.set_st(0, scale(x, n));
+        }
+        X87::Fprem | X87::Fprem1 => {
+            let y = c.st(1);
+            let (q, r) = if matches!(op, X87::Fprem) {
+                ((x / y).trunc(), x % y)
+            } else {
+                let q = (x / y).round_ties_even();
+                (q, x - q * y)
+            };
+            c.set_st(0, r);
+            // the low three quotient bits go to C0 C3 C1; C2 = 0: the reduction is complete
+            let qb = if q.is_finite() { (q.abs() % 8.0) as u16 } else { 0 };
+            let bit = |k: u16, cc: u16| if qb & k != 0 { cc } else { 0 };
+            c.set_cc(bit(4, C0) | bit(2, C3) | bit(1, C1));
+        }
+        X87::Fxtract => {
+            if x == 0.0 || !x.is_finite() {
+                c.set_st(0, if x == 0.0 { f64::NEG_INFINITY } else { x.abs() });
+                c.fpush(x);
+            } else {
+                // exponent from the bits, so that 1 <= |significand| < 2 exactly
+                let e = (f64_to_f80(x)[8] as i32 | ((f64_to_f80(x)[9] as i32 & 0x7f) << 8)) - 16383;
+                c.set_st(0, e as f64);
+                c.fpush(scale(x, -e as f64));
+            }
         }
     }
 }
