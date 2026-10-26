@@ -81,7 +81,15 @@ Next:
 
 - [ ] Quit option and preferences menu (controls, graphics, resolution): our own settings
       go into the game's dialogs through `dialog/extend.rs` (renderer, MSAA, resolution, ...)
-- [ ] High resolution through the OpenGL renderer (widescreen: done for Glide)
+- [x] High resolution (Glide): missions are drawn as tall as the window (fullscreen: the
+      display's resolution), widescreen as wide as its aspect. Tested 1904x984
+- [x] Resolution list in Preferences (Glide): "Desktop" and the display's modes instead of
+      the game's list (`display.rs`, REG_DWORD `RenderSize`); a window takes the size,
+      fullscreen scales it to the display
+- [x] "Fullscreen" box in Preferences (Glide; the game hides its own): REG_DWORD
+      `Fullscreen`, applies at OK and at start; Alt+Enter saves it too
+- [ ] High resolution: lines (the laser sight) stay 1 pixel wide; the software renderer
+      stays at the game's resolution
 - [ ] Linux, later Android
 - [ ] Texture quality (options in Preferences through `dialog/extend.rs`). The source has
       no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`

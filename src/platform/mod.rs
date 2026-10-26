@@ -9,6 +9,7 @@
 pub mod advapi32;
 pub mod ddraw;
 pub mod dialog;
+pub mod display;
 pub mod dsound;
 pub mod gdi32;
 pub mod gl;

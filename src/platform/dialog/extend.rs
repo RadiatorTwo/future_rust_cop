@@ -17,12 +17,19 @@ const PREFERENCES: u32 = 101;
 const PROCESSOR_LABEL: u32 = 1111;
 const PROCESSOR_COMBO: u32 = 1023;
 
+/// Its Display Mode list (the game's resolutions up to 1280x960): with Glide, our list of the
+/// display's modes takes its place (`display.rs`).
+const DISPLAY_MODE: u32 = 1021;
+/// Its FullScreen box (the game hides it with Glide): ours goes there.
+const GAME_FULLSCREEN: u32 = 1012;
 /// Its "Filtering" box in the 3DFX Options group: our "Widescreen" box goes next to it.
 const FILTERING: u32 = 1013;
 
 const RENDERER_LABEL: u32 = FIRST_OURS;
 const RENDERER: u32 = FIRST_OURS + 1;
 const WIDESCREEN: u32 = FIRST_OURS + 2;
+const RESOLUTION: u32 = FIRST_OURS + 3;
+const FULLSCREEN: u32 = FIRST_OURS + 4;
 
 const VISIBLE: u32 = 0x1000_0000;
 const TABSTOP: u32 = 0x0001_0000;
@@ -41,8 +48,21 @@ pub fn adjust(template: u32, t: &mut Template) {
         let place = |id: u32| t.items.iter().find(|i| i.id == id).map(|i| i.rect);
         let (Some(label), Some(combo)) = (place(PROCESSOR_LABEL), place(PROCESSOR_COMBO)) else { return };
         let filtering = place(FILTERING);
-        t.items.push(Item { class: Class::Static, id: RENDERER_LABEL, text: "Renderer (next start)".into(), style: VISIBLE, ex_style: 0, rect: label });
+        let display_mode = place(DISPLAY_MODE);
+        let game_fullscreen = place(GAME_FULLSCREEN);
+        // wider than the game's label: up to the 3DFX Options group (x 132)
+        t.items.push(Item { class: Class::Static, id: RENDERER_LABEL, text: "Renderer (needs restart)".into(), style: VISIBLE, ex_style: 0, rect: [label[0], label[1], 122, label[3]] });
         t.items.push(Item { class: Class::ComboBox, id: RENDERER, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: combo });
+        if let Some(r) = display_mode {
+            t.items.push(Item { class: Class::ComboBox, id: RESOLUTION, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: r });
+        }
+        if let Some(r) = game_fullscreen {
+            // centred on the Display Mode list's row (one unit lower than the game's box: its
+            // square sits centred in it), left-aligned with Filtering below it
+            let x = filtering.map_or(r[0], |f| f[0]);
+            let y = display_mode.map_or(r[1], |m| m[1]);
+            t.items.push(Item { class: Class::Button, id: FULLSCREEN, text: "Fullscreen".into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: [x, y, r[2], r[3] - 1] });
+        }
         if let Some(f) = filtering {
             // an auto check box (BS_AUTOCHECKBOX) right of Filtering
             let rect = [f[0] + 58, f[1], 70, f[3]];
@@ -71,6 +91,28 @@ pub fn init(d: &mut Dialog) {
             c.check = crate::platform::wide::enabled() as u32;
             c.visible = glide;
         }
+        // with Glide the game's resolution does not matter (we draw at ours): its list makes way
+        if let Some(c) = d.control(DISPLAY_MODE) {
+            c.visible &= !glide;
+        }
+        let full = crate::platform::window::is_fullscreen();
+        if let Some(c) = d.control(FULLSCREEN) {
+            c.check = full as u32;
+            c.visible = glide;
+        }
+        let (desktop, modes) = crate::platform::window::display_modes();
+        let current = crate::platform::display::chosen().map_or(0, |(w, h)| w << 16 | h);
+        if let Some(c) = d.control(RESOLUTION) {
+            c.visible = glide;
+            if let Kind::Combo { items, sel, .. } = &mut c.kind {
+                items.push((format!("Desktop ({}x{})", desktop.0, desktop.1), 0));
+                items.extend(modes.iter().map(|&(w, h)| (format!("{w}x{h}"), w << 16 | h)));
+                if current != 0 && !items.iter().any(|i| i.1 == current) {
+                    items.push((format!("{}x{}", current >> 16, current & 0xffff), current));
+                }
+                *sel = items.iter().position(|i| i.1 == current).unwrap_or(0) as i32;
+            }
+        }
     }
 }
 
@@ -86,6 +128,16 @@ pub fn ok(d: &mut Dialog) {
             let mut v = r.into_bytes();
             v.push(0);
             advapi32::set_value("", "Group", 1, &v);
+        }
+        let size = d.control(RESOLUTION).filter(|c| c.visible).and_then(|c| match &c.kind {
+            Kind::Combo { items, sel, .. } => items.get(*sel as usize).map(|i| i.1),
+            _ => None,
+        });
+        if let Some(on) = d.control(FULLSCREEN).filter(|c| c.visible).map(|c| c.check != 0) {
+            crate::platform::display::set_fullscreen(on);
+        }
+        if let Some(v) = size {
+            crate::platform::display::set_chosen((v != 0).then_some((v >> 16, v & 0xffff)));
         }
         if let Some(on) = d.control(WIDESCREEN).map(|c| c.check != 0) {
             crate::platform::wide::set_enabled(on);

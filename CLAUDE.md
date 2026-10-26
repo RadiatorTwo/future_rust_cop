@@ -76,7 +76,12 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   shown at grBufferSwap with the game's gamma; the fragment shader does Glide's colour and
   alpha combine units and the chroma key, with bilinear filtering of the unkeyed texels and
   their coverage as a soft edge). Registry `Group` = `3Dfx` (default) or `Software`.
-  Frames are drawn 4:3 as wide as the Glide screen (the game opens 1280x1024 for 1280x960).
+  Frames are drawn as tall as the window (high resolution; the Glide screen, 1280x1024 for
+  the game's 1280x960, only gives the coordinates), 4:3 or as wide as the window's aspect;
+  `display.rs`: the resolution chosen in Preferences (our list replaces the game's Display
+  Mode list 1021 with Glide; REG_DWORD `RenderSize` = w << 16 | h, 0 = the window's size)
+  is the size drawn at, and the window's starting size. Fullscreen (borderless) is REG_DWORD `Fullscreen`:
+  our box where the game's FullScreen box (1012, hidden with Glide) was, and Alt+Enter.
 - Hooks: `platform::HOOKS` lists game functions replaced by Rust functions; `jit.rs` compiles
   the original as `G_x` and makes `F_x` call `rt_hook`; the hook runs the original with
   `rt::call_original` (return address on the guest stack, its `ret` pops it).
@@ -93,7 +98,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (`glide::View`: left / centre / right edge, split screen one per half). Needs precise
   mode. Players switch it in Preferences ("Widescreen" in 3DFX Options, REG_DWORD
   `Widescreen` in the game's key, default on). `FCOP_WIDE=0` off, `FCOP_WIDE=<aspect>` forces one. Dialog overlays stay 4:3 in the
-  middle of a wide frame (`window::overlay_span`). Alt+Enter toggles borderless fullscreen.
+  middle of a wide frame (`window::overlay_span`). Alt+Enter toggles borderless fullscreen (and saves it).
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
@@ -101,7 +106,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   14000:Up*5000"` (scripted input, ms after start; that one starts the first mission and
   walks forward with the user's bindings in `controls.txt`: player 1 on the arrow keys, the
   keypad belongs to player 2; times count from the game's start, after the ~5.5 s compile:
-  give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s). An access
+  give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_WINDOW=1920x1080`
+  (the window's starting size in pixels; Windows limits it to the screen). An access
   violation in guest memory is reported with the recompiled function it happened in.
 - Key bindings: `controls.txt` in the game folder (14 lines per player: forward, back,
   turn right, turn left, gun, action, special, jump, map, camera, jink, jink, heavy weapon,

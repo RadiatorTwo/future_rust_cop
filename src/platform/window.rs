@@ -349,6 +349,54 @@ pub fn window_size() -> (u32, u32) {
     with_host(|h| h.app.window.as_ref().map(|w| w.inner_size()).filter(|s| s.width > 0 && s.height > 0).map_or((1280, 960), |s| (s.width, s.height)))
 }
 
+/// The display the window is on: its size and the sizes of its video modes (largest first,
+/// at least 640x480).
+pub fn display_modes() -> ((u32, u32), Vec<(u32, u32)>) {
+    let none = ((1280, 960), Vec::new());
+    if !on_main() {
+        return none;
+    }
+    with_host(|h| {
+        let Some(m) = h.app.window.as_ref().and_then(|w| w.current_monitor()) else { return none };
+        let desktop = (m.size().width, m.size().height);
+        let mut modes: Vec<(u32, u32)> = m.video_modes().map(|v| (v.size().width, v.size().height)).filter(|&(w, h)| w >= 640 && h >= 480).collect();
+        modes.sort_unstable_by(|a, b| b.cmp(a));
+        modes.dedup();
+        (desktop, modes)
+    })
+}
+
+/// Is the window fullscreen?
+pub fn is_fullscreen() -> bool {
+    on_main() && with_host(|h| h.app.window.as_ref().is_some_and(|w| w.fullscreen().is_some()))
+}
+
+/// Borderless fullscreen on the window's display, or a window again.
+pub fn set_fullscreen(on: bool) {
+    if !on_main() {
+        return;
+    }
+    with_host(|h| {
+        if let Some(w) = &h.app.window {
+            if w.fullscreen().is_some() != on {
+                w.set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
+            }
+        }
+    });
+}
+
+/// Give the window this inner size (unless it is fullscreen).
+pub fn set_window_size(w: u32, h: u32) {
+    if !on_main() {
+        return;
+    }
+    with_host(|host| {
+        if let Some(win) = host.app.window.as_ref().filter(|w| w.fullscreen().is_none()) {
+            let _ = win.request_inner_size(winit::dpi::PhysicalSize::new(w, h));
+        }
+    });
+}
+
 /// The 4:3 part in the middle of a frame of w x h, where dialogs are shown: x offset and width.
 pub fn overlay_span(w: u32, h: u32) -> (u32, u32) {
     let ow = w.min(h * 4 / 3);
@@ -387,7 +435,18 @@ impl App {
 
     fn create(&mut self, el: &ActiveEventLoop) {
         let Some(title) = self.want.take() else { return };
-        let attrs = Window::default_attributes().with_title(title).with_inner_size(LogicalSize::new(1280.0, 960.0));
+        // FCOP_WINDOW=1920x1080: the window's starting size in pixels (tests); else the
+        // resolution chosen in Preferences, else 1280x960
+        let size = std::env::var("FCOP_WINDOW")
+            .ok()
+            .and_then(|v| v.split_once('x').and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?))))
+            .or_else(super::display::chosen);
+        let attrs = Window::default_attributes().with_title(title);
+        let attrs = attrs.with_fullscreen(super::display::fullscreen().then_some(winit::window::Fullscreen::Borderless(None)));
+        let attrs = match size {
+            Some((w, h)) => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
+            None => attrs.with_inner_size(LogicalSize::new(1280.0, 960.0)),
+        };
         let (win, gl) = Gl::new(el, attrs);
         self.window = Some(win);
         self.gl = Some(gl);
@@ -460,6 +519,7 @@ impl ApplicationHandler for App {
                         if let Some(w) = &self.window {
                             let full = w.fullscreen().is_some();
                             w.set_fullscreen((!full).then_some(winit::window::Fullscreen::Borderless(None)));
+                            super::display::remember_fullscreen(!full);
                         }
                     }
                     return;

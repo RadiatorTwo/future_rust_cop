@@ -4,9 +4,10 @@
 //!
 //! The game draws its depth-sorted triangles with Glide's colour and alpha combine units, alpha
 //! blending and a chroma key (black texels are not drawn), textures 256x256 ARGB1555 in TMU
-//! memory, no depth buffer. We draw into a 4:3 texture as wide as the Glide screen
-//! (`grSstWinOpen`; the game opens 1280x1024 for its 1280x960 mode and stretches its picture
-//! to it) and show it at `grBufferSwap`. Vertices are in Glide screen pixels, or in the space
+//! memory, no depth buffer. We draw into a texture as tall as the window or the resolution
+//! chosen in Preferences (`display.rs`; high resolution:
+//! the Glide screen of `grSstWinOpen` only gives the coordinates; the game opens 1280x1024
+//! for its 1280x960 mode and stretches its 4:3 picture to it) and show it at `grBufferSwap`. Vertices are in Glide screen pixels, or in the space
 //! the display list walker sets (`set_space`, see `walker.rs`); clip windows are always in
 //! screen pixels. Widescreen (`wide.rs`): the texture takes the window's aspect, the 3D
 //! picture fills it and the HUD is drawn into 4:3 parts of it (`set_view`). With filtering on, the chroma key leaves the keyed texels
@@ -351,10 +352,11 @@ impl Glide {
         }
     }
 
-    /// Give the target an aspect (between frames): its height stays, its width follows.
-    fn set_aspect(&mut self, gl: &glow::Context, a: f32) {
-        let h = self.res.0 * 3 / 4;
-        let w = ((h as f32 * a).round() as u32).max(self.res.0);
+    /// Size the target (between frames): as tall as the render size `h` (the window's or the
+    /// chosen resolution: high resolution), as wide as the aspect `a` makes it.
+    fn resize(&mut self, gl: &glow::Context, a: f32, h: u32) {
+        let h = h.clamp(240, 4320);
+        let w = (h as f32 * a).round() as u32;
         if (w, h) == self.target {
             return;
         }
@@ -558,8 +560,9 @@ fn sst_win_open(c: &mut Cpu) -> u32 {
     log!("glide: grSstWinOpen {w}x{h}");
     let mut g = super::window::with_gl(|gl| Glide::open(&gl.gl, w, h));
     if let Some(g) = &mut g {
-        let a = super::wide::set_aspect(Some(window_aspect()));
-        super::window::with_gl(|gl| g.set_aspect(&gl.gl, a));
+        let (ww, wh) = super::display::render_size();
+        let a = super::wide::set_aspect(Some(ww as f32 / wh.max(1) as f32));
+        super::window::with_gl(|gl| g.resize(&gl.gl, a, wh));
     }
     let ok = g.is_some();
     GLIDE.with(|s| *s.borrow_mut() = g);
@@ -579,10 +582,6 @@ fn sst_win_close(_: &mut Cpu) -> u32 {
     1
 }
 
-fn window_aspect() -> f32 {
-    let (w, h) = super::window::window_size();
-    w as f32 / h.max(1) as f32
-}
 
 fn buffer_clear(c: &mut Cpu) -> u32 {
     let color = arg(c, 0);
@@ -608,8 +607,9 @@ fn buffer_swap(_: &mut Cpu) -> u32 {
     if let Some((tex, (w, h), gamma)) = shown {
         super::window::show_texture(tex, w, h, gamma);
         // the next frame follows the window
-        let a = super::wide::set_aspect(Some(window_aspect()));
-        with(|g, gl| g.set_aspect(gl, a));
+        let (ww, wh) = super::display::render_size();
+        let a = super::wide::set_aspect(Some(ww as f32 / wh.max(1) as f32));
+        with(|g, gl| g.resize(gl, a, wh));
     }
     0
 }
