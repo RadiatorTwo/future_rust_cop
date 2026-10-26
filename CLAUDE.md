@@ -24,6 +24,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 ## How it works
 
+- `data/symbols.txt`: what we know about the game's functions and data, by address (name,
+  description; "?" marks guesses). Keep it current when something new is understood.
 - `src/image.rs`: the EXE's sections and imports; `data/functions.json` loader.
 - `src/discover.rs`: finds the code (recursive descent from each function, jump tables,
   extra entry points where other code jumps into the middle of a function or where data
@@ -123,7 +125,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (an earlier attempt wrote the loop's tick limit 0x406a7f etc.). Instead pictures are drawn
   in between: the frame's render block (0x426eb0 ... 0x4114c0, see the module) runs again
   while the loop waits for its next frame (clock read from 0x406a56), shown with 0x4153a0,
-  with every actor (list at 0x50e428, count [0x50e420]; matrix +0x2c, position +0x50) and the
+  with every actor (list at 0x50e428, count [0x50e420]; matrix +0x2c, position +0x50; the
+  player robot's side weapons and lights are model records in its data [+0xac] at +0x178,
+  +0x1c4, +0x210, placed at +4, drawn by 0x447ba0: interpolated too, else they jerked) and the
   camera ([0x511f48], up to +0x88) put between their places in the last two frames; the
   frame's own render shows the start of the interval, so pictures lag one frame. 0x44fd20
   in the render block is logic (the actor grid 0x4a31b0 for hits, per-frame lists): it runs
@@ -145,7 +149,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   keypad belongs to player 2; times count from the game's start, after the ~5.5 s compile:
   give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_PROF=1` (time in
   each import, every 2 s), `FCOP_COUNT=<file>` (calls per function and second: "second
-  address calls"; counting is compiled in only then), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_WINDOW=1920x1080`
+  address calls [name]"; counting is compiled in only then), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_WINDOW=1920x1080`
   (the window's starting size in pixels; Windows limits it to the screen). An access
   violation in guest memory is reported with the recompiled function it happened in.
 - Key bindings: `controls.txt` in the game folder (14 lines per player: forward, back,
@@ -206,7 +210,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   handler; setting `Cpu::stop` unwinds out of guest code (checked after every call).
 - `examples/missing.rs <exe>`: lists every instruction the lifter does not support yet;
   `examples/smc.rs <exe>`: lists the self-modifying code fields;
-  `examples/dis.rs <exe> <addr>`: disassembles a function as discovery sees it (`all`: every one);
+  `examples/dis.rs <exe> <addr>`: disassembles a function as discovery sees it (`all`: every
+  one; names from `data/symbols.txt` on targets); crash reports name the function too;
   `examples/at.rs <exe> <addr>...`: decodes single instructions.
 - Odd instructions: MMX is only movq/movd copies (`Cpu::mm`); `in` reads 0xff (gameport,
   nothing connected), `out` does nothing; `push/pop es` only occur in data decoded as code.

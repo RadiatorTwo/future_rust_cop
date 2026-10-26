@@ -51,6 +51,11 @@ const ACTORS: u32 = 0x50e428;
 /// An actor's 3x3 matrix (1.0 = 0x10000) at +0x2c and its position (20.12) at +0x50.
 const PLACE: u32 = 0x2c;
 const PLACE_N: usize = 12;
+/// The player robot (its handler) has three more models placed in its data ([+0xac]): the
+/// side weapons and the lights, records of 0x4c bytes with the same place at +4 (drawn by
+/// 0x447ba0, which also takes the lights' glow from the last one).
+const ROBOT: u32 = 0x446800;
+const ROBOT_MODELS: [u32; 3] = [0x178, 0x1c4, 0x210];
 /// The camera: its position (+0), yaw (+0x20, 4096 a turn), matrices and copies up to +0x88.
 const CAMERA: u32 = 0x511f48;
 const CAMERA_N: usize = 0x88 / 4;
@@ -111,7 +116,7 @@ fn active() -> bool {
 
 // ---- what is drawn ----------------------------------------------------------------------------
 
-/// Where the actors and the camera were when a frame was drawn.
+/// Where the actors and the camera were when a frame was drawn: each place by its address.
 struct Places {
     actors: Vec<(u32, [i32; PLACE_N])>,
     camera: [i32; CAMERA_N],
@@ -134,21 +139,27 @@ fn write(a: u32, vals: &[i32]) {
 impl Places {
     fn put(&self) {
         for (a, p) in &self.actors {
-            write(a + PLACE, p);
+            write(*a, p);
         }
         write(mem().rd32(CAMERA), &self.camera);
     }
 
     fn now() -> Places {
         let m = mem();
-        let actors = (0..m.rd32(ACTOR_COUNT).min(1024))
-            .map(|k| {
-                let a = m.rd32(ACTORS + 4 * k);
-                let mut p = [0; PLACE_N];
-                read(a + PLACE, &mut p);
-                (a, p)
-            })
-            .collect();
+        let place = |a: u32| {
+            let mut p = [0; PLACE_N];
+            read(a, &mut p);
+            (a, p)
+        };
+        let mut actors = Vec::new();
+        for k in 0..m.rd32(ACTOR_COUNT).min(1024) {
+            let a = m.rd32(ACTORS + 4 * k);
+            actors.push(place(a + PLACE));
+            if m.rd32(a + 4) == ROBOT {
+                let data = m.rd32(a + 0xac);
+                actors.extend(ROBOT_MODELS.iter().map(|&r| place(data + r + 4)));
+            }
+        }
         let mut camera = [0; CAMERA_N];
         read(m.rd32(CAMERA), &mut camera);
         Places { actors, camera }
@@ -178,7 +189,7 @@ impl Places {
                     v[i] = lerp(from[i], p[i]);
                 }
             }
-            write(a + PLACE, &v);
+            write(*a, &v);
         }
         let (a, b) = (&self.camera, &to.camera);
         if (0..3).all(|i| (b[i] - a[i]).abs() <= 0x10000) {

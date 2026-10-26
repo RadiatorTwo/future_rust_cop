@@ -465,7 +465,7 @@ fn catch_faults() {
                 log!(
                     "fatal: guest memory {kind} at {:#x} in the function at {} (last import call returned to {:#x})",
                     a - base,
-                    func.map_or("?".into(), |f| format!("{f:#x}")),
+                    func.map_or("?".into(), crate::image::named),
                     LAST_CALL.load(std::sync::atomic::Ordering::Relaxed)
                 );
             } else {
@@ -474,6 +474,7 @@ fn catch_faults() {
         }
         0 // EXCEPTION_CONTINUE_SEARCH
     }
+    crate::image::symbols(); // read now, not while handling a fault
     unsafe { AddVectoredExceptionHandler(0, Some(on_fault)) };
 }
 
@@ -644,7 +645,7 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
         });
     }
     if let Some(path) = rt::count_file() {
-        // calls per function, every second: "second address calls" lines
+        // calls per function, every second: "second address calls [name]" lines
         std::thread::spawn(move || {
             use std::io::Write;
             let mut out = std::io::BufWriter::new(std::fs::File::create(path).expect("FCOP_COUNT file"));
@@ -653,7 +654,9 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
                 for (k, n) in rt::COUNTS.iter().enumerate() {
                     let n = n.swap(0, Ordering::Relaxed);
                     if n != 0 {
-                        let _ = writeln!(out, "{sec} {:x} {n}", crate::discover::TEXT_START + k as u32);
+                        let a = crate::discover::TEXT_START + k as u32;
+                        let name = crate::image::symbols().get(&a).map_or("", |n| n.as_str());
+                        let _ = writeln!(out, "{sec} {a:x} {n} {name}");
                     }
                 }
                 let _ = out.flush();

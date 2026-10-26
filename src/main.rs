@@ -42,6 +42,7 @@ fn run() -> u32 {
     };
     let img = Image::load(&exe).unwrap_or_else(|e| panic!("{}: {e}", exe.display()));
     let ranges = load_functions(Path::new("data/functions.json")).expect("data/functions.json");
+    fcop::image::symbols(); // names for reports, read before the game changes the directory
     let t = Instant::now();
     let mut code = Code::new(&img);
     let prog = Program::build(&mut code, &ranges);

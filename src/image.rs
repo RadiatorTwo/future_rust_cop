@@ -134,6 +134,30 @@ pub fn load_functions(path: &Path) -> std::io::Result<Vec<(u32, u32, String)>> {
     Ok(out)
 }
 
+/// The names in data/symbols.txt (what we know about the game's code and data), by address;
+/// empty without the file.
+pub fn symbols() -> &'static std::collections::BTreeMap<u32, String> {
+    static S: std::sync::OnceLock<std::collections::BTreeMap<u32, String>> = std::sync::OnceLock::new();
+    S.get_or_init(|| {
+        let text = std::fs::read_to_string("data/symbols.txt").unwrap_or_default();
+        text.lines()
+            .filter_map(|l| {
+                let mut w = l.split_whitespace();
+                let a = u32::from_str_radix(w.next()?.strip_prefix("0x")?, 16).ok()?;
+                Some((a, w.next()?.to_string()))
+            })
+            .collect()
+    })
+}
+
+/// An address with its name, if it has one: "0x446e00 robot_update".
+pub fn named(a: u32) -> String {
+    match symbols().get(&a) {
+        Some(n) => format!("{a:#x} {n}"),
+        None => format!("{a:#x}"),
+    }
+}
+
 /// A resource name or number (`MAKEINTRESOURCE`).
 #[derive(Clone, Copy, Debug)]
 pub enum ResId<'a> {

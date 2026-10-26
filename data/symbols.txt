@@ -1,0 +1,120 @@
+# What we know about the game's code and data, by address (FCopLAPD.exe, SHA-256 2dcdd1e7...7e5e).
+# One line each: address, name, description. A name or description ending in "?" is a guess.
+# Our own analysis only (names, meanings); nothing taken from the EXE itself.
+
+## Main loop and timing
+0x405e60  run_mission?            calls the mission loop
+0x406820  mission_loop            per frame: input, frame_wait, frame (0x407360 / 0x4076d0), then camera, HUD messages, frame_end
+0x406a30  frame_wait              waits until 8 ticks passed since frame_start_ticks (busy loop on clock_ticks, returns to 0x406a56), sets frame_dt (max 60), small palette/light animations
+0x406b20  frame_wait_net          the same for network games
+0x407360  frame_one_view          one frame, one view: logic block, render block, after-render logic (see fps.rs)
+0x4076d0  frame_split_screen      the same for split screen (render block twice)
+0x407d70  after_frame             after the frame: adds messages and indicators to the display list for the next frame
+0x407fe0  frame_end               mission end timer, then 0x4063c0 and frame_show
+0x4063c0  drain_queue?            takes entries from a queue (0x416470) before the frame is shown
+0x4153a0  frame_show              shows the frame: Glide glide_swap, THRASH 0x456260, else DirectDraw
+0x4150d0  frame_show_2            the same, called from 0x406810
+0x412f80  clock_read              QueryPerformanceCounter to clock_time
+0x4130c0  clock_ticks             ticks of 1/300 s since clock_start (a little fast: 60 fps measure 61)
+0x4130f0  clock_ticks_2           ticks since another start (0x49fe80)
+
+## Rendering (render block of frame_one_view, in this order)
+0x426eb0  render_begin            camera matrix setup
+0x452880  render_visibility       (0, player, &view) what is visible
+0x44fd20  actor_grid_build        logic in the render block: rebuilds actor_grid (hits use it), empties per-frame lists; skipped when paused
+0x453260  render_world            (0, player, &view) projects terrain, objects, effects into the display list
+0x4075b0  render_part?            (0, 1)
+0x434c90  render_hud              (player) HUD and target markers
+0x4114c0  render_finish           (0) display_list_draw
+0x40ca10  display_list_draw       links the records by depth into buckets, resets display_list_end, walks them (glide_walker), clears the buckets
+0x411490  display_buckets_clear
+0x4393e0  glide_walker            display list to Glide triangles (hooked: walker.rs)
+0x4393d0  glide_swap              grBufferSwap(1)
+0x42dd90  objects_draw            effects (effects_draw), lists at 0x4a1380 / 0x4a1378, animated objects
+0x4532f0  actors_draw             sends message 3 (draw) to every actor
+0x4280a0  model_draw              (record: +0 model, +4 matrix 3x3, +0x28 position; flags; mode)
+0x4280f0  model_visible
+0x4284b0  model_draw_polygons
+0x4274b0  line_draw?              a line between two points relative to the camera (laser sight?)
+0x429830  model_point?            a point of a model in world space (the lights' glow)
+0x453740  project_terrain_vertex  (hooked: wide.rs)
+0x457340  project_points          object points (hooked: wide.rs)
+0x457140  project_sprite          (hooked: wide.rs)
+0x452fd0  terrain_cell_visible    sphere view test (hooked: wide.rs)
+0x4572a0  object_visible          sphere view test (hooked: wide.rs)
+0x435330  hud_target_markers      (hooked: wide.rs)
+0x4357f0  hud_indicator           a sprite at 508,380 (640x480 units) while indicator_on and not 0x511c10
+0x4359d0  hud_indicator_update    sets indicator_on, draws hud_indicator
+0x45b1c0  sw_patch_pixel_format   the software renderer rewrites its code for 555/565 (sw_patch_table)
+
+## Actors
+0x43a8c0  actors_message          (msg, dt, 0): handler(msg, actor, dt, 0) for every actor; msg 6 update
+0x446800  robot_handler           player robot; msg 1 size (0xf4), 6 robot_update, 3 draw (nothing)
+0x446e00  robot_update            (actor, dt) physics in whole 8-tick steps (remainder at +0xb6)
+0x442120  robot_physics           (actor, dt, steps, out) mode [data+0xad]: 1 hover, else walk
+0x442510  robot_physics_hover     adds dt to the turn speed in every step
+0x444100  robot_physics_walk
+0x4456a0  robot_camera            (actor, dt, dt / 2)
+0x445eb0  camera_turn_toward      (angle, target, n) n times angle = (31 angle + target) / 32
+0x4479f0  robot_part_handler      the aiming upper part; msg 3 robot_draw
+0x447ba0  robot_draw              body, part, side weapons and lights (model records in robot data), glow, muzzle flash
+0x448010  muzzle_flash_draw       picks one of 3 looks at random
+0x458ed0  player_weapon_fire      (actor, weapon 0..2) while its button is held
+0x433d00  actor_event?            (id, actor)
+
+## Effects and objects
+0x42d6d0  world_update?           (dt) effects and object lists
+0x43d310  effects_update          (dt) every effect in the list at effects
+0x43d420  effect_update           (effect, dt)
+0x43d6f0  effect_emitter          (effect, part, a, b, c) timers down by (rate * dt) >> 8, emits
+0x43d810  effect_emit
+0x43eea0  effect_create
+0x43e2c0  effects_draw
+0x42e8f0  anim_object_update      many (rate * dt) >> 8 terms
+0x43fe30  random                  seed at random_seed
+
+## Threads, files, input, video
+0x405180  net_receive_thread      DirectPlay receive loop
+0x4051e0  net_receive
+0x415f30  file_reader_thread      async file reader (one-slot mailbox with file_read_done)
+0x416bf0  file_read_done
+0x417aa0  controls_default        copies profile [0x4a01b0] of the default key tables
+0x408800  video_play              DirectShow
+0x408ab0  video_stop              Space or a click
+
+## C runtime
+0x4780d0  strchr                  (then strncpy, strstr, strcspn, strncmp, strpbrk; see examples/crt.rs)
+0x478090  _ftol
+0x4781e0  _beginthread
+
+## Data
+0x511ee4  now_ticks               clock_ticks at this frame
+0x511e4c  frame_start_ticks
+0x511f58  frame_dt                ticks of this frame (8, at most 60)
+0x511f40  frame_count
+0x511fb8  game_state              4 playing (also 8, 0xb, 0xd)
+0x511f50  views                   1 one view
+0x511f54  split_screen            nonzero in split screen
+0x511fa4  glide_active
+0x511fe4  thrash_active
+0x511fd0  players                 two actor pointers
+0x511f48  camera                  pointer: +0 position, +0x20 yaw (4096 a turn), +0x28 matrix, +0x4c view translation, +0x58 transposed matrix, +0x7c position copy
+0x511c08  hud_owner?              decides whether render_hud runs
+0x50e420  actor_count
+0x50e428  actors                  pointers; actor: +4 handler, +8 active (> 0), +0x28 model, +0x2c matrix 3x3 (1.0 = 0x10000), +0x50 position (20.12), +0xac data (robot: +0x58 health, +0x78 reload timers, +0x84 ammo, +0xad mode, +0x178 / +0x1c4 / +0x210 side weapons and lights)
+0x50e370  random_seed
+0x50e8ec  indicator_on
+0x499b0c  display_list_start      0x38-byte records up to display_list_end
+0x511dc0  display_list_end
+0x499ad0  display_buckets         bucket 0 (the HUD) is the last
+0x4a2ab0  effects                 list head
+0x4a31b0  actor_grid
+0x49fe60  clock_time              double
+0x49fe50  clock_start             double
+0x511e58  resolution_index
+0x487080  resolution_table        20 bytes each: width, height, ...
+0x48ea20  sw_patch_table
+0x48ce04  fpu_cw_24bit            control word 0xc7f the renderer loads
+0x4a01b0  controls_profile
+0x48afb8  default_keys_player1    3 profiles of 0x78 bytes
+0x48b120  default_keys_player2
