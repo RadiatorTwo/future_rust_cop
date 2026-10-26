@@ -12,6 +12,7 @@ pub mod dialog;
 pub mod display;
 pub mod dshow;
 pub mod dsound;
+pub mod fps;
 pub mod gdi32;
 pub mod gl;
 pub mod glide;
@@ -550,6 +551,11 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (wide::TERRAIN_VISIBLE, wide::terrain_visible),
     (wide::OBJECT_VISIBLE, wide::object_visible),
     (wide::MARKERS, wide::markers),
+    (fps::WEAPON, fps::weapon),
+    (fps::ROBOT, fps::robot),
+    (fps::PHYSICS, fps::physics),
+    (fps::CAMERA, fps::camera),
+    (fps::TURN, fps::turn),
 ];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread
@@ -568,6 +574,7 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
         m.slice(sec.va, bytes.len()).copy_from_slice(&bytes);
     }
     user32::single_player_keys();
+    fps::init();
     m.map(TIB, TIB + 0x1000);
     m.map(STACK_LO, STACK_HI);
     m.map(THUNK_LO, THUNK_LO + 4 * THUNK_N);

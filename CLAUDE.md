@@ -39,10 +39,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   word's rounding mode; `fild qword` remembers the exact integer (`st_int`/`st_int_of`) for
   the memcpy idiom. Transcendentals and 80-bit operands go to `rt_x87`.
 - `src/smc.rs`: self-modifying code. Fields = targets of `mov [code address], x` plus the
-  patch table at 0x48ea20 (555/565). Finds 177 immediates/branch offsets (incl. shift
-  counts) and 67 displacements, which the lifter reads from guest memory (`Lifter::field`),
-  and 8 rewritten instructions (cmp/jb <-> test/je), lifted in every version and chosen by
-  comparing the current bytes. Rewritten jumps/calls go through `jump_dyn`/`rt_lookup`.
+  patch table at 0x48ea20 (555/565), plus the frame limit (`FRAME_LIMIT`). Finds 182
+  immediates/branch offsets (incl. shift counts and the 5 frame limit ticks) and 67
+  displacements, which the lifter reads from guest memory (`Lifter::field`), and 8 rewritten
+  instructions (cmp/jb <-> test/je), lifted in every version and chosen by comparing the
+  current bytes. Rewritten jumps/calls go through `jump_dyn`/`rt_lookup`.
 - `src/jit.rs`: declares all functions, lifts and compiles them in one JITModule, plus a
   `foreign_stub` (calls to non-recompiled addresses -> `rt_foreign`) and an `enter`
   trampoline (host calling convention -> tail convention).
@@ -111,6 +112,16 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   mode. Players switch it in Preferences ("Widescreen" in 3DFX Options, REG_DWORD
   `Widescreen` in the game's key, default on). `FCOP_WIDE=0` off, `FCOP_WIDE=<aspect>` forces one. Dialog overlays stay 4:3 in the
   middle of a wide frame (`window::overlay_span`). Alt+Enter toggles borderless fullscreen (and saves it).
+- `fps.rs`: the mission frame rate. The clock counts 1/300 s ticks (QPC, 0x4130c0; a little
+  fast: 60 fps measure 61); the mission loop 0x406a30 waits for `FRAME_LIMIT` ticks per
+  frame, so 300 / fps there gives exact frames (choices 60, 75, 100, 150, 300; REG_DWORD
+  `FrameRate`, 0 = original 37.5; our combo below the 3DFX Options group in Preferences).
+  Measured: 61, 101, 151, 301 fps (no vsync: frames are not tied to the display). Below 8 ticks, hooks correct what was made
+  for 8-tick frames: weapon fire rate 0x458ed0 (once per frame while the reload timer ran
+  out), the player robot's physics in whole 8-tick steps (0x446e00 / 0x442120: shown between
+  its last two steps, actor+0x2c..0x5b; camera 0x4456a0), the camera turn 0x445eb0 (2-tick
+  units). Other per-frame effects may still show up (enemy fire, damage over time).
+  `FCOP_FPS=1` logs the frames shown per second (Glide).
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
@@ -179,7 +190,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   handler; setting `Cpu::stop` unwinds out of guest code (checked after every call).
 - `examples/missing.rs <exe>`: lists every instruction the lifter does not support yet;
   `examples/smc.rs <exe>`: lists the self-modifying code fields;
-  `examples/dis.rs <exe> <addr>`: disassembles a function as discovery sees it;
+  `examples/dis.rs <exe> <addr>`: disassembles a function as discovery sees it (`all`: every one);
   `examples/at.rs <exe> <addr>...`: decodes single instructions.
 - Odd instructions: MMX is only movq/movd copies (`Cpu::mm`); `in` reads 0xff (gameport,
   nothing connected), `out` does nothing; `push/pop es` only occur in data decoded as code.
@@ -190,9 +201,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   0x100000-0x400000, TIB at 0x10000, heap 0x01000000-0x40000000.
 - The software renderer (0x45b000-0x461000) patches immediates, displacements and branch
   offsets in its own code; FUN_0045b1c0 rewrites code for 555/565 pixel formats from a
-  table at 0x48ea20 (handled by `src/smc.rs`). The old project also rewrote the frame
-  limit (the 8 ticks = 37.5 fps immediates at 0x406a7f, 0x406b30, 0x4071aa, 0x407278,
-  0x407295) from its platform layer; add them as fields when the platform layer does that.
+  table at 0x48ea20 (handled by `src/smc.rs`). The mission frame limit (8 ticks
+  = 37.5 fps; immediates at 0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) is a set of
+  code fields (`smc::FRAME_LIMIT`), written by `platform/fps.rs`.
 - The game's threads raced when run truly in parallel (async file reader 0x415f30 and its
   callback 0x416bf0 share a one-slot mailbox): guest threads must take turns.
 - x87 runs at 53-bit precision (the CRT sets it), but the renderer loads control word

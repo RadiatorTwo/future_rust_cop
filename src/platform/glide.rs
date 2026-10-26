@@ -606,6 +606,7 @@ fn buffer_swap(_: &mut Cpu) -> u32 {
     });
     if let Some((tex, (w, h), gamma)) = shown {
         super::window::show_texture(tex, w, h, gamma);
+        super::fps::frame_shown();
         // the next frame follows the window
         let (ww, wh) = super::display::render_size();
         let a = super::wide::set_aspect(Some(ww as f32 / wh.max(1) as f32));

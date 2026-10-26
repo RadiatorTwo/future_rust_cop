@@ -13,6 +13,17 @@ use std::collections::{BTreeMap, HashMap};
 /// value for each pixel format (4 bytes each); a zero size ends it.
 const PATCH_TABLE: u32 = 0x48ea20;
 
+/// The mission loop's frame limit: it waits until this many timer ticks (1/300 s, 8 = 37.5
+/// fps) have passed since the last frame. The game never writes them; the platform layer
+/// may. (instruction, field, size): `cmp reg, imm8` and `mov edi, imm32`.
+pub const FRAME_LIMIT: [(u32, u32, u32); 5] = [
+    (0x406a7f, 0x406a81, 1),
+    (0x406b30, 0x406b31, 4),
+    (0x4071aa, 0x4071ab, 4),
+    (0x407278, 0x40727a, 1),
+    (0x407295, 0x407297, 1),
+];
+
 /// A code field written at run time: its guest address and size in bytes.
 #[derive(Clone, Copy, Debug)]
 pub struct Field {
@@ -36,7 +47,8 @@ impl Smc {
         starts.sort_unstable();
         starts.dedup();
 
-        // fields: what `mov [code address], x` writes, and the patch table's entries
+        // fields: what `mov [code address], x` writes, the frame limit and the patch table's
+        // entries
         let mut fields: BTreeMap<u32, (u32, Option<[u32; 2]>)> = BTreeMap::new();
         for &a in &starts {
             let i = code.at(a).unwrap();
@@ -47,6 +59,11 @@ impl Smc {
                 && is_code(i.memory_displacement32())
             {
                 fields.insert(i.memory_displacement32(), (i.memory_size().size() as u32, None));
+            }
+        }
+        for (a, f, n) in FRAME_LIMIT {
+            if starts.binary_search(&a).is_ok() {
+                fields.insert(f, (n, None));
             }
         }
         let table = patch_table(code);

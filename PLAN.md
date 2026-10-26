@@ -77,7 +77,13 @@ Next:
 - [x] Videos (`dshow.rs`, `src/mpeg/`): EA logo, intro, briefing play with sound, Space skips;
       all 27 files decode like ffmpeg. Still to check by ear and eye: HELP (cwrules), credits,
       the fly-overs (po_*), multiplayer briefing
-- [ ] Frame limit fields (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) as code fields
+- [x] Frame limit fields (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) as code fields
+      (`smc::FRAME_LIMIT`): the generated code reads the tick count from guest memory
+- [x] Frame rate in Preferences (`fps.rs`): 60/75/100/150/300 fps through the frame limit
+      fields; weapon fire rate, robot physics steps and camera turn corrected. Measured by
+      script: 61, 101, 151, 301 fps (the game's clock runs 1 % fast)
+- [ ] Frame rate: checked by the user by eye (robot and camera smooth? fire rate as
+      before?); find further things made for 8-tick frames (enemies, effects, timers)
 
 ### 2. The user's goals after that
 
