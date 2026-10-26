@@ -5,13 +5,14 @@
 //! (`walker.rs`). Target markers are drawn at HUD level but belong to the 3D picture, so they
 //! are moved back to their place (`to_screen`).
 //!
-//! The aspect follows the window (set at every frame shown, `set_aspect`); `FCOP_WIDE=0`
-//! turns it off, `FCOP_WIDE=<aspect>` forces one.
+//! The aspect follows the window (set at every frame shown, `set_aspect`). The player turns it
+//! on or off in Preferences (REG_DWORD `Widescreen` in the game's key, default on);
+//! `FCOP_WIDE=0` turns it off, `FCOP_WIDE=<aspect>` forces one.
 
-use super::mem;
+use super::{advapi32, mem};
 use crate::rt::{Cpu, ESP, call_original};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 pub const TERRAIN_VERTEX: u32 = 0x453740;
 pub const SPRITE: u32 = 0x457140;
@@ -34,6 +35,25 @@ static K: AtomicU32 = AtomicU32::new(0x3f80_0000);
 /// Records moved by `to_screen` this frame (drawn with the centred HUD).
 static PLACED: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
+/// The player's choice: 0 off, 1 on, 2 not read from the registry yet.
+static ENABLED: AtomicU8 = AtomicU8::new(2);
+
+pub fn enabled() -> bool {
+    let e = ENABLED.load(Ordering::Relaxed);
+    if e != 2 {
+        return e == 1;
+    }
+    let on = advapi32::value("", "Widescreen").is_none_or(|(_, d)| d.first().is_some_and(|&b| b != 0));
+    ENABLED.store(on as u8, Ordering::Relaxed);
+    on
+}
+
+/// Preferences' OK: saved, and used from the next frame on.
+pub fn set_enabled(on: bool) {
+    ENABLED.store(on as u8, Ordering::Relaxed);
+    advapi32::set_value("", "Widescreen", 4, &(on as u32).to_le_bytes());
+}
+
 pub fn k() -> f32 {
     f32::from_bits(K.load(Ordering::Relaxed))
 }
@@ -50,7 +70,8 @@ pub fn set_aspect(a: Option<f32>) -> f32 {
         (_, None) => 4.0 / 3.0,
         (Some(f), _) if f == 0.0 => 4.0 / 3.0,
         (Some(f), _) => f,
-        (None, Some(a)) => a,
+        (None, Some(a)) if enabled() => a,
+        (None, Some(_)) => 4.0 / 3.0,
     };
     let a = if super::walker::precise() { a.max(4.0 / 3.0) } else { 4.0 / 3.0 };
     let k = if a > 4.0 / 3.0 + 0.01 { 4.0 / 3.0 / a } else { 1.0 };

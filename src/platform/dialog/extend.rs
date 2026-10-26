@@ -17,8 +17,12 @@ const PREFERENCES: u32 = 101;
 const PROCESSOR_LABEL: u32 = 1111;
 const PROCESSOR_COMBO: u32 = 1023;
 
+/// Its "Filtering" box in the 3DFX Options group: our "Widescreen" box goes next to it.
+const FILTERING: u32 = 1013;
+
 const RENDERER_LABEL: u32 = FIRST_OURS;
 const RENDERER: u32 = FIRST_OURS + 1;
+const WIDESCREEN: u32 = FIRST_OURS + 2;
 
 const VISIBLE: u32 = 0x1000_0000;
 const TABSTOP: u32 = 0x0001_0000;
@@ -36,8 +40,14 @@ pub fn adjust(template: u32, t: &mut Template) {
     if template == PREFERENCES {
         let place = |id: u32| t.items.iter().find(|i| i.id == id).map(|i| i.rect);
         let (Some(label), Some(combo)) = (place(PROCESSOR_LABEL), place(PROCESSOR_COMBO)) else { return };
+        let filtering = place(FILTERING);
         t.items.push(Item { class: Class::Static, id: RENDERER_LABEL, text: "Renderer (next start)".into(), style: VISIBLE, ex_style: 0, rect: label });
         t.items.push(Item { class: Class::ComboBox, id: RENDERER, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: combo });
+        if let Some(f) = filtering {
+            // an auto check box (BS_AUTOCHECKBOX) right of Filtering
+            let rect = [f[0] + 58, f[1], 70, f[3]];
+            t.items.push(Item { class: Class::Button, id: WIDESCREEN, text: "Widescreen".into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect });
+        }
     }
 }
 
@@ -55,6 +65,12 @@ pub fn init(d: &mut Dialog) {
                 *sel = RENDERERS.iter().position(|r| r.eq_ignore_ascii_case(&current)).map_or(0, |k| k as i32);
             }
         }
+        // only the Glide renderer draws wide; the box sits in its options group
+        let glide = d.control(FILTERING).is_some_and(|c| c.visible);
+        if let Some(c) = d.control(WIDESCREEN) {
+            c.check = crate::platform::wide::enabled() as u32;
+            c.visible = glide;
+        }
     }
 }
 
@@ -70,6 +86,9 @@ pub fn ok(d: &mut Dialog) {
             let mut v = r.into_bytes();
             v.push(0);
             advapi32::set_value("", "Group", 1, &v);
+        }
+        if let Some(on) = d.control(WIDESCREEN).map(|c| c.check != 0) {
+            crate::platform::wide::set_enabled(on);
         }
     }
 }

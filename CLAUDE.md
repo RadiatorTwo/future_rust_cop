@@ -91,7 +91,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   aspect comes from the window at every grBufferSwap (`set_aspect`; the Glide target keeps
   its height, its width follows). `walker.rs` draws the HUD with 4:3 views
   (`glide::View`: left / centre / right edge, split screen one per half). Needs precise
-  mode. `FCOP_WIDE=0` off, `FCOP_WIDE=<aspect>` forces one. Dialog overlays stay 4:3 in the
+  mode. Players switch it in Preferences ("Widescreen" in 3DFX Options, REG_DWORD
+  `Widescreen` in the game's key, default on). `FCOP_WIDE=0` off, `FCOP_WIDE=<aspect>` forces one. Dialog overlays stay 4:3 in the
   middle of a wide frame (`window::overlay_span`). Alt+Enter toggles borderless fullscreen.
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
@@ -99,7 +100,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `FCOP_SHOT=file.png` (the frame shown, every half second), `FCOP_INPUT="6000:click@484,303
   14000:Up*5000"` (scripted input, ms after start; that one starts the first mission and
   walks forward with the user's bindings in `controls.txt`: player 1 on the arrow keys, the
-  keypad belongs to player 2), `FCOP_WATCH=1` (last import call and turn state every 2 s). An access
+  keypad belongs to player 2; times count from the game's start, after the ~5.5 s compile:
+  give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s). An access
   violation in guest memory is reported with the recompiled function it happened in.
 - Key bindings: `controls.txt` in the game folder (14 lines per player: forward, back,
   turn right, turn left, gun, action, special, jump, map, camera, jink, jink, heavy weapon,

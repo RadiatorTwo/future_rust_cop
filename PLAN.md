@@ -61,14 +61,13 @@ Next:
       target markers in place, dialogs stay 4:3. Tested forced 16:9 and 21:9
       (`FCOP_WIDE=<aspect>`, `FCOP_WIDE=0` off)
 - [x] Alt+Enter: borderless fullscreen
-- [ ] Widescreen: a "Widescreen" box in Preferences (`dialog/extend.rs`), saved in the
-      registry; check in a real 16:9 fullscreen, in split screen and while moving fast
+- [x] "Widescreen" box in Preferences (3DFX Options, `dialog/extend.rs`): REG_DWORD
+      `Widescreen` in the game's key (default on), applies at OK
+- [ ] Widescreen: check in a real 16:9 fullscreen, in split screen and while moving fast
 - [ ] Widescreen with the software renderer (not planned yet: Glide is the default)
 - [ ] Glide: other resolutions, filtering off, split screen checked with precise mode
 - [x] Default keys for player 1 without a keypad (`user32::single_player_keys`): arrows,
       A/D jink, X action, S change target; player 2 keeps the game's keypad profile
-- [ ] Scripted clicks do not reach the Preferences dialog's "Controller Configuration"
-      button (real mouse clicks do): check the click position / timing
 - [ ] Other missions
 - [ ] Later: a native Glide backend (a 64-bit glide2x.dll such as dgVoodoo2's), behind the
       same Glide layer
