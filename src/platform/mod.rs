@@ -588,14 +588,10 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (wide::TERRAIN_VISIBLE, wide::terrain_visible),
     (wide::OBJECT_VISIBLE, wide::object_visible),
     (wide::MARKERS, wide::markers),
-    (fps::WEAPON, fps::weapon),
-    (fps::ROBOT, fps::robot),
-    (fps::PHYSICS, fps::physics),
-    (fps::CAMERA, fps::camera),
-    (fps::TURN, fps::turn),
     (fps::CLOCK, fps::clock),
-    (fps::EFFECTS, fps::effects),
-    (fps::EMIT, fps::emit),
+    (fps::RENDER_START, fps::render_start),
+    (fps::RENDER_END, fps::render_end),
+    (fps::UNPAUSED, fps::unpaused),
 ];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread

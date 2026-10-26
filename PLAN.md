@@ -77,32 +77,15 @@ Next:
 - [x] Videos (`dshow.rs`, `src/mpeg/`): EA logo, intro, briefing play with sound, Space skips;
       all 27 files decode like ffmpeg. Still to check by ear and eye: HELP (cwrules), credits,
       the fly-overs (po_*), multiplayer briefing
-- [x] Frame limit fields (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) as code fields
-      (`smc::FRAME_LIMIT`): the generated code reads the tick count from guest memory
-- [x] Frame rate in Preferences (`fps.rs`): 60/75/100/150/300 fps through the frame limit
-      fields; weapon fire rate, robot physics steps and camera turn corrected. Measured by
-      script: 61, 101, 151, 301 fps (the game's clock runs 1 % fast)
 - [x] Performance at high frame rates: Glide batches across combine/constant/texture
       changes (texture array), the frame wait sleeps; 300 fps hold in the first mission
-- [x] High frame rates: hover turn speed (0x442510) and the transformation's sparks
-      (effect timers 0x43d310) fixed after the user's report
-- [ ] High frame rates break game logic: it computes (rate * ticks) >> 8 in many places
-      (0x42e8f0 animated objects, effects, ...), 0 for 1-2 tick frames (user: hit display
-      hardly visible, planes cannot be shot down). Plan (option 3, chosen 2026-10-26):
-      logic stays at 8 ticks (frame limit fields 8), extra frames are rendered in between
-      with actors and camera interpolated between the last two logic frames; the
-      per-system hooks in fps.rs (weapon, robot/physics, hover, turn, effects) then go.
-      Found: mission loop 0x406820 -> frame 0x407360 (single player; 0x4076d0 the other
-      branch). Its logic block (skipped when paused): 0x457510(dt), 0x43b520, 0x43a980,
-      0x43a8c0(6, dt, 0) actors (-> handlers such as 0x446800 -> robot 0x446e00),
-      0x41ff10(dt), 0x43a910, 0x42d6d0(dt) effects. Render block: 0x426eb0,
-      0x452880(0, player [0x511fd0], &cam) visibility, 0x44fd20, 0x453260(0, player, &cam)
-      projection of terrain/objects/effects, 0x4075b0(0, 1), 0x434c90(player) HUD and
-      markers, 0x4114c0(0) display list walker (Glide). After it: 0x43bf00,
-      0x44f3b0(dt), 0x436be0(dt), 0x43ae70. Next: the actor list and the camera state
-      to interpolate; side effects of calling the render block twice
-- [ ] Frame rate: checked by the user by eye (robot and camera smooth? fire rate as
-      before?); find further things made for 8-tick frames (enemies, effects, timers)
+- [x] High frame rates by interpolated pictures (`fps.rs`): logic at 8 ticks, the render
+      block drawn again in between with actors and camera interpolated (one frame late);
+      the per-system fixes (weapon, robot physics, hover, camera turn, effects) and the
+      frame limit fields are gone. Measured 144 fps, same kills as the original, camera
+      moves evenly. Not yet: split screen (0x4076d0), software renderer
+- [ ] Frame rate: checked by the user by eye (smooth? hits, hover, sparks as in the
+      original?)
 
 ### 2. The user's goals after that
 

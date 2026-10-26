@@ -39,8 +39,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   word's rounding mode; `fild qword` remembers the exact integer (`st_int`/`st_int_of`) for
   the memcpy idiom. Transcendentals and 80-bit operands go to `rt_x87`.
 - `src/smc.rs`: self-modifying code. Fields = targets of `mov [code address], x` plus the
-  patch table at 0x48ea20 (555/565), plus the frame limit (`FRAME_LIMIT`). Finds 182
-  immediates/branch offsets (incl. shift counts and the 5 frame limit ticks) and 67
+  patch table at 0x48ea20 (555/565). Finds 177 immediates/branch offsets (incl. shift
+  counts) and 67
   displacements, which the lifter reads from guest memory (`Lifter::field`), and 8 rewritten
   instructions (cmp/jb <-> test/je), lifted in every version and chosen by comparing the
   current bytes. Rewritten jumps/calls go through `jump_dyn`/`rt_lookup`.
@@ -117,24 +117,22 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   mode. Players switch it in Preferences ("Widescreen" in 3DFX Options, REG_DWORD
   `Widescreen` in the game's key, default on). `FCOP_WIDE=0` off, `FCOP_WIDE=<aspect>` forces one. Dialog overlays stay 4:3 in the
   middle of a wide frame (`window::overlay_span`). Alt+Enter toggles borderless fullscreen (and saves it).
-- `fps.rs`: the mission frame rate. The clock counts 1/300 s ticks (QPC, 0x4130c0; a little
-  fast: 60 fps measure 61); the mission loop 0x406a30 waits for `FRAME_LIMIT` ticks per
-  frame, so 300 / fps there gives exact frames (choices 60, 75, 100, 150, 300; REG_DWORD
+- `fps.rs`: the mission frame rate. The game's logic stays at its 8 ticks a frame (clock:
+  1/300 s ticks from QPC, 0x4130c0; mission loop 0x406820, frame 0x407360): it computes
+  (rate * ticks) >> 8 in many places, and shorter frames broke hits, effects, hovering...
+  (an earlier attempt wrote the loop's tick limit 0x406a7f etc.). Instead pictures are drawn
+  in between: the frame's render block (0x426eb0 ... 0x4114c0, see the module) runs again
+  while the loop waits for its next frame (clock read from 0x406a56), shown with 0x4153a0,
+  with every actor (list at 0x50e428, count [0x50e420]; matrix +0x2c, position +0x50) and the
+  camera ([0x511f48], up to +0x88) put between their places in the last two frames; the
+  frame's own render shows the start of the interval, so pictures lag one frame. 0x44fd20
+  in the render block is logic (the actor grid 0x4a31b0 for hits, per-frame lists): it runs
+  only in the game's frame, with the real places (in pictures it multiplied enemy damage
+  and made temporary things flicker). Otherwise drawing only changes the random seed
+  0x50e370 (kept). Only with Glide, one view, playing ([0x511fb8] = 4), not paused. Choices 60 ... 300 (REG_DWORD
   `FrameRate`, 0 = original 37.5; our combo below the 3DFX Options group in Preferences).
-  Measured: 61, 101, 151, 301 fps (no vsync: frames are not tied to the display). Below 8 ticks, hooks correct what was made
-  for 8-tick frames: weapon fire rate 0x458ed0 (once per frame while the reload timer ran
-  out), the player robot's physics in whole 8-tick steps (0x446e00 / 0x442120: shown between
-  its last two steps, actor+0x2c..0x5b; camera 0x4456a0), the camera turn 0x445eb0 (2-tick
-  units), hovering (0x442120 dispatches mode [actor+0xac]+0xad = 1 to 0x442510, whose steps
-  add dt to the turn speed: it gets dt = 8 * steps), effects (0x43d310 updates the list at
-  [0x4a2ab0]; timers lose (rate * dt) >> 8, 0 for short frames, so the transformation's
-  sparks never ended: updated in whole 8-tick frames). Other per-frame effects may still
-  show up (enemy fire, damage over time): `FCOP_COUNT` and a run at 300 fps against one at
-  the original rate find the functions (calls x8 = per frame, x1 = per 8-tick step).
-  The loop reads the clock (hook 0x4130c0, called from 0x406a56) in a busy loop: there we
-  sleep, turn handed over, until 2 ms before the frame's tick (CPU in a mission: 0.14 cores
-  at the original rate, 0.22 at 60, 1.0 at 300). `FCOP_FPS=1` logs the frames shown per
-  second (Glide).
+  Between frames it sleeps (turn handed over) until 2 ms before the next picture or frame.
+  `FCOP_FPS=1` logs the frames shown per second (Glide).
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
@@ -216,9 +214,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   0x100000-0x400000, TIB at 0x10000, heap 0x01000000-0x40000000.
 - The software renderer (0x45b000-0x461000) patches immediates, displacements and branch
   offsets in its own code; FUN_0045b1c0 rewrites code for 555/565 pixel formats from a
-  table at 0x48ea20 (handled by `src/smc.rs`). The mission frame limit (8 ticks
-  = 37.5 fps; immediates at 0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295) is a set of
-  code fields (`smc::FRAME_LIMIT`), written by `platform/fps.rs`.
+  table at 0x48ea20 (handled by `src/smc.rs`). The mission frame limit (8 ticks = 37.5
+  fps) is in immediates at 0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295; the game's logic
+  needs it (see `fps.rs`).
 - The game's threads raced when run truly in parallel (async file reader 0x415f30 and its
   callback 0x416bf0 share a one-slot mailbox): guest threads must take turns.
 - x87 runs at 53-bit precision (the CRT sets it), but the renderer loads control word
