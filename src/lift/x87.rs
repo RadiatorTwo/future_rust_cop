@@ -4,7 +4,7 @@
 //! or need libm (transcendental functions, 80-bit memory operands) go to `rt_x87`.
 
 use super::{Lifter, mf, ty};
-use crate::rt::{Cpu, X87};
+use crate::rt::{Cpu, FpuOp, X87};
 use cranelift_codegen::ir::{InstBuilder, Value, condcodes::FloatCC, condcodes::IntCC, types::*};
 use iced_x86::{Instruction, MemorySize, Mnemonic, OpKind, Register};
 use std::mem::offset_of;
@@ -163,6 +163,36 @@ impl Lifter<'_, '_> {
         self.b.ins().select(fits, x, min)
     }
 
+    /// x op y as the FPU rounds it. Doubles to nearest when the control word asks for 53
+    /// or 64 bits to nearest; anything else (the renderer's 24 bits, truncating) goes to
+    /// `rt_fpu_round`.
+    fn arith(&mut self, op: FpuOp, x: Value, y: Value) -> Value {
+        let fast = match op {
+            FpuOp::Add => self.b.ins().fadd(x, y),
+            FpuOp::Sub => self.b.ins().fsub(x, y),
+            FpuOp::Mul => self.b.ins().fmul(x, y),
+            FpuOp::Div => self.b.ins().fdiv(x, y),
+            FpuOp::Sqrt => self.b.ins().sqrt(x),
+            FpuOp::Round => self.b.ins().fdemote(F32, x),
+        };
+        let fast = if matches!(op, FpuOp::Round) { self.b.ins().fpromote(F64, fast) } else { fast };
+        let cw = self.b.ins().load(I16, mf(), self.cpu, offset_of!(Cpu, fcw) as i32);
+        let cw = self.b.ins().uextend(I32, cw);
+        // rounding control 00 (to nearest) and precision control 1x (53 or 64 bits)
+        let mode = self.b.ins().band_imm_u(cw, 0xe00);
+        let usual = self.b.ins().icmp_imm_u(IntCC::Equal, mode, 0x200);
+        let (slow, done) = (self.b.create_block(), self.b.create_block());
+        self.b.append_block_param(done, F64);
+        self.b.ins().brif(usual, done, &[fast.into()], slow, &[]);
+        self.b.switch_to_block(slow);
+        let o = self.iconst(I32, op as i64);
+        let call = self.b.ins().call(self.refs.fpu_round, &[o, x, y, cw]);
+        let r = self.b.inst_results(call)[0];
+        self.b.ins().jump(done, &[r.into()]);
+        self.b.switch_to_block(done);
+        self.b.block_params(done)[0]
+    }
+
     // ---- comparisons -----------------------------------------------------------------------
     /// fcom and friends: C3 C2 C0 = 000 (a > b), 001 (a < b), 100 (equal), 111 (unordered).
     fn compare_fsw(&mut self, a: Value, b: Value) {
@@ -230,7 +260,13 @@ impl Lifter<'_, '_> {
                 } else if mem0 {
                     let v = self.st(0);
                     let a = self.addr(i);
-                    let v = if i.memory_size() == MemorySize::Float32 { self.b.ins().fdemote(F32, v) } else { v };
+                    let v = if i.memory_size() == MemorySize::Float32 {
+                        // rounded to a float as the control word says
+                        let v = self.arith(FpuOp::Round, v, v);
+                        self.b.ins().fdemote(F32, v)
+                    } else {
+                        v
+                    };
                     self.store(a, v);
                 } else {
                     let k = sti(0);
@@ -285,12 +321,13 @@ impl Lifter<'_, '_> {
                 let d = self.st(dst);
                 let rev = matches!(m, Fsubr | Fsubrp | Fisubr | Fdivr | Fdivrp | Fidivr);
                 let (x, y) = if rev { (src, d) } else { (d, src) };
-                let r = match m {
-                    Fadd | Faddp | Fiadd => self.b.ins().fadd(x, y),
-                    Fsub | Fsubp | Fisub | Fsubr | Fsubrp | Fisubr => self.b.ins().fsub(x, y),
-                    Fmul | Fmulp | Fimul => self.b.ins().fmul(x, y),
-                    _ => self.b.ins().fdiv(x, y),
+                let op = match m {
+                    Fadd | Faddp | Fiadd => FpuOp::Add,
+                    Fsub | Fsubp | Fisub | Fsubr | Fsubrp | Fisubr => FpuOp::Sub,
+                    Fmul | Fmulp | Fimul => FpuOp::Mul,
+                    _ => FpuOp::Div,
                 };
+                let r = self.arith(op, x, y);
                 self.set_st(dst, r);
                 if matches!(m, Faddp | Fsubp | Fsubrp | Fmulp | Fdivp | Fdivrp) {
                     self.fpop();
@@ -301,7 +338,7 @@ impl Lifter<'_, '_> {
                 let r = match m {
                     Fchs => self.b.ins().fneg(v),
                     Fabs => self.b.ins().fabs(v),
-                    Fsqrt => self.b.ins().sqrt(v),
+                    Fsqrt => self.arith(FpuOp::Sqrt, v, v),
                     _ => self.round_rc(v),
                 };
                 self.set_st(0, r);

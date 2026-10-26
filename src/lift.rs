@@ -27,6 +27,7 @@ pub struct Refs {
     pub cpuid: FuncRef,
     pub rdtsc: FuncRef,
     pub x87: FuncRef,
+    pub fpu_round: FuncRef,
     pub guest_sig: SigRef,
 }
 
@@ -529,6 +530,13 @@ impl<'a, 'f> Lifter<'a, 'f> {
             self.b.ins().call_indirect(self.refs.guest_sig, fp, &[self.cpu]);
         }
         self.load_state();
+        // an event handler asked to stop: return all the way out
+        let stop = self.b.ins().load(I32, mf(), self.cpu, offset_of!(Cpu, stop) as i32);
+        let (out, on) = (self.b.create_block(), self.b.create_block());
+        self.b.ins().brif(stop, out, &[], on, &[]);
+        self.b.switch_to_block(out);
+        self.b.ins().return_(&[]);
+        self.b.switch_to_block(on);
     }
 
     fn trap(&mut self, addr: u32, kind: i64) {

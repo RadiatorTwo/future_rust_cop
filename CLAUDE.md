@@ -55,6 +55,25 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 - `tests/`: x86 snippets assembled with iced's code_asm, recompiled and checked against Rust
   (`cargo test --release`, harness in `tests/common/`); needs no game files. `x87.rs` for
   the FPU, `misc.rs` for MMX moves, ports, push/pop es, `smc.rs` for self-modifying code.
+- `src/bin/difftest.rs`: differential test against Unicorn (optional feature `difftest`,
+  Unicorn is GPL-2.0 and never linked into the game). Every function from N random states
+  (`-n`, default 6) on both sides; registers, flags, x87 stack and memory compared; an
+  import call ends a run on both sides. Worker processes (`-j`), restarted after a crash or
+  a hang of the recompiled side. `-v` prints details, incl. why untested functions fault.
+  Build on Windows inside a VS developer environment (bindgen needs the MSVC headers) with
+  CMAKE pointing at VS's cmake.exe, e.g. a .cmd: `call "...\VC\Auxiliary\Build\vcvars64.bat"`,
+  `set CMAKE=...\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe`,
+  `cargo build --release --features difftest --bin difftest`. Windows only for now (demand
+  paging uses a vectored exception handler).
+  Expected differences: 0x45b1c0 cpuid, 0x4742e0 rdtsc, 0x4764d0 `in` (we return 0xff),
+  0x47c070 / 0x469f60 FPU exception bits (not modelled), 0x478ac0 a bogus Ghidra entry
+  (decodes as `lock push`), 0x470470 (push/pop es in data), 0x478fe0 (calls a random
+  scratch address, Unicorn runs the bytes), 0x457550 (an access at 0xffffffff: Unicorn
+  wraps to 0, we use the extra page behind 4 GB). Flag-only differences at the end are
+  undefined flags. Page 0 is mapped on demand too (null pointers in uninitialised globals),
+  which makes about 1990 of 2176 functions testable; -n 20 takes about 25 minutes.
+- `src/rt.rs` `Event`/`set_handler`: imports, traps and unsupported instructions go to a
+  handler; setting `Cpu::stop` unwinds out of guest code (checked after every call).
 - `examples/missing.rs <exe>`: lists every instruction the lifter does not support yet;
   `examples/smc.rs <exe>`: lists the self-modifying code fields.
 - Odd instructions: MMX is only movq/movd copies (`Cpu::mm`); `in` reads 0xff (gameport,
@@ -71,18 +90,19 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   0x407295) from its platform layer; add them as fields when the platform layer does that.
 - The game's threads raced when run truly in parallel (async file reader 0x415f30 and its
   callback 0x416bf0 share a one-slot mailbox): guest threads must take turns.
-- x87 runs at 53-bit precision (the CRT sets it): doubles are enough, with an exact s64
-  shadow for the fild/fistp qword memcpy idiom.
+- x87 runs at 53-bit precision (the CRT sets it), but the renderer loads control word
+  0xc7f (24 bits, truncating) from 0x48ce04: arithmetic under any control word other than
+  53/64 bits to nearest goes through `rt_fpu_round` (exact rounding via TwoSum/FMA error
+  signs). Exact s64 shadow for the fild/fistp qword memcpy idiom.
 - CD check: volume label FCOP_CD on drive D:, paths like D:\FCopLAPD\Missions\...; the CD's
   root MISSIONS folder is the Mac version (big-endian). Videos are MPEG-1 in the CD's Video
   folder. The supported EXE has SHA-256 2dcdd1e7...7e5e.
 
 ## Next steps
 
-Every instruction in all 2176 functions is supported now (FPU precision control is ignored).
+Every instruction in all 2176 functions is supported and the difftest passes for every
+function Unicorn can run from random states, apart from the expected differences.
 
-1. A differential test against a reference emulator for broad coverage (the old project
-   used Unicorn: recomp/difftest.py).
-2. The platform layer in Rust (Win32/DirectDraw/DirectSound/Glide on SDL2 + OpenGL), then
+1. The platform layer in Rust (Win32/DirectDraw/DirectSound/Glide on SDL2 + OpenGL), then
    running the game.
-3. Compile functions in parallel; cache compiled code.
+2. Compile functions in parallel; cache compiled code.

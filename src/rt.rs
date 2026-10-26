@@ -35,6 +35,9 @@ pub struct Cpu {
     pub fcw: u16,
     /// MMX registers (their aliasing with the x87 registers is not modelled)
     pub mm: [u64; 8],
+    /// Nonzero: guest code returns all the way out (generated code checks it after every
+    /// call). Set by an `Event` handler.
+    pub stop: u32,
 }
 
 pub const EAX: usize = 0;
@@ -66,12 +69,16 @@ impl Cpu {
             fsw: 0,
             fcw: 0x37f,
             mm: [0; 8],
+            stop: 0,
         }
     }
 }
 
 /// The guest's 4 GB address space: guest address `a` is `base + a`, so game pointers stay
-/// 32-bit on any host.
+/// 32-bit on any host. One more page is reserved behind it: an access at 0xffffffff runs
+/// past 4 GB (a CPU would wrap around to 0) but stays inside the reservation.
+pub const GUEST_SPAN: usize = (1 << 32) + 0x1000;
+
 pub struct Memory {
     pub base: *mut u8,
 }
@@ -81,13 +88,13 @@ impl Memory {
         #[cfg(windows)]
         let base = unsafe {
             use windows_sys::Win32::System::Memory::{MEM_RESERVE, PAGE_NOACCESS, VirtualAlloc};
-            VirtualAlloc(std::ptr::null(), 1 << 32, MEM_RESERVE, PAGE_NOACCESS) as *mut u8
+            VirtualAlloc(std::ptr::null(), GUEST_SPAN, MEM_RESERVE, PAGE_NOACCESS) as *mut u8
         };
         #[cfg(unix)]
         let base = unsafe {
             let p = libc::mmap(
                 std::ptr::null_mut(),
-                1 << 32,
+                GUEST_SPAN,
                 libc::PROT_NONE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
                 -1,
@@ -158,22 +165,53 @@ pub extern "C" fn rt_lookup(cpu: *mut Cpu, addr: u32) -> *const u8 {
 }
 
 /// A call or jump to an address that is not recompiled code (import thunks come here later).
+/// Something guest code cannot go on with by itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Event {
+    /// a call or jump to an address that is not recompiled code (imports, later)
+    Foreign(u32),
+    /// division by zero (kind 0) or int3/hlt/ud2 (kind 1) at an address
+    Trap(u32, u32),
+    /// an instruction the lifter does not support
+    Unimpl(u32),
+}
+
+/// What happens on an `Event`. The handler may set `Cpu::stop` to unwind out of guest
+/// code; otherwise execution goes on after it (a foreign call returns to its caller).
+pub type Handler = fn(&mut Cpu, Event);
+
+static HANDLER: OnceLock<Handler> = OnceLock::new();
+
+/// Replace the default handler, which reports the event and exits.
+pub fn set_handler(h: Handler) {
+    let _ = HANDLER.set(h);
+}
+
+fn event(cpu: &mut Cpu, e: Event) {
+    match HANDLER.get() {
+        Some(h) => h(cpu, e),
+        None => match e {
+            Event::Foreign(a) => die(format!("call to unknown address {a:#x} (esp {:#x})", cpu.r[ESP])),
+            Event::Trap(a, 0) => die(format!("division by zero at {a:#x}")),
+            Event::Trap(a, _) => die(format!("int3/hlt/ud2 at {a:#x}")),
+            Event::Unimpl(a) => die(format!("instruction at {a:#x} is not supported yet")),
+        },
+    }
+}
+
 pub extern "C" fn rt_foreign(cpu: *mut Cpu) {
-    let cpu = unsafe { &*cpu };
-    die(format!("call to unknown address {:#x} (esp {:#x})", cpu.foreign, cpu.r[ESP]))
+    let cpu = unsafe { &mut *cpu };
+    event(cpu, Event::Foreign(cpu.foreign))
 }
 
-pub extern "C" fn rt_unimpl(_cpu: *mut Cpu, addr: u32) {
-    die(format!("instruction at {addr:#x} is not supported yet"))
+/// After this the generated code returns (with `stop` set by a handler, all the way out).
+pub extern "C" fn rt_unimpl(cpu: *mut Cpu, addr: u32) {
+    event(unsafe { &mut *cpu }, Event::Unimpl(addr))
 }
 
-pub extern "C" fn rt_trap(_cpu: *mut Cpu, addr: u32, kind: u32) {
-    let what = match kind {
-        0 => "division by zero",
-        1 => "int3/hlt/ud2",
-        _ => "trap",
-    };
-    die(format!("{what} at {addr:#x}"))
+/// After this the generated code returns, like `rt_unimpl`.
+pub extern "C" fn rt_trap(cpu: *mut Cpu, addr: u32, kind: u32) {
+    event(unsafe { &mut *cpu }, Event::Trap(addr, kind))
 }
 
 pub extern "C" fn rt_cpuid(cpu: *mut Cpu) {
@@ -475,4 +513,105 @@ pub extern "C" fn rt_x87(cpu: *mut Cpu, op: u32, addr: u32) {
             }
         }
     }
+}
+
+/// Operations for `rt_fpu_round`.
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub enum FpuOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Sqrt,
+    /// round x itself (fst to a float)
+    Round,
+}
+
+/// x87 arithmetic under a control word other than "53 bits, to nearest" (generated code
+/// does that case itself): the result rounded to the control word's precision (24 bits;
+/// 64 is taken as 53) in its rounding mode. The renderer runs with 0xc7f: 24 bits,
+/// truncating. The result is computed together with the sign of its rounding error, so
+/// rounding it again gives what the FPU gives in one step.
+pub extern "C" fn rt_fpu_round(op: u32, x: f64, y: f64, cw: u32) -> f64 {
+    let sign = |e: f64| if e > 0.0 { 1 } else if e < 0.0 { -1 } else { 0 };
+    let (s, err) = match op {
+        o if o == FpuOp::Add as u32 || o == FpuOp::Sub as u32 => {
+            let y = if o == FpuOp::Sub as u32 { -y } else { y };
+            // TwoSum: s + e = x + y exactly
+            let s = x + y;
+            let b = s - x;
+            (s, sign((x - (s - b)) + (y - b)))
+        }
+        o if o == FpuOp::Mul as u32 => {
+            let p = x * y;
+            (p, sign(x.mul_add(y, -p)))
+        }
+        o if o == FpuOp::Div as u32 => {
+            let q = x / y;
+            // x - q*y exactly; the quotient's error has its sign times y's
+            (q, sign((-q).mul_add(y, x)) * sign(y))
+        }
+        o if o == FpuOp::Sqrt as u32 => {
+            let r = x.sqrt();
+            (r, sign((-r).mul_add(r, x)))
+        }
+        _ => (x, 0),
+    };
+    if !s.is_finite() || s == 0.0 {
+        return s;
+    }
+    let rc = (cw >> 10) & 3;
+    // storing to a float always rounds to 24 bits
+    if (cw >> 8) & 3 != 0 && op != FpuOp::Round as u32 {
+        // 53 bits: s is already right for "to nearest"
+        return match (rc, err) {
+            (1, -1) => s.next_down(),
+            (2, 1) => s.next_up(),
+            (3, -1) if s > 0.0 => s.next_down(),
+            (3, 1) if s < 0.0 => s.next_up(),
+            _ => s,
+        };
+    }
+    // 24 bits: the representable neighbours below and above the exact result
+    let lo = floor24(s, err);
+    let hi = -floor24(-s, -err);
+    if lo == hi {
+        return lo;
+    }
+    match rc {
+        1 => lo,
+        2 => hi,
+        3 => {
+            if s > 0.0 {
+                lo
+            } else {
+                hi
+            }
+        }
+        _ => {
+            let mid = (lo + hi) / 2.0;
+            if s < mid || (s == mid && err < 0) {
+                lo
+            } else if s > mid || err > 0 {
+                hi
+            } else if (lo as f32).to_bits() & 1 == 0 {
+                lo // a tie: to even
+            } else {
+                hi
+            }
+        }
+    }
+}
+
+/// The largest 24-bit float <= s + e, where e is a rounding error smaller than half an ulp
+/// of s, given only by its sign.
+fn floor24(s: f64, err: i32) -> f64 {
+    let floor = |v: f64| {
+        let exp = ((v.to_bits() >> 52) & 0x7ff) as i64 - 1023;
+        let unit = f64::from_bits(((exp - 23 + 1023).max(1) as u64) << 52);
+        (v / unit).floor() * unit
+    };
+    // s itself representable but the exact value just below it: the 24-bit float below s
+    if floor(s) == s && err < 0 { floor(s.next_down()) } else { floor(s) }
 }
