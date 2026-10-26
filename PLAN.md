@@ -52,8 +52,15 @@ Next:
 - [x] Glide 2.x on OpenGL (`glide.rs`, the default renderer; Software stays selectable):
       combine units, blending, chroma key with soft edges when filtered, textures in TMU
       memory, clip window, gamma. THRASH is left out (the game gives it ARGB4444 textures)
-- [ ] Glide: the game's own HUD bug at 1280x960 (it opens 1280x1024, text sits above its
-      icons; the old project's "precise" walker fixed it), other resolutions, filtering off
+- [x] Hooks: a game function can be replaced by a Rust function that calls the original
+      (`jit::compile(.., hooks)`, `rt::call_original`, `platform::HOOKS`)
+- [x] Glide precise mode (`walker.rs`): vertices in 2560x1920 units instead of rounded
+      pixels, frames 4:3 (no 5:4 stretch at 1280x960), HUD text next to its icons
+- [ ] Glide: other resolutions, filtering off, split screen checked with precise mode
+- [x] Default keys for player 1 without a keypad (`user32::single_player_keys`): arrows,
+      A/D jink, X action, S change target; player 2 keeps the game's keypad profile
+- [ ] Scripted clicks do not reach the Preferences dialog's "Controller Configuration"
+      button (real mouse clicks do): check the click position / timing
 - [ ] Other missions
 - [ ] Later: a native Glide backend (a 64-bit glide2x.dll such as dgVoodoo2's), behind the
       same Glide layer

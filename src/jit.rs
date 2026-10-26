@@ -3,7 +3,7 @@
 
 use crate::discover::{Code, Program};
 use crate::lift::{Lifter, Refs};
-use crate::rt::{self, Cpu, DISPATCH, Dispatch};
+use crate::rt::{self, Cpu, DISPATCH, Dispatch, Hook};
 use crate::smc::Smc;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, UserFuncName, types::*};
 use cranelift_codegen::isa::CallConv;
@@ -40,7 +40,9 @@ impl Compiled {
     }
 }
 
-pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
+/// Compile every function; `hooks` replace guest functions by host functions (the recompiled
+/// original stays callable through `rt::call_original`).
+pub fn compile(prog: &Program, smc: &Smc, code: &mut Code, hooks: &[(u32, Hook)]) -> Compiled {
     let mut flags = settings::builder();
     flags.set("opt_level", "speed").unwrap();
     flags.set("is_pic", "false").unwrap();
@@ -62,6 +64,7 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
     jb.symbol("rt_x87", rt::rt_x87 as *const u8);
     jb.symbol("rt_fpu_round", rt::rt_fpu_round as *const u8);
     jb.symbol("rt_yield", rt::rt_yield as *const u8);
+    jb.symbol("rt_hook", rt::rt_hook as *const u8);
     let mut module = JITModule::new(jb);
     let tcfg = module.target_config();
     let ptr = tcfg.pointer_type();
@@ -85,11 +88,18 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
     let h_x87 = decl("rt_x87", &sig(host_cc, &[ptr, I32, I32], None));
     let h_yield = decl("rt_yield", &sig(host_cc, &[ptr], None));
     let h_fpu_round = decl("rt_fpu_round", &sig(host_cc, &[I32, F64, F64, I32], Some(F64)));
+    let h_hook = decl("rt_hook", &sig(host_cc, &[ptr, I32], None));
 
     let ids: BTreeMap<u32, FuncId> = prog
         .fns
         .keys()
         .map(|&a| (a, module.declare_function(&format!("F_{a:x}"), Linkage::Local, &guest_sig).unwrap()))
+        .collect();
+    // a hooked function: F_x calls the host (rt_hook), the lifted code becomes G_x
+    let originals: BTreeMap<u32, FuncId> = hooks
+        .iter()
+        .filter(|h| ids.contains_key(&h.0))
+        .map(|h| (h.0, module.declare_function(&format!("G_{:x}", h.0), Linkage::Local, &guest_sig).unwrap()))
         .collect();
     let foreign_id = module.declare_function("foreign_stub", Linkage::Local, &guest_sig).unwrap();
     let enter_id = module.declare_function("enter", Linkage::Local, &sig(host_cc, &[ptr, ptr], None)).unwrap();
@@ -101,7 +111,7 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
     let mut lift_time = std::time::Duration::ZERO;
 
     for (&addr, f) in &prog.fns {
-        let id = ids[&addr];
+        let id = originals.get(&addr).copied().unwrap_or(ids[&addr]);
         ctx.func.signature = guest_sig.clone();
         ctx.func.name = UserFuncName::user(0, id.as_u32());
         let t = Instant::now();
@@ -152,6 +162,27 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
         module.clear_context(&mut ctx);
     }
 
+    for (&addr, _) in &originals {
+        let id = ids[&addr];
+        ctx.func.signature = guest_sig.clone();
+        ctx.func.name = UserFuncName::user(0, id.as_u32());
+        {
+            let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
+            let f = module.declare_func_in_func(h_hook, b.func);
+            let blk = b.create_block();
+            b.append_block_params_for_function_params(blk);
+            b.switch_to_block(blk);
+            let cpu = b.block_params(blk)[0];
+            let a = b.ins().iconst(I32, addr as i64);
+            b.ins().call(f, &[cpu, a]);
+            b.ins().return_(&[]);
+            b.seal_all_blocks();
+            b.finalize(tcfg);
+        }
+        module.define_function(id, &mut ctx).unwrap();
+        module.clear_context(&mut ctx);
+    }
+
     // foreign_stub(cpu): rt_foreign(cpu) -- the target of every call that is not recompiled code
     ctx.func.signature = guest_sig.clone();
     ctx.func.name = UserFuncName::user(0, foreign_id.as_u32());
@@ -199,6 +230,11 @@ pub fn compile(prog: &Program, smc: &Smc, code: &mut Code) -> Compiled {
     let enter = unsafe {
         std::mem::transmute::<*const u8, extern "C" fn(*mut Cpu, *const u8)>(module.get_finalized_function(enter_id))
     };
-    let _ = DISPATCH.set(Dispatch { table, foreign_stub, enter });
+    let mut hooks: Vec<(u32, Hook, usize)> = hooks
+        .iter()
+        .filter_map(|&(a, h)| Some((a, h, module.get_finalized_function(*originals.get(&a)?) as usize)))
+        .collect();
+    hooks.sort_unstable_by_key(|h| h.0);
+    let _ = DISPATCH.set(Dispatch { table, foreign_stub, enter, hooks });
     Compiled { _module: module, enter, fns, stats }
 }

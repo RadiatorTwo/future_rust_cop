@@ -114,7 +114,7 @@ pub fn pump(wait: Duration) {
     });
 }
 
-/// FCOP_INPUT="9000:click@484,303 12000:Enter 15000:Numpad8*3000": input at fixed times (ms
+/// FCOP_INPUT="9000:click@484,303 12000:Enter 15000:Up*3000": input at fixed times (ms
 /// after start) for tests. `click@x,y` / `rclick@x,y` (frame pixels, after a move there),
 /// `move@x,y`, a key held 100 ms or `*ms` (Enter, Escape, Space, Tab, Up, Down, Left, Right,
 /// Ctrl, Alt, Shift, A-Z, 0-9, Numpad0-9, F1-F12), `close` (the window's close button),

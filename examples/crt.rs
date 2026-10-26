@@ -220,7 +220,7 @@ fn run() -> bool {
         smc.disp.len(),
         smc.variants.len()
     );
-    let compiled = compile(&prog, &smc, &mut code);
+    let compiled = compile(&prog, &smc, &mut code, &[]);
     let s = &compiled.stats;
     println!("compiled {} functions, {} instructions: lifting {} ms, Cranelift {} ms", s.functions, s.instructions, s.lift_ms, s.compile_ms);
     println!("{} functions ({:.1}%) have every instruction supported", s.complete, 100.0 * s.complete as f64 / s.functions as f64);

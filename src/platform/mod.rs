@@ -16,6 +16,7 @@ pub mod glide;
 pub mod kernel32;
 pub mod misc;
 pub mod user32;
+pub mod walker;
 pub mod window;
 
 pub use crate::image::ResId;
@@ -536,6 +537,9 @@ fn find_import(dll: &str, name: &str) -> Option<&'static Import> {
     tables.iter().flat_map(|t| t.iter()).find(|i| i.0 == name)
 }
 
+/// Game functions replaced by our own (`jit::compile`).
+pub const HOOKS: &[(u32, crate::rt::Hook)] = &[(walker::GLIDE_WALKER, walker::draw_glide)];
+
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread
 /// (which needs a large stack: guest calls nest on it). Returns the exit code.
 pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
@@ -551,6 +555,7 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
         let bytes = img.read(sec.va, size as usize).unwrap();
         m.slice(sec.va, bytes.len()).copy_from_slice(&bytes);
     }
+    user32::single_player_keys();
     m.map(TIB, TIB + 0x1000);
     m.map(STACK_LO, STACK_HI);
     m.map(THUNK_LO, THUNK_LO + 4 * THUNK_N);

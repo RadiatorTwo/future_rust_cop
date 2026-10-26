@@ -787,3 +787,18 @@ pub const IMPORTS: &[Import] = &[
     ("CallNextHookEx", 4, ret0),
     ("wsprintfA", -1, wsprintf),
 ];
+
+/// The game's default keyboard profile for player 1 (0x48afb8: 14 pairs of device 0 and a
+/// virtual key, used without controls.txt and by "Select Default Profile") is the numeric
+/// keypad, as is player 2's. Player 1 gets keys every keyboard has: the arrows, and A/D to jink.
+pub fn single_player_keys() {
+    const PROFILE: u32 = 0x48afb8;
+    // forward, back, turn right, turn left, gun, action, special, jump, map, camera,
+    // jink left, jink right, heavy weapon, change target
+    const KEYS: [u32; 14] = [0x26, 0x28, 0x27, 0x25, 0x20, b'X' as u32, 0x11, b'Z' as u32, b'M' as u32, 0x09, b'A' as u32, b'D' as u32, 0x12, b'S' as u32];
+    let m = mem();
+    for (i, k) in KEYS.into_iter().enumerate() {
+        m.wr32(PROFILE + 8 * i as u32, 0);
+        m.wr32(PROFILE + 8 * i as u32 + 4, k);
+    }
+}

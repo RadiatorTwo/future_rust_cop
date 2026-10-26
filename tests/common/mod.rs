@@ -45,7 +45,7 @@ impl Guest {
         let prog = Program::build(&mut code, &ranges);
         // code that writes its own fields is recompiled like the game's renderer
         let smc = Smc::find(&prog, &mut code);
-        let c = compile(&prog, &smc, &mut code);
+        let c = compile(&prog, &smc, &mut code, &[]);
         assert_eq!(c.stats.complete, snippets.len(), "not supported: {:?}", c.stats.missing);
         let mem = Memory::reserve();
         mem.map(TEXT, TEXT + n);

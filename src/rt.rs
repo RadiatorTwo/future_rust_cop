@@ -154,7 +154,13 @@ pub struct Dispatch {
     pub table: Vec<(u32, usize)>,
     pub foreign_stub: usize,
     pub enter: extern "C" fn(*mut Cpu, *const u8),
+    /// hooked functions (sorted): the host function and the recompiled original
+    pub hooks: Vec<(u32, Hook, usize)>,
 }
+
+/// A host function that replaces the guest function at its address; it runs the original
+/// with `call_original`.
+pub type Hook = fn(&mut Cpu);
 
 pub static DISPATCH: OnceLock<Dispatch> = OnceLock::new();
 
@@ -191,6 +197,21 @@ pub extern "C" fn rt_yield(_cpu: *mut Cpu) {
     if let Some(f) = YIELD.get() {
         f()
     }
+}
+
+/// What a hooked function's recompiled entry calls.
+pub extern "C" fn rt_hook(cpu: *mut Cpu, addr: u32) {
+    let d = DISPATCH.get().expect("dispatch table not set");
+    let k = d.hooks.binary_search_by_key(&addr, |e| e.0).expect("hook");
+    (d.hooks[k].1)(unsafe { &mut *cpu });
+}
+
+/// Run the original of the hooked function at `addr`: like a call to it, its return address
+/// must be on the guest stack (and its `ret` pops it).
+pub fn call_original(cpu: &mut Cpu, addr: u32) {
+    let d = DISPATCH.get().expect("dispatch table not set");
+    let k = d.hooks.binary_search_by_key(&addr, |e| e.0).expect("hook");
+    (d.enter)(cpu, d.hooks[k].2 as *const u8);
 }
 
 /// Run the guest code at `addr` (recompiled or not) until it returns; its return address

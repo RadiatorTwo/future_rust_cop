@@ -46,7 +46,7 @@ fn run() -> u32 {
     let mut code = Code::new(&img);
     let prog = Program::build(&mut code, &ranges);
     let smc = Smc::find(&prog, &mut code);
-    let compiled = compile(&prog, &smc, &mut code);
+    let compiled = compile(&prog, &smc, &mut code, fcop::platform::HOOKS);
     eprintln!("compiled {} functions in {} ms", compiled.stats.functions, t.elapsed().as_millis());
     let dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
     let dir = std::fs::canonicalize(&dir).unwrap_or(dir);

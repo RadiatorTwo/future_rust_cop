@@ -529,7 +529,7 @@ fn work(exe: &str, addrs: Vec<u32>, n: usize) {
     let w = World::new(exe);
     let mut code = Code::new(&w.img);
     let smc = Smc::find(&w.prog, &mut code);
-    let c = compile(&w.prog, &smc, &mut code);
+    let c = compile(&w.prog, &smc, &mut code, &[]);
     rt::set_handler(on_event);
     let mem = Memory::reserve();
     mem.map(w.lo, w.hi);

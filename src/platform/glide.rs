@@ -4,8 +4,11 @@
 //!
 //! The game draws its depth-sorted triangles with Glide's colour and alpha combine units, alpha
 //! blending and a chroma key (black texels are not drawn), textures 256x256 ARGB1555 in TMU
-//! memory, no depth buffer. We draw into a texture of the Glide resolution (`grSstWinOpen`)
-//! and show it at `grBufferSwap`. With filtering on, the chroma key leaves the keyed texels
+//! memory, no depth buffer. We draw into a 4:3 texture as wide as the Glide screen
+//! (`grSstWinOpen`; the game opens 1280x1024 for its 1280x960 mode and stretches its picture
+//! to it) and show it at `grBufferSwap`. Vertices are in Glide screen pixels, or in the space
+//! the display list walker sets (`set_space`, see `walker.rs`); clip windows are always in
+//! screen pixels. With filtering on, the chroma key leaves the keyed texels
 //! out of the bilinear filter, and their share becomes a soft alpha edge.
 
 use super::gl::{compile, texture};
@@ -46,7 +49,12 @@ struct Texture {
 }
 
 struct Glide {
+    /// the Glide screen
     res: (u32, u32),
+    /// the texture drawn into
+    target: (u32, u32),
+    /// the vertices' coordinate space
+    space: (u32, u32),
     fbo: glow::Framebuffer,
     color: glow::Texture,
     prog: glow::Program,
@@ -65,7 +73,7 @@ thread_local! {
 }
 
 const VS: &str = r#"
-uniform vec2 screen;
+uniform vec2 space;
 layout(location = 0) in vec2 pos;
 layout(location = 1) in vec4 col;
 layout(location = 2) in vec2 tc;
@@ -74,7 +82,7 @@ noperspective out vec2 st;
 void main() {
     vcol = col / 255.0;
     st = tc;
-    gl_Position = vec4(pos.x / screen.x * 2.0 - 1.0, 1.0 - pos.y / screen.y * 2.0, 0.0, 1.0);
+    gl_Position = vec4(pos.x / space.x * 2.0 - 1.0, 1.0 - pos.y / space.y * 2.0, 0.0, 1.0);
 }
 "#;
 
@@ -253,9 +261,10 @@ fn bytes_per_texel(format: u32) -> u32 {
 
 impl Glide {
     fn open(gl: &glow::Context, w: u32, h: u32) -> Glide {
+        let target = (w, w * 3 / 4);
         unsafe {
             let color = texture(gl, true);
-            gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, w as i32, h as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+            gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, target.0 as i32, target.1 as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
             let fbo = gl.create_framebuffer().expect("GL framebuffer");
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
             gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(color), 0);
@@ -272,6 +281,8 @@ impl Glide {
             }
             Glide {
                 res: (w, h),
+                target,
+                space: (w, h),
                 fbo,
                 color,
                 prog,
@@ -297,23 +308,32 @@ impl Glide {
         }
     }
 
+    /// A clip rectangle (x0 y0 x1 y1 in screen pixels) as GL's scissor box in the target.
+    fn scissor(&self, gl: &glow::Context, c: [i32; 4]) {
+        let (sx, sy) = (self.target.0 as f32 / self.res.0 as f32, self.target.1 as f32 / self.res.1 as f32);
+        let (x0, y0) = ((c[0] as f32 * sx).round() as i32, (c[1] as f32 * sy).round() as i32);
+        let (x1, y1) = ((c[2] as f32 * sx).round() as i32, (c[3] as f32 * sy).round() as i32);
+        unsafe {
+            gl.enable(glow::SCISSOR_TEST);
+            gl.scissor(x0, self.target.1 as i32 - y1, (x1 - x0).max(0), (y1 - y0).max(0));
+        }
+    }
+
     /// Draw what is batched with the current state.
     fn flush(&mut self, gl: &glow::Context) {
         if self.batch.is_empty() {
             return;
         }
         let s = self.state;
-        let (w, h) = self.res;
+        let (w, h) = self.target;
+        self.scissor(gl, s.clip);
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
             gl.viewport(0, 0, w as i32, h as i32);
-            gl.enable(glow::SCISSOR_TEST);
-            let c = s.clip;
-            gl.scissor(c[0], h as i32 - c[3], (c[2] - c[0]).max(0), (c[3] - c[1]).max(0));
             gl.use_program(Some(self.prog));
             gl.bind_vertex_array(Some(self.vao));
             let u = |n: &str| gl.get_uniform_location(self.prog, n);
-            gl.uniform_2_f32(u("screen").as_ref(), w as f32, h as f32);
+            gl.uniform_2_f32(u("space").as_ref(), self.space.0 as f32, self.space.1 as f32);
             let tex = s.tex.and_then(|a| self.textures.get(&a));
             gl.uniform_1_i32(u("use_tex").as_ref(), tex.is_some() as i32);
             gl.active_texture(glow::TEXTURE0);
@@ -510,13 +530,9 @@ fn buffer_clear(c: &mut Cpu) -> u32 {
     let color = arg(c, 0);
     with(|g, gl| {
         g.flush(gl);
-        let (w, h) = g.res;
-        let k = g.state.clip;
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(g.fbo));
-            gl.viewport(0, 0, w as i32, h as i32);
-            gl.enable(glow::SCISSOR_TEST);
-            gl.scissor(k[0], h as i32 - k[3], (k[2] - k[0]).max(0), (k[3] - k[1]).max(0));
+            g.scissor(gl, g.state.clip);
             let ch = |sh: u32| (color >> sh & 0xff) as f32 / 255.0;
             gl.clear_color(ch(16), ch(8), ch(0), 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
@@ -529,12 +545,23 @@ fn buffer_clear(c: &mut Cpu) -> u32 {
 fn buffer_swap(_: &mut Cpu) -> u32 {
     let shown = with(|g, gl| {
         g.flush(gl);
-        (g.color, g.res, g.gamma)
+        (g.color, g.target, g.gamma)
     });
     if let Some((tex, (w, h), gamma)) = shown {
         super::window::show_texture(tex, w, h, gamma);
     }
     0
+}
+
+/// The coordinate space of the vertices that follow (None: screen pixels).
+pub fn set_space(space: Option<(u32, u32)>) {
+    with(|g, gl| {
+        let s = space.unwrap_or(g.res);
+        if s != g.space {
+            g.flush(gl);
+            g.space = s;
+        }
+    });
 }
 
 fn draw_triangle(c: &mut Cpu) -> u32 {

@@ -76,13 +76,29 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   shown at grBufferSwap with the game's gamma; the fragment shader does Glide's colour and
   alpha combine units and the chroma key, with bilinear filtering of the unkeyed texels and
   their coverage as a soft edge). Registry `Group` = `3Dfx` (default) or `Software`.
+  Frames are drawn 4:3 as wide as the Glide screen (the game opens 1280x1024 for 1280x960).
+- Hooks: `platform::HOOKS` lists game functions replaced by Rust functions; `jit.rs` compiles
+  the original as `G_x` and makes `F_x` call `rt_hook`; the hook runs the original with
+  `rt::call_original` (return address on the guest stack, its `ret` pops it).
+- `walker.rs`: hook of the Glide display list walker 0x4393e0 (display list layout in its
+  header). Precise mode points the resolution's jump table entry (0x43a168) at the plain
+  path 0x4397cd, so vertices arrive in 2560x1920 units; text (type 6, game pixels) is drawn in
+  its own calls; `glide::set_space` tells the renderer which space. `FCOP_PRECISE=0` off.
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
   `FCOP_SHOT=file.png` (the frame shown, every half second), `FCOP_INPUT="6000:click@484,303
-  14000:Numpad8*5000"` (scripted input, ms after start; that one starts the first mission
-  and walks forward), `FCOP_WATCH=1` (last import call and turn state every 2 s). An access
+  14000:Up*5000"` (scripted input, ms after start; that one starts the first mission and
+  walks forward with the user's bindings in `controls.txt`: player 1 on the arrow keys, the
+  keypad belongs to player 2), `FCOP_WATCH=1` (last import call and turn state every 2 s). An access
   violation in guest memory is reported with the recompiled function it happened in.
+- Key bindings: `controls.txt` in the game folder (14 lines per player: forward, back,
+  turn right, turn left, gun, action, special, jump, map, camera, jink, jink, heavy weapon,
+  change target), written by the game's Controller dialog (and when it is missing: back it
+  up before tests). Without it 0x417aa0 copies profile [0x4a01b0] of the tables at 0x48afb8
+  (player 1) / 0x48b120 (player 2): 3 profiles of 0x78 bytes, (device, key) pairs, device 0
+  keyboard with virtual keys, 1 joystick. Both keyboard profiles are the keypad;
+  `user32::single_player_keys` rewrites player 1's at start (arrows, A/D jink).
 - Focus: the game pauses itself on WM_ACTIVATEAPP 0; we never send it, so it keeps running
   in the background, and keys held when the focus goes are released (WM_KEYUP).
 - Spin-waits: `rt::POLL` is nonzero while a guest thread waits for its turn; generated code
