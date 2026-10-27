@@ -17,8 +17,8 @@ releases: you need your own copy of the game.
 3. Start `fcop.exe` (Linux: `./fcop` in its folder). It finds the game, checks the version,
    and keeps only what the game needs (`game_files/FCopLAPD`: FCopLAPD.exe, febmp.bin,
    missions; `game_files/Video`: the videos; taken out of a CD image); everything else in
-   `game_files` goes to the recycle bin (Linux: it is deleted). Compiling the game takes a few
-   seconds; then it starts as usual.
+   `game_files` goes to the recycle bin (Linux: it is deleted). The first start compiles the
+   game (a second or two; kept in `game_files/FCopLAPD/compiled.bin`), later starts are quick.
 
 Only the PC version's `FCopLAPD.exe` (SHA-256 `2dcdd1e7...7e5e`) is supported; with any other,
 or without one, fcop says so. Its messages go to `fcop.log` next to it on Windows, to the

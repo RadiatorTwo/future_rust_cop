@@ -22,7 +22,9 @@ const GAME_SHA256: &str = "2dcdd1e78b99947d125712e1a159548e6f5f3929020c29af9e156
 const GAME: &str = "FCopLAPD";
 const VIDEO: &str = "Video";
 /// what stays in the game folder: the game's files and ours
-const GAME_FILES: [&str; 6] = ["FCopLAPD.exe", "febmp.bin", "missions", "registry.txt", "controls.txt", "save.cfg"];
+const GAME_FILES: [&str; 7] = ["FCopLAPD.exe", "febmp.bin", "missions", "registry.txt", "controls.txt", "save.cfg", COMPILED];
+/// the game's compiled code, kept for the next start (`jit::compile_cached`)
+pub const COMPILED: &str = "compiled.bin";
 /// our note in `game_files` (in the release)
 const NOTE: &str = "README.txt";
 

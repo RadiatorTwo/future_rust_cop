@@ -49,7 +49,13 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   current bytes. Rewritten jumps/calls go through `jump_dyn`/`rt_lookup`.
 - `src/jit.rs`: declares all functions, lifts and compiles them in one JITModule, plus a
   `foreign_stub` (calls to non-recompiled addresses -> `rt_foreign`) and an `enter`
-  trampoline (host calling convention -> tail convention).
+  trampoline (host calling convention -> tail convention). Lifting runs on one thread,
+  Cranelift's compiling on every core (`compile_all`: 5.5 s -> ~1.2 s with 16 threads); the
+  machine code and its relocations go to `compiled.bin` beside FCopLAPD.exe (`compile_cached`;
+  key: SHA-256 of fcop's own file and of the EXE, so any new build compiles again; not with
+  FCOP_COUNT), and later starts only link it (~130 ms). Generated code must not hold host
+  addresses as constants (statics move from run to run): `rt::POLL` is the data symbol
+  `rt_poll`.
 - `src/rt.rs`: `Cpu` (repr(C), offsets used by the lifter), the 4 GB guest address space
   (guest address a = base + a; game pointers stay 32-bit), helpers (`rt_string` does the
   string instructions).
@@ -60,7 +66,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   noise); `examples/movie.rs <file.mpg> [dir]` decodes one and writes raw frames/samples.
 - `src/setup.rs`: the game files in `game_files` (next to fcop.exe, else in the current
   folder): finds FCopLAPD.exe (6 folders deep), checks its SHA-256, moves FCopLAPD.exe,
-  febmp.bin, missions (and registry.txt, controls.txt, save.cfg) into `game_files/FCopLAPD`
+  febmp.bin, missions (and registry.txt, controls.txt, save.cfg, compiled.bin) into `game_files/FCopLAPD`
   and the folder with intro.mpg into `game_files/Video` (no FCopLAPD.exe but a CD image, .iso
   or raw .bin/.img, in game_files (then trashed) or next to fcop.exe (kept; game_files is made
   there): `src/iso.rs` (ISO 9660, Joliet names when there are) extracts those from it,
@@ -213,7 +219,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   every picture kept), `FCOP_INPUT="6000:click@484,303
   14000:Up*5000"` (scripted input, ms after start; that one starts the first mission and
   walks forward with the user's bindings in `controls.txt`: player 1 on the arrow keys, the
-  keypad belongs to player 2; times count from the game's start, after the ~5.5 s compile:
+  keypad belongs to player 2; times count from the game's start, after the compile (~1.2 s, ~0.13 s from compiled.bin):
   give `timeout` enough on top; the intro videos now come first: "3000:Space 5000:Space
   8000:Space 11000:click@484,303 20000:Space" skips them and the briefing and starts the
   mission; `poke@addr=value` writes a dword (hex); `text@Name` types characters (WM_CHAR,

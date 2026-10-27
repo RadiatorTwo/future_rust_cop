@@ -11,7 +11,7 @@
 
 use fcop::discover::{Code, Program};
 use fcop::image::{Image, load_functions};
-use fcop::jit::compile;
+use fcop::jit::compile_cached;
 use fcop::setup;
 use fcop::smc::Smc;
 use fcop::splash;
@@ -78,11 +78,37 @@ fn run() -> u32 {
     let mut code = Code::new(&img);
     let prog = Program::build(&mut code, &ranges);
     let smc = Smc::find(&prog, &mut code);
-    let compiled = compile(&prog, &smc, &mut code, fcop::platform::HOOKS);
-    eprintln!("compiled {} functions in {} ms", compiled.stats.functions, t.elapsed().as_millis());
+    let found = t.elapsed().as_millis();
+    // the machine code is kept beside the EXE, for this program and this EXE
+    let cache = exe.with_file_name(setup::COMPILED);
+    let key = cache_key(&img);
+    let compiled = compile_cached(&prog, &smc, &mut code, fcop::platform::HOOKS, key.map(|k| (cache.as_path(), k)));
+    let st = &compiled.stats;
+    if st.cached {
+        eprintln!("compiled code of {} functions loaded in {} ms", st.functions, t.elapsed().as_millis());
+    } else {
+        eprintln!(
+            "compiled {} functions in {} ms (finding them {found}, lifting {}, compiling {})",
+            st.functions,
+            t.elapsed().as_millis(),
+            st.lift_ms,
+            st.compile_ms
+        );
+    }
     let dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
     let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
     let code = fcop::platform::run_game(&img, dir);
     drop(compiled);
     code
+}
+
+/// What the compiled code depends on: this program (any change to the recompiler) and the
+/// game's EXE. None when our own file cannot be read.
+fn cache_key(img: &Image) -> Option<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    let own = std::fs::read(std::env::current_exe().ok()?).ok()?;
+    let mut h = Sha256::new();
+    h.update(&own);
+    h.update(&img.data);
+    Some(h.finalize().into())
 }

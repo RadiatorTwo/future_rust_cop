@@ -9,7 +9,7 @@
 use crate::discover::{Func, Program, direct_target};
 use crate::rt::Cpu;
 use crate::smc::{Field, Smc};
-use cranelift_codegen::ir::{self, Block, FuncRef, InstBuilder, MemFlagsData, SigRef, Type, Value, condcodes::IntCC, types::*};
+use cranelift_codegen::ir::{self, Block, FuncRef, GlobalValue, InstBuilder, MemFlagsData, SigRef, Type, Value, condcodes::IntCC, types::*};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_frontend::{FunctionBuilder, Switch, Variable};
 use iced_x86::{ConditionCode, FlowControl, Instruction, Mnemonic, OpKind, Register};
@@ -29,6 +29,9 @@ pub struct Refs {
     pub x87: FuncRef,
     pub fpu_round: FuncRef,
     pub yield_: FuncRef,
+    /// the address of `rt::POLL`, a symbol (not a constant: the code is cached, and the
+    /// program's statics move from run to run)
+    pub poll: GlobalValue,
     pub guest_sig: SigRef,
 }
 
@@ -632,7 +635,7 @@ impl<'a, 'f> Lifter<'a, 'f> {
     /// At a loop head: let another guest thread run if one is waiting for its turn.
     fn poll(&mut self) {
         let ptr = self.cfg.pointer_type();
-        let at = self.b.ins().iconst(ptr, &crate::rt::POLL as *const _ as i64);
+        let at = self.b.ins().symbol_value(ptr, self.refs.poll);
         let v = self.b.ins().load(I32, mf(), at, 0);
         let (slow, on) = (self.b.create_block(), self.b.create_block());
         self.b.ins().brif(v, slow, &[], on, &[]);
