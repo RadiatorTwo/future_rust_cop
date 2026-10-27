@@ -7,19 +7,24 @@ Windows/DirectX functions it calls are implemented in Rust (OpenGL for the 3D re
 videos, sound, network play). No game code or data is part of this repository or its
 releases: you need your own copy of the game.
 
-## Playing (Windows)
+## Playing
 
-1. Download `fcop-...-windows-x64.zip` from the [releases] and unpack it.
-2. Put an image of your CD (`.iso` or `.bin`) next to `fcop.exe`, or copy your game into the
-   `game_files` folder: the contents of the CD, an image of it, or your installed game folder.
-3. Start `fcop.exe`. It finds the game, checks the version, and keeps only what the game
-   needs (`game_files\FCopLAPD`: FCopLAPD.exe, febmp.bin, missions; `game_files\Video`: the
-   videos; taken out of a CD image); everything else in `game_files` goes to the recycle bin. Compiling the game takes
-   a few seconds; then it starts as usual.
+1. Download from the [releases]: `fcop-...-windows-x64.zip` for Windows or
+   `fcop-...-linux-x64.tar.gz` for Linux (x86-64, OpenGL 3.3), and unpack it.
+2. Put an image of your CD (`.iso` or `.bin`) next to `fcop.exe` (Linux: `fcop`), or copy your
+   game into the `game_files` folder: the contents of the CD, an image of it, or your
+   installed game folder.
+3. Start `fcop.exe` (Linux: `./fcop` in its folder). It finds the game, checks the version,
+   and keeps only what the game needs (`game_files/FCopLAPD`: FCopLAPD.exe, febmp.bin,
+   missions; `game_files/Video`: the videos; taken out of a CD image); everything else in
+   `game_files` goes to the recycle bin (Linux: it is deleted). Compiling the game takes a few
+   seconds; then it starts as usual.
 
 Only the PC version's `FCopLAPD.exe` (SHA-256 `2dcdd1e7...7e5e`) is supported; with any other,
-or without one, fcop.exe says so. Its messages go to `fcop.log` next to it. Settings go to `registry.txt`, key bindings to
-`controls.txt` and saves to `save.cfg` in `game_files\FCopLAPD`.
+or without one, fcop says so. Its messages go to `fcop.log` next to it on Windows, to the
+terminal on Linux. Settings go to `registry.txt`, key bindings to `controls.txt` and saves to
+`save.cfg` in `game_files/FCopLAPD`. On Linux the libraries for sound (ALSA, or PipeWire/
+PulseAudio through it) and gamepads (libudev) are needed; every desktop distribution has them.
 
 What is new compared to the original:
 - High resolution and widescreen (Hor+), fullscreen (Alt+Enter), anti-aliasing,

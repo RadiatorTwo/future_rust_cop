@@ -322,9 +322,12 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 ## Releases
 
-`.github/workflows/build.yml`: on windows-latest, tests and builds every push to main;
-a tag `v*` also makes a GitHub release with `fcop-<tag>-windows-x64.zip` (fcop.exe, README,
-LICENSE, `game_files/README.txt`). Version in Cargo.toml.
+`.github/workflows/build.yml`: on windows-latest and ubuntu-22.04 (older glibc, runs on newer
+distributions; ALSA and libudev headers from apt), tests and builds every push to main; a tag
+`v*` also makes a GitHub release with `fcop-<tag>-windows-x64.zip` and
+`fcop-<tag>-linux-x64.tar.gz` (the program, README, LICENSE, `game_files/README.txt`).
+Version in Cargo.toml. Linux tested in a CachyOS VM (VMware, NAT): the host serves the
+source by HTTP to it (copy and paste there is text only).
 
 ## Known facts about the game (from the earlier project)
 

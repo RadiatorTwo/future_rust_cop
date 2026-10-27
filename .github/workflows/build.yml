@@ -10,6 +10,9 @@ on:
 permissions:
   contents: write
 
+env:
+  VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -24,19 +27,51 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $name = "fcop-${{ github.ref_type == 'tag' && github.ref_name || github.sha }}-windows-x64"
+          $name = "fcop-$env:VERSION-windows-x64"
           New-Item -ItemType Directory $name | Out-Null
           Copy-Item target/release/fcop.exe, README.md, LICENSE $name
           Copy-Item -Recurse dist/game_files $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
-          "ZIP=$name.zip" >> $env:GITHUB_ENV
       - uses: actions/upload-artifact@v4
         with:
-          name: fcop-windows-x64
-          path: ${{ env.ZIP }}
-      - name: Release
-        if: github.ref_type == 'tag'
-        uses: softprops/action-gh-release@v2
+          name: windows
+          path: fcop-*.zip
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Libraries
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libasound2-dev libudev-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --release
+      - name: Build
+        run: cargo build --release
+      - name: Package
+        run: |
+          name="fcop-$VERSION-linux-x64"
+          mkdir "$name"
+          cp target/release/fcop README.md LICENSE "$name"
+          cp -r dist/game_files "$name"
+          tar czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
         with:
-          files: ${{ env.ZIP }}
+          name: linux
+          path: fcop-*.tar.gz
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            fcop-*.zip
+            fcop-*.tar.gz
           generate_release_notes: true

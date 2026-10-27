@@ -120,8 +120,8 @@ Next:
 - [ ] Linux, later Android. Runs (2026-10-27, CachyOS VM, Wayland and X11): menu and
       missions fine. Done: SIGSEGV/SIGBUS report like Windows' (`catch_faults`), files not
       needed deleted (no recycle bin), the window kept opaque (0RGB frames have alpha 0, which
-      Wayland blended with the desktop). Open: start window (`splash.rs` is Win32), CI job
-      and release archive, sound/gamepads/network checked on Linux
+      Wayland blended with the desktop). Sound checked. CI builds and releases it
+      (0.2.0). Open: start window (`splash.rs` is Win32), gamepads/network checked on Linux
 - [ ] Texture quality (options in Preferences through `dialog/extend.rs`). The source has
       no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`
       resource with `PX16` (16-bit PlayStation 1555 pixels), a 256-entry 16-bit palette
