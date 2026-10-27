@@ -452,6 +452,22 @@ fn on_event(c: &mut Cpu, e: Event) {
 static LAST_CALL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Report an access violation in guest memory (a bad game pointer) before the process dies.
+fn report_fault(kind: &str, a: usize, pc: usize) {
+    let base = mem().base as usize;
+    if a >= base && a - base < rt::GUEST_SPAN {
+        // the recompiled function the host code belongs to: the nearest start below it
+        let func = rt::DISPATCH.get().and_then(|d| d.table.iter().filter(|e| e.1 <= pc).max_by_key(|e| e.1).map(|e| e.0));
+        log!(
+            "fatal: guest memory {kind} at {:#x} in the function at {} (last import call returned to {:#x})",
+            a - base,
+            func.map_or("?".into(), crate::image::named),
+            LAST_CALL.load(std::sync::atomic::Ordering::Relaxed)
+        );
+    } else {
+        log!("fatal: host memory {kind} at {a:#x} (code {pc:#x})");
+    }
+}
+
 #[cfg(windows)]
 fn catch_faults() {
     use windows_sys::Win32::Foundation::{EXCEPTION_ACCESS_VIOLATION, NTSTATUS};
@@ -459,22 +475,8 @@ fn catch_faults() {
     unsafe extern "system" fn on_fault(info: *mut EXCEPTION_POINTERS) -> i32 {
         let rec = unsafe { &*(*info).ExceptionRecord };
         if rec.ExceptionCode == EXCEPTION_ACCESS_VIOLATION as NTSTATUS {
-            let base = mem().base as usize;
-            let a = rec.ExceptionInformation[1];
             let kind = ["read", "write", "execute"].get(rec.ExceptionInformation[0]).unwrap_or(&"access");
-            if a >= base && a - base < rt::GUEST_SPAN {
-                // the recompiled function the host code belongs to: the nearest start below it
-                let pc = rec.ExceptionAddress as usize;
-                let func = rt::DISPATCH.get().and_then(|d| d.table.iter().filter(|e| e.1 <= pc).max_by_key(|e| e.1).map(|e| e.0));
-                log!(
-                    "fatal: guest memory {kind} at {:#x} in the function at {} (last import call returned to {:#x})",
-                    a - base,
-                    func.map_or("?".into(), crate::image::named),
-                    LAST_CALL.load(std::sync::atomic::Ordering::Relaxed)
-                );
-            } else {
-                log!("fatal: host memory {kind} at {a:#x} (code {:#x})", rec.ExceptionAddress as usize);
-            }
+            report_fault(kind, rec.ExceptionInformation[1], rec.ExceptionAddress as usize);
         }
         0 // EXCEPTION_CONTINUE_SEARCH
     }
@@ -482,7 +484,30 @@ fn catch_faults() {
     unsafe { AddVectoredExceptionHandler(0, Some(on_fault)) };
 }
 
-#[cfg(not(windows))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn catch_faults() {
+    extern "C" fn on_fault(sig: i32, info: *mut libc::siginfo_t, ctx: *mut libc::c_void) {
+        unsafe {
+            let g = &(*(ctx as *const libc::ucontext_t)).uc_mcontext.gregs;
+            // page fault error code: bit 1 a write, bit 4 an instruction fetch
+            let err = g[libc::REG_ERR as usize];
+            let kind = if err & 0x10 != 0 { "execute" } else if err & 2 != 0 { "write" } else { "read" };
+            report_fault(kind, (*info).si_addr() as usize, g[libc::REG_RIP as usize] as usize);
+            // the default action at the next try: the process ends as it would have
+            libc::signal(sig, libc::SIG_DFL);
+        }
+    }
+    crate::image::symbols(); // read now, not while handling a fault
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = on_fault as *const () as usize;
+        sa.sa_flags = libc::SA_SIGINFO;
+        libc::sigaction(libc::SIGSEGV, &sa, std::ptr::null_mut());
+        libc::sigaction(libc::SIGBUS, &sa, std::ptr::null_mut());
+    }
+}
+
+#[cfg(not(any(windows, all(target_os = "linux", target_arch = "x86_64"))))]
 fn catch_faults() {}
 
 fn fatal(c: &Cpu, msg: &str) -> ! {

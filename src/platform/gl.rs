@@ -184,6 +184,9 @@ impl Gl {
             gl.disable(glow::SCISSOR_TEST);
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
+            // the window stays opaque: 2D frames' 0RGB words have alpha 0, and a compositor that
+            // blends windows by their alpha (Wayland) showed what is behind through the menu
+            gl.color_mask(true, true, true, false);
             gl.use_program(Some(self.blit));
             gl.bind_vertex_array(Some(self.vao));
             gl.active_texture(glow::TEXTURE0);
@@ -222,6 +225,7 @@ impl Gl {
                 gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
                 gl.disable(glow::BLEND);
             }
+            gl.color_mask(true, true, true, true);
         }
         let out = shot.then(|| {
             // the picture's area of the window, top row first

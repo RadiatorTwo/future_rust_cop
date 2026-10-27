@@ -65,7 +65,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   or raw .bin/.img, in game_files (then trashed) or next to fcop.exe (kept; game_files is made
   there): `src/iso.rs` (ISO 9660, Joliet names when there are) extracts those from it,
   checked first; `examples/iso.rs` lists an image), clears read-only (CD copies), and
-  moves everything else in both folders to the recycle bin, at every start, without asking.
+  moves everything else in both folders to the recycle bin (elsewhere deleted), at every start, without asking.
   `src/splash.rs`: a small Win32 window on its own thread shows what happens until the game's
   window opens (looking, copying from a CD image in %, compiling) or why it cannot start (with
   a Close button); none with `FCOP_BATCH=1` (tests). Closing it while starting quits.
@@ -121,7 +121,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   11000:click@232,435", then START (484,303) on both),
   `window.rs` (winit window and input; main thread only, other threads' frames are shown
   at the next pump), `gl.rs` (the OpenGL 3.3 context: shows a 2D frame or a rendered texture,
-  letterboxed, with the dialog overlay on top; FCOP_SHOT reads back the window), `glide.rs`
+  letterboxed, with the dialog overlay on top; alpha is not written to the window, as Wayland
+  blends windows by it; FCOP_SHOT reads back the window), `glide.rs`
   (Glide 2.x on OpenGL: LoadLibraryA("glide2x.dll") gives `glide::MODULE`, GetProcAddress a
   thunk per decorated name `_grX@N`; unknown names get `thunk_not_implemented`, logged at
   their first call. Triangles are batched into a texture of the grSstWinOpen size; only

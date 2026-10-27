@@ -117,7 +117,11 @@ Next:
       visibility pass (0x452880 ff.) reach cells beyond what it was made for (the map's edge,
       far distances). Also to look at: the near plane, the draw distance, eye height
 - [x] Cameras: own names in the HUD ("Chase Camera", "First Person Camera"; 2026-10-27)
-- [ ] Linux, later Android
+- [ ] Linux, later Android. Runs (2026-10-27, CachyOS VM, Wayland and X11): menu and
+      missions fine. Done: SIGSEGV/SIGBUS report like Windows' (`catch_faults`), files not
+      needed deleted (no recycle bin), the window kept opaque (0RGB frames have alpha 0, which
+      Wayland blended with the desktop). Open: start window (`splash.rs` is Win32), CI job
+      and release archive, sound/gamepads/network checked on Linux
 - [ ] Texture quality (options in Preferences through `dialog/extend.rs`). The source has
       no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`
       resource with `PX16` (16-bit PlayStation 1555 pixels), a 256-entry 16-bit palette

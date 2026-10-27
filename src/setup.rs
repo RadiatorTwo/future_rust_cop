@@ -11,7 +11,7 @@
 //! ```
 //!
 //! Everything else in `game_files` (the CD's installer, DirectX, the Mac version's MISSIONS
-//! folder...) goes to the recycle bin, without asking.
+//! folder...) goes to the recycle bin (Linux: deleted), without asking.
 
 use crate::iso::Iso;
 use sha2::{Digest, Sha256};
@@ -85,7 +85,7 @@ pub fn game_exe(root: &Path) -> Result<PathBuf, String> {
     let mut rest = others(root, &[GAME, VIDEO, NOTE]);
     rest.extend(others(&game, &GAME_FILES));
     for p in rest {
-        eprintln!("setup: not needed, to the recycle bin: {}", p.display());
+        eprintln!("setup: not needed, removed: {}", p.display());
         if let Err(e) = trash(&p) {
             eprintln!("setup: cannot remove {}: {e}", p.display());
         }
@@ -256,7 +256,7 @@ fn writable(dir: &Path) {
     }
 }
 
-/// Move a file or folder to the recycle bin.
+/// Move a file or folder to the recycle bin (elsewhere: delete it).
 #[cfg(windows)]
 fn trash(p: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
@@ -277,5 +277,6 @@ fn trash(p: &Path) -> Result<(), String> {
 
 #[cfg(not(windows))]
 fn trash(p: &Path) -> Result<(), String> {
-    Err(format!("{}: no recycle bin here, left as it is", p.display()))
+    let r = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
+    r.map_err(|e| e.to_string())
 }
