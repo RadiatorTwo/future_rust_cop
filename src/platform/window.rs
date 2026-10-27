@@ -514,6 +514,9 @@ impl App {
             None => attrs.with_inner_size(LogicalSize::new(1280.0, 960.0)),
         };
         let (win, gl) = Gl::new(el, attrs);
+        // to the front, while our start window still has the foreground (Windows lets only the
+        // foreground's process bring a window forward)
+        win.focus_window();
         self.window = Some(win);
         crate::splash::close();
         self.gl = Some(gl);
