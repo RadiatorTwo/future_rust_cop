@@ -327,7 +327,9 @@ impl Dialog {
                     Kind::Push { default: d } if default => d,
                     Kind::Push { .. } => {
                         let t = c.text.trim().to_ascii_lowercase();
-                        c.id == 2 || t == "cancel" || t == "resume" || t == "no"
+                        // Esc: the pause bar's "Resume Game" too (the original's
+                        // buttons ignored Esc)
+                        c.id == 2 || t == "cancel" || t.starts_with("resume") || t == "no"
                     }
                     _ => false,
                 }
