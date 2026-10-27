@@ -628,6 +628,7 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (camera::ROBOT_DRAW, camera::robot_draw),
     (camera::RENDER_HUD, camera::render_hud),
     (dinput::JOY_CAPTURE, dinput::joy_capture),
+    (dsound::SET_VOLUME, dsound::set_volume),
 ];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread

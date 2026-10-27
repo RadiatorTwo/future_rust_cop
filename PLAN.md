@@ -190,6 +190,9 @@ Next:
       2779 frames (actors compared every frame). Before, the joining computer's picture
       alternated between two views after the loss
 
+- [x] Effects volume 0 was still audible (user, 2026-10-27): the game's curve 0x4318e0 went
+      only down to -16.7 dB. Hooked: amplitude in proportion, 0 silent (checked by ear)
+
 - [ ] FPU exception bits (status word bits 0-5) are not modelled (0x47c070, 0x469f60)
 - [ ] Difftest: Linux support (demand paging uses a Windows exception handler)
 - [ ] Difftest: start from a memory snapshot of the running game, so the 189 untested

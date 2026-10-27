@@ -7,7 +7,7 @@
 //! carries the videos' sound.
 
 use super::{Import, ResId, alloc, arg, com_new, cstr, free, guest_call, host_path, log, mem, new_cstr, resource};
-use crate::rt::Cpu;
+use crate::rt::{Cpu, EAX, ESP};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -688,6 +688,23 @@ fn play_sound(c: &mut Cpu) -> u32 {
         std::thread::sleep(Duration::from_secs_f64(secs));
     }
     1
+}
+
+/// The game sets a sound effect's volume with 0x4318e0(buffer, 0...127). Its curve went from
+/// 0 to only -16.7 dB, so effects stayed audible with the effects volume at 0. Ours: the
+/// amplitude in proportion, 0 silent.
+pub const SET_VOLUME: u32 = 0x4318e0;
+
+pub fn set_volume(c: &mut Cpu) {
+    let v = (arg(c, 1) as i32).clamp(0, 127);
+    let cb = if v == 0 { -10000 } else { (2000.0 * (v as f32 / 127.0).log10()).round() as i32 };
+    let ok = with_voice(c, |voice, _| {
+        voice.volume = cb;
+        OK
+    }) == OK;
+    // it returns whether SetVolume succeeded (al); as if it returned: its return address off
+    c.r[EAX] = c.r[EAX] & !0xff | ok as u32;
+    c.r[ESP] += 4;
 }
 
 pub const IMPORTS: &[Import] = &[

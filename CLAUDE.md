@@ -88,7 +88,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   condition variable), `user32.rs` (windows, message queue, timers, key state; desktop
   1600x1200), `gdi32.rs`, `advapi32.rs` (registry in `registry.txt`), `ddraw.rs`,
   `dsound.rs` (DirectSound and PlaySoundA: voices in guest memory mixed on cpal's audio
-  thread, play cursors advance in real time; without a device a timer thread advances them),
+  thread, play cursors advance in real time; without a device a timer thread advances them;
+  the effects' volume 0x4318e0 is hooked: amplitude in proportion, 0 silent (the game's own
+  curve ended at -16.7 dB)),
   `misc.rs` (winmm timers, ole32, comctl32),
   `dinput.rs` (DirectInput 5, only for joysticks: gamepads through gilrs, at most 2 reported
   (the game has room for 2); player i uses pad i, one pad is shared. The game reads only lX/lY
