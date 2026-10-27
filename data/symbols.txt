@@ -24,7 +24,7 @@
 0x44fd20  actor_grid_build        logic in the render block: rebuilds actor_grid (hits use it), empties per-frame lists; skipped when paused
 0x453260  render_world            (0, player, &view) projects terrain, objects, effects into the display list
 0x4075b0  render_part?            (0, 1)
-0x434c90  render_hud              (player) HUD and target markers
+0x434c90  render_hud              (player) HUD and target markers; camera name from [0x48b7fc][robot data +0xa4] while +0xae > 0 (0x435f40)
 0x4114c0  render_finish           (0) display_list_draw
 0x40ca10  display_list_draw       links the records by depth into buckets, resets display_list_end, walks them (glide_walker), clears the buckets
 0x411490  display_buckets_clear

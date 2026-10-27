@@ -196,7 +196,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   data +0xac)) gets our angles via 0x434760(yaw, pitch, roll) and position via
   0x4346d0(&pos), both on the camera in [0x511f48]. Positions 20.12, y up; yaw (actor
   +0xb0, 4096 a turn) faces (sin, 0, cos); pitch > 0 looks down. A press counts once in 250
-  ms (it counted twice while held). First person skips robot_draw 0x447ba0 in the robot's
+  ms (it counted twice while held). Names: render_hud 0x434c90 (hooked) shows the name from
+  the table [0x48b7fc] by the game's mode while the key timer runs; for a player in ours the
+  pointer goes to our table for that call ("Chase Camera", "First Person Camera"). First person skips robot_draw 0x447ba0 in the robot's
   own view (a skipping hook pops the return address itself); the HUD's target markers
   0x435330 end with the laser line (type 0x3a), which `drop_laser` takes off the list end.
 - WM_PAINT (`user32.rs`): windows have a dirty flag (InvalidateRect, first ShowWindow, the

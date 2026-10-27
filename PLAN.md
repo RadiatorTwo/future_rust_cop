@@ -111,7 +111,7 @@ Next:
       "read at 0x4140a2a in 0x457340 project_points". Probably looking ahead makes the
       visibility pass (0x452880 ff.) reach cells beyond what it was made for (the map's edge,
       far distances). Also to look at: the near plane, the draw distance, eye height
-- [ ] Cameras: own names in the HUD (the game shows its "Standard Camera" when ours start)
+- [x] Cameras: own names in the HUD ("Chase Camera", "First Person Camera"; 2026-10-27)
 - [ ] Linux, later Android
 - [ ] Texture quality (options in Preferences through `dialog/extend.rs`). The source has
       no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`

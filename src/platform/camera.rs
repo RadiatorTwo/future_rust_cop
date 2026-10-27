@@ -18,6 +18,11 @@ use std::sync::Mutex;
 pub const ROBOT_CAMERA: u32 = 0x4456a0;
 /// robot_draw(upper part): the robot's body, upper part, side weapons, lights, muzzle flash.
 pub const ROBOT_DRAW: u32 = 0x447ba0;
+/// render_hud(player actor): while the camera key's timer runs it shows the camera's name,
+/// from the table of the game's modes that [NAMES] points to.
+pub const RENDER_HUD: u32 = 0x434c90;
+const NAMES: u32 = 0x48b7fc;
+const GAME_MODES: u32 = 7;
 
 /// The camera in use, a player's camera by its number (robot data +0xac), and setting the
 /// current camera's angles and position.
@@ -48,9 +53,11 @@ struct State {
     mode: [Mode; 2],
     last: [Option<std::time::Instant>; 2],
     buf: u32,
+    /// guest name tables for our cameras (first person, behind), made at their first use
+    names: [u32; 2],
 }
 
-static STATE: Mutex<State> = Mutex::new(State { mode: [Mode::Game; 2], last: [None; 2], buf: 0 });
+static STATE: Mutex<State> = Mutex::new(State { mode: [Mode::Game; 2], last: [None; 2], buf: 0, names: [0; 2] });
 
 fn player_of(actor: u32) -> Option<usize> {
     (0..2).find(|&p| mem().rd32(PLAYERS + 4 * p as u32) == actor)
@@ -150,6 +157,36 @@ pub fn robot_draw(c: &mut Cpu) {
         return;
     }
     call_original(c, ROBOT_DRAW);
+}
+
+/// Our cameras' names in the HUD: the game shows its "Standard Camera" (its mode stays 0 in
+/// ours), so for the time of the HUD its name table points to one with our name in every place.
+pub fn render_hud(c: &mut Cpu) {
+    let m = mem();
+    let player = m.rd32(c.r[ESP] + 4);
+    let (k, name) = match mode_of(player) {
+        Mode::Game => return call_original(c, RENDER_HUD),
+        Mode::FirstPerson => (0, "First Person Camera"),
+        Mode::Behind => (1, "Chase Camera"),
+    };
+    let table = {
+        let mut s = STATE.lock().unwrap();
+        if s.names[k] == 0 {
+            let t = super::alloc(GAME_MODES * 4 + name.len() as u32 + 1);
+            let text = t + GAME_MODES * 4;
+            for i in 0..GAME_MODES {
+                m.wr32(t + 4 * i, text);
+            }
+            m.slice(text, name.len()).copy_from_slice(name.as_bytes());
+            m.wr8(text + name.len() as u32, 0);
+            s.names[k] = t;
+        }
+        s.names[k]
+    };
+    let saved = m.rd32(NAMES);
+    m.wr32(NAMES, table);
+    call_original(c, RENDER_HUD);
+    m.wr32(NAMES, saved);
 }
 
 fn mode_of(robot: u32) -> Mode {
