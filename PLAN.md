@@ -151,8 +151,8 @@ Next:
       2026-10-27 with two instances on one computer: hosting, finding, joining (also by typed
       address), the shared menu (Precinct Assault, 2 players), the mission on both, the host
       back at its dialog when the other leaves
-- [ ] Network play between two computers: not tried yet (user). Windows asks to let the
-      host through its firewall (TCP and UDP port 47624) the first time it listens
+- [x] Network play between two computers: works (user, 2026-10-27). Windows asks to let
+      the host through its firewall (TCP and UDP port 47624) the first time it listens
 - [ ] Network play shows ~57 pictures a second whatever the Frame Rate setting: `fps.rs`
       only draws between frames in the single-player wait (0x406a56), the network loop
       waits in 0x406b20
