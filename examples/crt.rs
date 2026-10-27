@@ -207,7 +207,7 @@ fn run() -> bool {
         std::process::exit(2);
     };
     let img = Image::load(&exe).unwrap_or_else(|e| panic!("{}: {e}", exe.display()));
-    let ranges = load_functions(Path::new("data/functions.json")).expect("data/functions.json");
+    let ranges = load_functions();
     let mut code = Code::new(&img);
     let t = Instant::now();
     let prog = Program::build(&mut code, &ranges);

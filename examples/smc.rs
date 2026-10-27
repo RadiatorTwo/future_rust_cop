@@ -5,7 +5,7 @@ use fcop::smc::Smc;
 use std::path::Path;
 fn main() {
     let img = Image::load(Path::new(&std::env::args().nth(1).expect("path to FCopLAPD.exe"))).unwrap();
-    let ranges = load_functions(Path::new("data/functions.json")).unwrap();
+    let ranges = load_functions();
     let mut code = Code::new(&img);
     let prog = Program::build(&mut code, &ranges);
     let smc = Smc::find(&prog, &mut code);

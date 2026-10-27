@@ -3,7 +3,7 @@ use fcop::image::{Image, load_functions};
 use std::path::Path;
 fn main() {
     let img = Image::load(Path::new(&std::env::args().nth(1).unwrap())).unwrap();
-    let ranges = load_functions(Path::new("data/functions.json")).unwrap();
+    let ranges = load_functions();
     let mut code = Code::new(&img);
     let prog = Program::build(&mut code, &ranges);
     let mut seen = std::collections::BTreeSet::new();

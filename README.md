@@ -2,22 +2,43 @@
 
 A native port of **Future Cop: L.A.P.D.** (1998) in Rust. The game's own program is
 recompiled: the player's `FCopLAPD.exe` is decoded with [iced-x86], every function is
-lifted to [Cranelift] IR and compiled to native code. No game code or data is part of this
-repository; players use their own copy of the game.
+lifted to [Cranelift] IR and compiled to native code when the game starts, and the
+Windows/DirectX functions it calls are implemented in Rust (OpenGL for the 3D renderer, its
+videos, sound, network play). No game code or data is part of this repository or its
+releases: you need your own copy of the game.
 
-Status: prototype. The whole EXE (2176 functions, 174k instructions) is found and compiled,
-every instruction supported (x87 included, and the renderer's self-modifying code). A
-differential test against Unicorn agrees for every function it can run. The Windows/DirectX
-layer is being written in Rust: the game starts and shows its main menu (no sound, videos or
-3D yet); see PLAN.md.
+## Playing (Windows)
+
+1. Download `fcop-...-windows-x64.zip` from the [releases] and unpack it.
+2. Put `fcop.exe` into your game folder (the one with `FCopLAPD.exe` and its `missions`
+   folder), or next to it. The videos are read from a `Video` folder in the game folder or in
+   the folder above it (as on the CD).
+3. Start `fcop.exe`. Compiling the game takes a few seconds; then it starts as usual.
+
+Only the PC version's `FCopLAPD.exe` (SHA-256 `2dcdd1e7...7e5e`) is supported. Settings go
+to `registry.txt` and key bindings to `controls.txt` in the game folder.
+
+What is new compared to the original:
+- High resolution and widescreen (Hor+), fullscreen (Alt+Enter), anti-aliasing,
+  texture filtering; all in the game's Preferences dialog
+- Frame rates up to unlimited, with the game's logic unchanged
+- Gamepads (up to two): choose the joystick profile in the Controller dialog. Left stick
+  moves, RT gun, LT heavy weapon, A jump, B special, X action, Y change target, LB/RB jink,
+  Back map, R3 camera, Start pause; the D-pad is free to bind
+- Network play over TCP/IP (Host Game / Join Game; port 47624, type the host's address in
+  the Join dialog)
+- The arrow keys for player 1, and a camera close behind the robot
+
+## Building
 
 ```
+cargo build --release
 cargo run --release -- path/to/FCopLAPD.exe
 ```
 
-Without a path it uses the first FCopLAPD.exe under `game_files/`. Settings go to
-`registry.txt` in the game folder. `cargo run --release --example crt` checks the game's C
-runtime functions (string functions, 64-bit division) against Rust on random inputs.
+Without a path it uses the first FCopLAPD.exe under `game_files/`. `cargo test --release`
+needs no game files. How it works and what is open: `CLAUDE.md` and `PLAN.md`.
 
 [iced-x86]: https://github.com/icedland/iced
 [Cranelift]: https://cranelift.dev
+[releases]: https://github.com/RadiatorTwo/future_rust_cop/releases

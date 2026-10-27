@@ -26,7 +26,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 - `data/symbols.txt`: what we know about the game's functions and data, by address (name,
   description; "?" marks guesses). Keep it current when something new is understood.
-- `src/image.rs`: the EXE's sections and imports; `data/functions.json` loader.
+- `src/image.rs`: the EXE's sections and imports; `data/functions.json` and `data/symbols.txt`
+  are built into the program (`include_str!`: fcop.exe needs no files of its own).
 - `src/discover.rs`: finds the code (recursive descent from each function, jump tables,
   extra entry points where other code jumps into the middle of a function or where data
   holds code addresses). Finds 2176 functions incl. 147 extra entries, matching the old
@@ -58,7 +59,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (next index, value) pairs). Matches ffmpeg (frames within IDCT rounding, sound within float
   noise); `examples/movie.rs <file.mpg> [dir]` decodes one and writes raw frames/samples.
 - `src/main.rs`: compiles the EXE and runs the game (`fcop [exe]`; default: the first
-  FCopLAPD.exe under `game_files/`, a copy of the old project's game folder without its
+  FCopLAPD.exe under `game_files/`, else in or below fcop.exe's folder, a copy of the old project's game folder without its
   registry.txt/controls.txt). `examples/crt.rs` tests strchr/strncpy/strstr/strcspn/
   strncmp/strpbrk (0x4780d0 ...), __aulldiv/__aullrem and _ftol (0x478090) against Rust.
 - `src/platform/`: the Windows/DirectX layer. `mod.rs`: guest memory layout (TIB 0x10000,
@@ -301,6 +302,12 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `examples/at.rs <exe> <addr>...`: decodes single instructions.
 - Odd instructions: MMX is only movq/movd copies (`Cpu::mm`); `in` reads 0xff (gameport,
   nothing connected), `out` does nothing; `push/pop es` only occur in data decoded as code.
+
+## Releases
+
+`.github/workflows/build.yml`: on windows-latest, tests and builds every push to main;
+a tag `v*` also makes a GitHub release with `fcop-<tag>-windows-x64.zip` (fcop.exe, README,
+LICENSE). Version in Cargo.toml.
 
 ## Known facts about the game (from the earlier project)
 

@@ -7,7 +7,7 @@ use std::path::Path;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let img = Image::load(Path::new(&args[1])).unwrap();
-    let ranges = load_functions(Path::new("data/functions.json")).unwrap();
+    let ranges = load_functions();
     let mut code = Code::new(&img);
     let prog = Program::build(&mut code, &ranges);
     let line = |a: u32, i: &iced_x86::Instruction| {

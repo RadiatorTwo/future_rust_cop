@@ -121,8 +121,9 @@ pub struct FuncInfo {
     pub name: String,
 }
 
-pub fn load_functions(path: &Path) -> std::io::Result<Vec<(u32, u32, String)>> {
-    let list: Vec<FuncInfo> = serde_json::from_slice(&std::fs::read(path)?)?;
+/// data/functions.json, built into the program: (start, end, name), sorted.
+pub fn load_functions() -> Vec<(u32, u32, String)> {
+    let list: Vec<FuncInfo> = serde_json::from_str(include_str!("../data/functions.json")).expect("functions.json");
     let mut out: Vec<(u32, u32, String)> = list
         .into_iter()
         .map(|f| {
@@ -131,16 +132,16 @@ pub fn load_functions(path: &Path) -> std::io::Result<Vec<(u32, u32, String)>> {
         })
         .collect();
     out.sort();
-    Ok(out)
+    out
 }
 
-/// The names in data/symbols.txt (what we know about the game's code and data), by address;
-/// empty without the file.
+/// The names in data/symbols.txt (what we know about the game's code and data, built into the
+/// program), by address.
 pub fn symbols() -> &'static std::collections::BTreeMap<u32, String> {
     static S: std::sync::OnceLock<std::collections::BTreeMap<u32, String>> = std::sync::OnceLock::new();
     S.get_or_init(|| {
-        let text = std::fs::read_to_string("data/symbols.txt").unwrap_or_default();
-        text.lines()
+        include_str!("../data/symbols.txt")
+            .lines()
             .filter_map(|l| {
                 let mut w = l.split_whitespace();
                 let a = u32::from_str_radix(w.next()?.strip_prefix("0x")?, 16).ok()?;

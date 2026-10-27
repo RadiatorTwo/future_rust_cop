@@ -224,7 +224,7 @@ struct World {
 impl World {
     fn new(exe: &str) -> World {
         let img = Image::load(Path::new(exe)).unwrap_or_else(|e| panic!("{exe}: {e}"));
-        let ranges = load_functions(Path::new("data/functions.json")).expect("data/functions.json");
+        let ranges = load_functions();
         let mut code = Code::new(&img);
         let prog = Program::build(&mut code, &ranges);
         let lo = img.base;
