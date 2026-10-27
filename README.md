@@ -18,7 +18,7 @@ releases: you need your own copy of the game.
    a few seconds; then it starts as usual.
 
 Only the PC version's `FCopLAPD.exe` (SHA-256 `2dcdd1e7...7e5e`) is supported; with any other,
-or without one, fcop.exe says so. Settings go to `registry.txt`, key bindings to
+or without one, fcop.exe says so. Its messages go to `fcop.log` next to it. Settings go to `registry.txt`, key bindings to
 `controls.txt` and saves to `save.cfg` in `game_files\FCopLAPD`.
 
 What is new compared to the original:

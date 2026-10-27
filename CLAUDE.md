@@ -68,7 +68,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   moves everything else in both folders to the recycle bin, at every start, without asking.
   Errors go to the console and a message box (none with `FCOP_BATCH=1`, for tests).
   The release ships `dist/game_files/README.txt` (kept there).
-- `src/main.rs`: compiles the EXE and runs the game (`fcop [exe]`, the EXE checked too;
+- `src/main.rs`: compiles the EXE and runs the game (a release build has no console window:
+  messages go to the console it was started from or a redirection, else to fcop.log next to
+  fcop.exe; debug builds keep the console) (`fcop [exe]`, the EXE checked too;
   default: `setup`; here `game_files/`, a copy of the old project's game folder without its
   registry.txt/controls.txt). `examples/crt.rs` tests strchr/strncpy/strstr/strcspn/
   strncmp/strpbrk (0x4780d0 ...), __aulldiv/__aullrem and _ftol (0x478090) against Rust.

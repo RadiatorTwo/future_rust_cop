@@ -3,6 +3,11 @@
 //!     fcop [path to FCopLAPD.exe]
 //!
 //! Without a path: the game files in `game_files` next to fcop.exe (see `setup`).
+//!
+//! A release build is a Windows program without a console window: its messages go to the
+//! console it was started from, else to fcop.log next to fcop.exe.
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use fcop::discover::{Code, Program};
 use fcop::image::{Image, load_functions};
@@ -12,7 +17,35 @@ use fcop::smc::Smc;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+/// Without a console window of our own: messages to the console we were started from (or
+/// wherever they were redirected), else to fcop.log next to fcop.exe.
+#[cfg(windows)]
+fn output() {
+    use std::os::windows::io::IntoRawHandle;
+    use windows_sys::Win32::System::Console::*;
+    unsafe {
+        if !GetStdHandle(STD_ERROR_HANDLE).is_null() {
+            return;
+        }
+        let out = if AttachConsole(ATTACH_PARENT_PROCESS) != 0 {
+            std::fs::OpenOptions::new().write(true).open("CONOUT$").ok()
+        } else {
+            let log = std::env::current_exe().ok().and_then(|p| Some(p.parent()?.join("fcop.log")));
+            log.and_then(|p| std::fs::File::create(p).ok())
+        };
+        if let Some(f) = out {
+            let h = f.into_raw_handle();
+            SetStdHandle(STD_OUTPUT_HANDLE, h as _);
+            SetStdHandle(STD_ERROR_HANDLE, h as _);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn output() {}
+
 fn main() {
+    output();
     // guest calls nest on the host stack like the original's: run on a thread with a large one
     let code = std::thread::Builder::new().stack_size(256 << 20).spawn(run).unwrap().join().unwrap();
     std::process::exit(code as i32);
