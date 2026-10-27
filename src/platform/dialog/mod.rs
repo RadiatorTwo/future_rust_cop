@@ -838,6 +838,13 @@ pub fn with<R>(hwnd: u32, f: impl FnOnce(&mut Dialog, Option<usize>) -> R) -> Op
     Some(f(&mut s.dialogs[di], k))
 }
 
+/// The text of control `id` in the open dialog made from template `template`.
+pub fn text_in(template: u32, id: u32) -> Option<String> {
+    let mut s = stack();
+    let d = s.dialogs.iter_mut().rev().find(|d| d.template == template)?;
+    d.control(id).map(|c| c.text.clone())
+}
+
 /// The window rectangle of a dialog or control, in overlay pixels.
 pub fn rect(hwnd: u32) -> Option<[i32; 4]> {
     with(hwnd, |d, k| k.map_or(d.rect, |k| d.controls[k].rect))

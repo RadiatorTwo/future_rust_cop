@@ -145,12 +145,17 @@ Next:
 - [x] Bug (user, 2026-10-27): saves had no name and showed as -EMPTY-: the slot combo box
       (CBS_DROPDOWN) is where the name is typed, and ours could not be typed into. Fixed
       2026-10-27; saving and loading checked by script (progress comes back)
-- [ ] Network play missing (user, 2026-10-27): Host Game and Join Game. The game takes
-      DirectPlay through CoCreateInstance (no import of its own), which only gives
-      DirectShow so far; its receive thread is 0x405180, its frame wait 0x406b20. Needs a
-      DirectPlay over our own transport (UDP/TCP)
-      Now: Host Game shows the game's message that it needs DirectX 5 (probably because
-      DirectPlay cannot be created; not checked)
+- [x] Network play (user, 2026-10-27): Host Game and Join Game. `dplay.rs`: IDirectPlay4A
+      from CoCreateInstance, sessions found by UDP (broadcast, this computer, or the address
+      typed into our field in the Join dialog), messages over TCP through the host. Checked
+      2026-10-27 with two instances on one computer: hosting, finding, joining (also by typed
+      address), the shared menu (Precinct Assault, 2 players), the mission on both, the host
+      back at its dialog when the other leaves
+- [ ] Network play between two computers: not tried yet (user). Windows asks to let the
+      host through its firewall (TCP and UDP port 47624) the first time it listens
+- [ ] Network play shows ~57 pictures a second whatever the Frame Rate setting: `fps.rs`
+      only draws between frames in the single-player wait (0x406a56), the network loop
+      waits in 0x406b20
 
 - [ ] FPU exception bits (status word bits 0-5) are not modelled (0x47c070, 0x469f60)
 - [ ] Difftest: Linux support (demand paging uses a Windows exception handler)

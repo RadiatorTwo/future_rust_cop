@@ -107,10 +107,14 @@ fn wide_str(p: u32) -> String {
 
 // ---- creation and IUnknown ----------------------------------------------------------------------
 
-/// CoCreateInstance(clsid, outer, context, iid, out): only the filter graph exists.
+/// CoCreateInstance(clsid, outer, context, iid, out): the filter graph, or DirectPlay
+/// (`dplay.rs`).
 fn co_create_instance(c: &mut Cpu) -> u32 {
     let (clsid, iid, out) = (read_guid(arg(c, 0)), arg(c, 3), arg(c, 4));
     mem().wr32(out, 0);
+    if clsid == super::dplay::CLSID_DIRECTPLAY {
+        return super::dplay::create(iid, out);
+    }
     if clsid != CLSID_FILTER_GRAPH {
         log!("warn: CoCreateInstance: class {:02x?} not available", clsid);
         return REGDB_E_CLASSNOTREG;

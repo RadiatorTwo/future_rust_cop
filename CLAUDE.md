@@ -82,6 +82,17 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   is also the clock; at the end EC_COMPLETE and the notify message WM_USER. The game skips with
   Space or a click itself (0x408ab0 calls Stop). It never releases IBasicAudio, so the graph
   is replaced at the next CoCreateInstance),
+  `dplay.rs` (DirectPlay for network play: CoCreateInstance(CLSID_DirectPlay) gives an
+  IDirectPlay4A; one connection, "TCP/IP"; the host listens on TCP and UDP port 47624
+  (`FCOP_NET_PORT`, `FCOP_NET_BIND` the address, e.g. 127.0.0.1 for tests without the firewall
+  prompt), EnumSessions asks by UDP (broadcast and 127.0.0.1, or the address typed into our
+  "Host Address" field in the Join dialog, kept as REG_SZ `JoinAddress`), Open(JOIN) connects by
+  TCP; frames: length, kind, contents; the host passes messages on. A message for a local
+  player sets its event; Receive builds system messages (player created/destroyed, session lost)
+  with their names behind them. `FCOP_NET_LOG=1` logs. Tested with two instances: host started
+  with FCOP_INPUT "4000:click@160,162 5000:click@317,120 6000:click@300,146 7000:click@232,386",
+  the other "6000:click@160,192 7000:click@317,73 8000:click@300,99 10000:click@320,125
+  11000:click@232,435", then START (484,303) on both),
   `window.rs` (winit window and input; main thread only, other threads' frames are shown
   at the next pump), `gl.rs` (the OpenGL 3.3 context: shows a 2D frame or a rendered texture,
   letterboxed, with the dialog overlay on top; FCOP_SHOT reads back the window), `glide.rs`

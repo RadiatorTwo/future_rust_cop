@@ -81,8 +81,20 @@
 0x43fe30  random                  seed at random_seed
 
 ## Threads, files, input, video
-0x405180  net_receive_thread      DirectPlay receive loop
-0x4051e0  net_receive
+0x405180  net_receive_thread      DirectPlay receive loop: waits for the player's event, takes system messages only (net_receive)
+0x4051e0  net_receive             Receive(from = DPID_SYSMSG, DPRECEIVE_FROMPLAYER) until none are left, each to net_system_message
+0x4052e0  net_system_message      (net, msg, size, ...) player joined (3) / left (5) texts, session lost (0x31) ...
+0x401150  net_create              (&net) CoCreateInstance(CLSID_DirectPlay, IID_IDirectPlay4A)
+0x4011a0  net_host_open           (dp, session name, player name, &net) Open(DPOPEN_CREATE, 2 players), CreatePlayer with the event
+0x4012e0  net_join_open           (dp, &instance GUID, player name, &net) Open(DPOPEN_JOIN), CreatePlayer; sends message 0x11
+0x401500  net_enum_sessions       (hwnd, dp) EnumSessions(async, callback 0x401440 fills list 0x475, item data = instance GUID)
+0x4010b0  net_connection_found    EnumConnections callback: name to combo 0x478/0x476, a copy of the connection as item data
+0x404210  host_dialog             dialog 168 (Host Network Game); WM_TIMER 2 polls messages: 0x11 a player asks, answers 0x12 (or 0x13 refused), 0xa names
+0x404910  join_dialog             dialog 167 (Join Network Game); timer 1 (3 s) enumerates again, timer 2 polls: 0x12 accepted, 0x13 denied
+0x405980  net_init                CoInitialize, events (receive, quit), the receive thread
+0x405a90  net_send                (guaranteed?, 0, data, size) Send(from our player, to all players)
+0x405ae0  net_poll                (&net, buf) Receive(DPRECEIVE_ALL): system messages to net_system_message, the first game message into buf
+0x512040  net                     DirectPlay object, +4 receive event, +8 our player id, +0xc nonzero on the host
 0x415f30  file_reader_thread      async file reader (one-slot mailbox with file_read_done)
 0x416bf0  file_read_done
 0x417aa0  controls_default        copies profile [0x4a01b0] of the default key tables

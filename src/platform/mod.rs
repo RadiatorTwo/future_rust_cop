@@ -12,6 +12,7 @@ pub mod cheats;
 pub mod ddraw;
 pub mod dialog;
 pub mod display;
+pub mod dplay;
 pub mod dshow;
 pub mod dsound;
 pub mod fps;

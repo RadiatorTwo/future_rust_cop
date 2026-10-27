@@ -1,4 +1,4 @@
-//! The small DLLs: WINMM timers, ole32 (COM start-up; CoCreateInstance is in `dshow.rs`),
+//! The small DLLs: WINMM timers, ole32 (COM start-up; CoCreateInstance is in `dshow.rs`, DirectPlay in `dplay.rs`),
 //! COMCTL32, and for now DirectInput as an absent device.
 
 use super::{Import, arg, guest_call, mem};

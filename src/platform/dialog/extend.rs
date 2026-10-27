@@ -42,6 +42,15 @@ const TEXTURES: u32 = FIRST_OURS + 8;
 const MSAA_LABEL: u32 = FIRST_OURS + 9;
 const MSAA: u32 = FIRST_OURS + 10;
 
+/// The Join Network Game dialog: our host address goes below its Connection Status group,
+/// its JOIN and CANCEL buttons move down.
+const JOIN: u32 = 167;
+const JOIN_STATUS: u32 = 1144;
+const JOIN_BUTTON: u32 = 1139;
+const JOIN_CANCEL: u32 = 1140;
+const ADDRESS_GROUP: u32 = FIRST_OURS + 11;
+const ADDRESS: u32 = FIRST_OURS + 12;
+
 const VISIBLE: u32 = 0x1000_0000;
 const TABSTOP: u32 = 0x0001_0000;
 
@@ -55,6 +64,18 @@ fn renderer() -> String {
 }
 
 pub fn adjust(template: u32, t: &mut Template) {
+    if template == JOIN {
+        let Some(g) = t.items.iter().find(|i| i.id == JOIN_STATUS).map(|i| i.rect) else { return };
+        let y = g[1] + g[3] + 4;
+        t.items.push(Item { class: Class::Button, id: ADDRESS_GROUP, text: "Host Address (empty: local network)".into(), style: VISIBLE | 7, ex_style: 0, rect: [g[0], y, g[2], g[3]] });
+        // like the game's edit boxes: a border, scrolling sideways
+        t.items.push(Item { class: Class::Edit, id: ADDRESS, text: String::new(), style: VISIBLE | TABSTOP | 0x0080_0080, ex_style: 0, rect: [g[0] + 7, y + 12, g[2] - 14, 14] });
+        let down = g[3] + 4;
+        for i in t.items.iter_mut().filter(|i| i.id == JOIN_BUTTON || i.id == JOIN_CANCEL) {
+            i.rect[1] += down;
+        }
+        t.rect[3] += down;
+    }
     if template == PREFERENCES {
         let place = |id: u32| t.items.iter().find(|i| i.id == id).map(|i| i.rect);
         let (Some(label), Some(combo)) = (place(PROCESSOR_LABEL), place(PROCESSOR_COMBO)) else { return };
@@ -105,6 +126,11 @@ pub fn adjust(template: u32, t: &mut Template) {
 }
 
 pub fn init(d: &mut Dialog) {
+    if d.template == JOIN {
+        if let Some(c) = d.control(ADDRESS) {
+            c.text = saved_address();
+        }
+    }
     if d.template == PREFERENCES {
         for id in [PROCESSOR_LABEL, PROCESSOR_COMBO] {
             if let Some(c) = d.control(id) {
@@ -206,6 +232,22 @@ pub fn init(d: &mut Dialog) {
 }
 
 pub fn command(_d: &mut Dialog, _id: u32) {}
+
+fn saved_address() -> String {
+    advapi32::value("", "JoinAddress").map(|(_, d)| d.iter().take_while(|&&b| b != 0).map(|&b| b as char).collect()).unwrap_or_default()
+}
+
+/// The host address typed into the Join dialog (`dplay.rs` looks for sessions there; empty:
+/// on the local network), kept for the next time.
+pub fn join_address() -> String {
+    let Some(a) = super::text_in(JOIN, ADDRESS) else { return saved_address() };
+    if a != saved_address() {
+        let mut v = a.clone().into_bytes();
+        v.push(0);
+        advapi32::set_value("", "JoinAddress", 1, &v);
+    }
+    a
+}
 
 pub fn ok(d: &mut Dialog) {
     if d.template == PREFERENCES {

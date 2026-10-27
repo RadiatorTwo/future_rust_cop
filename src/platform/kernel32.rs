@@ -547,7 +547,8 @@ fn create_event(c: &mut Cpu) -> u32 {
     objects().add(Obj::Event { manual: arg(c, 1) != 0, set: arg(c, 2) != 0 })
 }
 
-fn set_event_state(h: u32, on: bool) -> u32 {
+/// Set or reset event `h` (also from host threads: `dplay.rs`); 0 if it is no event.
+pub fn set_event_state(h: u32, on: bool) -> u32 {
     let mut g = objects();
     match g.map.get_mut(&h) {
         Some(Obj::Event { set, .. }) => {
