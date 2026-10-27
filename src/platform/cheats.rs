@@ -16,8 +16,10 @@ const GAME_STATE: u32 = 0x511fb8;
 const GAME: u32 = 0x511f80;
 /// The players' actors (two pointers); an actor's data at +0xac.
 const PLAYERS: u32 = 0x511fd0;
-/// In a robot's data: health, and the three weapons' ammunition.
-const HEALTH: u32 = 0x58;
+/// An actor's health (16 bits; the robot's data keeps a copy at +0x58 for the HUD, written
+/// every frame).
+const HEALTH: u32 = 0x1c;
+/// In a robot's data: the three weapons' ammunition.
 const AMMO: u32 = 0x84;
 
 pub struct Cheat {
@@ -38,7 +40,7 @@ pub const CHEATS: &[Cheat] = &[
 struct State {
     /// cheats asked for, run at the next frame of a mission
     pending: Vec<usize>,
-    /// each player's robot data and its health and ammunition when the mission started
+    /// each player's actor and its health and ammunition when the mission started
     start: [(u32, [u32; 4]); 2],
 }
 
@@ -72,15 +74,18 @@ pub fn names() -> String {
     CHEATS.iter().map(|c| c.name).collect::<Vec<_>>().join(", ")
 }
 
-fn robot(player: u32) -> u32 {
-    let m = mem();
-    let actor = m.rd32(PLAYERS + 4 * player);
-    if actor == 0 { 0 } else { m.rd32(actor + 0xac) }
+fn player(p: u32) -> u32 {
+    mem().rd32(PLAYERS + 4 * p)
 }
 
-fn values(data: u32) -> [u32; 4] {
+/// Where value `i` of an actor is: its health, then the ammunition in its data.
+fn field(actor: u32, i: usize) -> u32 {
+    if i == 0 { actor + HEALTH } else { mem().rd32(actor + 0xac) + AMMO + 4 * (i as u32 - 1) }
+}
+
+fn values(actor: u32) -> [u32; 4] {
     let m = mem();
-    [m.rd32(data + HEALTH), m.rd32(data + AMMO), m.rd32(data + AMMO + 4), m.rd32(data + AMMO + 8)]
+    std::array::from_fn(|i| if i == 0 { m.rd16(field(actor, 0)) as u32 } else { m.rd32(field(actor, i)) })
 }
 
 pub fn frame_wait(c: &mut Cpu) {
@@ -88,9 +93,9 @@ pub fn frame_wait(c: &mut Cpu) {
         let run = {
             let mut s = STATE.lock().unwrap();
             for p in 0..2 {
-                let data = robot(p);
-                if data != 0 && s.start[p as usize].0 != data {
-                    s.start[p as usize] = (data, values(data));
+                let actor = player(p);
+                if actor != 0 && s.start[p as usize].0 != actor {
+                    s.start[p as usize] = (actor, values(actor));
                 }
             }
             std::mem::take(&mut s.pending)
@@ -120,13 +125,14 @@ fn lose() {
 fn restore(fields: std::ops::Range<usize>) {
     let start = STATE.lock().unwrap().start;
     for p in 0..2 {
-        let data = robot(p);
-        if data != 0 && start[p as usize].0 == data {
-            let before = values(data);
+        let actor = player(p);
+        if actor != 0 && start[p as usize].0 == actor {
+            let before = values(actor);
             for i in fields.clone() {
-                mem().wr32(data + if i == 0 { HEALTH } else { AMMO + 4 * (i as u32 - 1) }, start[p as usize].1[i]);
+                let v = start[p as usize].1[i];
+                if i == 0 { mem().wr16(field(actor, i), v as u16) } else { mem().wr32(field(actor, i), v) }
             }
-            log!("cheat: player {} {:x?} -> {:x?}", p + 1, &before[fields.clone()], &values(data)[fields.clone()]);
+            log!("cheat: player {} {:x?} -> {:x?}", p + 1, &before[fields.clone()], &values(actor)[fields.clone()]);
         }
     }
 }

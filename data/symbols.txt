@@ -108,7 +108,7 @@
 0x511f48  camera                  pointer: +0 position, +0x20 yaw (4096 a turn), +0x28 matrix, +0x4c view translation, +0x58 transposed matrix, +0x7c position copy
 0x511c08  hud_owner?              decides whether render_hud runs
 0x50e420  actor_count
-0x50e428  actors                  pointers; actor: +4 handler, +8 active (> 0), +0x28 model, +0x2c matrix 3x3 (1.0 = 0x10000), +0x50 position (20.12), +0xac data (robot: +0x58 health, +0x78 reload timers, +0x84 ammo, +0xad mode, +0x178 / +0x1c4 / +0x210 side weapons and lights)
+0x50e428  actors                  pointers; actor: +4 handler, +8 active (> 0), +0x1c health (16 bits; +0x1e the same at start: maximum?), +0x28 model, +0x2c matrix 3x3 (1.0 = 0x10000), +0x50 position (20.12), +0xac data (robot: +0x54 maximum health?, +0x58 health copied from the actor every frame (HUD), +0x78 reload timers, +0x84 ammo, +0xad mode, +0x178 / +0x1c4 / +0x210 side weapons and lights)
 0x50e370  random_seed
 0x50e8ec  indicator_on
 0x499b0c  display_list_start      0x38-byte records up to display_list_end

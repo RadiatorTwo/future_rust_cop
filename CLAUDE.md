@@ -168,7 +168,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   run in the mission loop's frame wait (hook of 0x406a30), only while playing. `win`: progress
   +0x40 = goal +0x44 of the game record [0x511f80], state 0xb, as the mission script does (the
   reward video follows); `lose`: progress != goal, state 0xb; `health`/`ammo`: the robot's
-  values at the mission's start (data +0x58, +0x84...). New ones go into `CHEATS`.
+  values at the mission's start (health: actor +0x1c, 16 bits; the robot data's +0x58 is only
+  the HUD's copy, written every frame; ammunition: data +0x84...). New ones go into `CHEATS`.
 - WM_PAINT (`user32.rs`): windows have a dirty flag (InvalidateRect, first ShowWindow, the
   video window hidden with put_Visible 0); GetMessage/PeekMessage return WM_PAINT when the
   queue is empty, until ValidateRect/BeginPaint. The game's window procedure (0x45a340) redraws
