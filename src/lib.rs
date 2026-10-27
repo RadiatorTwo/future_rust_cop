@@ -5,6 +5,7 @@
 
 pub mod discover;
 pub mod image;
+pub mod iso;
 pub mod jit;
 pub mod lift;
 pub mod mpeg;

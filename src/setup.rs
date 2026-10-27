@@ -1,5 +1,5 @@
 //! The player's game files: the folder `game_files` next to fcop.exe (in a checkout: in the
-//! current folder). The player copies the CD or an installed game into it, anyhow; at every
+//! current folder). The player copies the CD, an image of it or an installed game into it; at every
 //! start we find FCopLAPD.exe, check it is the one version we know, and keep only what the game
 //! needs, in this layout (the CD's: the game folder and the videos next to it):
 //!
@@ -12,6 +12,7 @@
 //! Everything else in `game_files` (the CD's installer, DirectX, the Mac version's MISSIONS
 //! folder...) goes to the recycle bin, without asking.
 
+use crate::iso::Iso;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -43,9 +44,15 @@ pub fn game_exe(root: &Path) -> Result<PathBuf, String> {
         return Err(format!("The folder game_files was not found.\n\n{copy_in}"));
     }
     let game = root.join(GAME);
-    let exe = match find(&game, "FCopLAPD.exe", 0).or_else(|| find(root, "FCopLAPD.exe", 6)) {
-        Some(e) => e,
-        None => return Err(format!("Future Cop's game files were not found.\n\n{copy_in}")),
+    let mut exe = find(&game, "FCopLAPD.exe", 0).or_else(|| find(root, "FCopLAPD.exe", 6));
+    if exe.is_none() {
+        if let Some(image) = find_image(root, 6) {
+            from_image(&image, root)?;
+            exe = find(&game, "FCopLAPD.exe", 0);
+        }
+    }
+    let Some(exe) = exe else {
+        return Err(format!("Future Cop's game files were not found.\n\n{copy_in}"));
     };
     check(&exe)?;
     let from = exe.parent().unwrap().to_path_buf();
@@ -81,15 +88,79 @@ pub fn game_exe(root: &Path) -> Result<PathBuf, String> {
     Ok(game.join(named(&game, "FCopLAPD.exe").unwrap()))
 }
 
+/// The first CD image (.iso, .bin, .img with an ISO 9660 file system) in `dir` or below.
+fn find_image(dir: &Path, depth: u32) -> Option<PathBuf> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir).ok()?.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    let image = |p: &Path| {
+        let ext = p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase());
+        matches!(ext.as_deref(), Some("iso" | "bin" | "img")) && Iso::open(p).is_some()
+    };
+    let mut files = entries.iter().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).map(|e| e.path());
+    if let Some(p) = files.find(|p| image(p)) {
+        return Some(p);
+    }
+    if depth == 0 {
+        return None;
+    }
+    entries.iter().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).find_map(|e| find_image(&e.path(), depth - 1))
+}
+
+/// Take what the game needs from a CD image into `root`'s layout: the videos, the game folder's
+/// files, FCopLAPD.exe last (an interrupted start does it again). The image itself goes to the
+/// recycle bin with the rest after that.
+fn from_image(path: &Path, root: &Path) -> Result<(), String> {
+    let fail = |e: std::io::Error| format!("Cannot read the CD image {}: {e}", path.display());
+    let mut iso = Iso::open(path).ok_or_else(|| format!("{} is not a CD image", path.display()))?;
+    let top = iso.root();
+    let Some((dir, exe)) = iso.find(&top, "FCopLAPD.exe", 6) else {
+        return Err(format!("{} holds no FCopLAPD.exe: is it the Future Cop: L.A.P.D. CD?", path.display()));
+    };
+    let mut bytes = Vec::new();
+    iso.read(&exe, &mut bytes).map_err(fail)?;
+    let hash = hex(&Sha256::digest(&bytes));
+    if hash != GAME_SHA256 {
+        return Err(unknown(&format!("FCopLAPD.exe on {}", path.display()), &hash));
+    }
+    eprintln!("setup: taking the game from the CD image {}", path.display());
+    let game = root.join(GAME);
+    std::fs::create_dir_all(&game).map_err(fail)?;
+    let video = root.join(VIDEO);
+    if !video.is_dir() {
+        if let Some((v, _)) = iso.find(&top, "intro.mpg", 6) {
+            iso.extract(&v, &video).map_err(fail)?;
+        }
+    }
+    for name in ["febmp.bin", "missions"] {
+        match iso.get(&dir, name) {
+            Some(e) if e.dir => iso.extract(&e, &game.join(name)).map_err(fail)?,
+            Some(e) => {
+                let mut out = std::io::BufWriter::new(std::fs::File::create(game.join(name)).map_err(fail)?);
+                iso.read(&e, &mut out).map_err(fail)?;
+            }
+            None => return Err(format!("{name} is missing next to FCopLAPD.exe on {}.", path.display())),
+        }
+    }
+    std::fs::write(game.join("FCopLAPD.exe"), &bytes).map_err(fail)
+}
+
+fn hex(d: &[u8]) -> String {
+    d.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unknown(what: &str, hash: &str) -> String {
+    format!(
+        "{what} is a version of Future Cop this port does not know (only the PC version with SHA-256 \
+         {GAME_SHA256} is supported).\n\nIts SHA-256: {hash}"
+    )
+}
+
 /// Is this the FCopLAPD.exe we know?
 pub fn check(exe: &Path) -> Result<(), String> {
-    let hash = sha256(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
+    let bytes = std::fs::read(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
+    let hash = hex(&Sha256::digest(&bytes));
     if hash != GAME_SHA256 {
-        return Err(format!(
-            "{} is a version of Future Cop this port does not know (only the PC version with SHA-256 \
-             {GAME_SHA256} is supported).\n\nIts SHA-256: {hash}",
-            exe.display()
-        ));
+        return Err(unknown(&exe.display().to_string(), &hash));
     }
     Ok(())
 }
@@ -167,11 +238,6 @@ fn writable(dir: &Path) {
             }
         }
     }
-}
-
-fn sha256(p: &Path) -> std::io::Result<String> {
-    let d = Sha256::digest(std::fs::read(p)?);
-    Ok(d.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Move a file or folder to the recycle bin.

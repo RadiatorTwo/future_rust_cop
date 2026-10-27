@@ -61,7 +61,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 - `src/setup.rs`: the game files in `game_files` (next to fcop.exe, else in the current
   folder): finds FCopLAPD.exe (6 folders deep), checks its SHA-256, moves FCopLAPD.exe,
   febmp.bin, missions (and registry.txt, controls.txt, save.cfg) into `game_files/FCopLAPD`
-  and the folder with intro.mpg into `game_files/Video`, clears read-only (CD copies), and
+  and the folder with intro.mpg into `game_files/Video` (no FCopLAPD.exe but a CD image, .iso
+  or raw .bin/.img: `src/iso.rs` (ISO 9660, Joliet names when there are) extracts those from it,
+  checked first; `examples/iso.rs` lists an image), clears read-only (CD copies), and
   moves everything else in both folders to the recycle bin, at every start, without asking.
   Errors go to the console and a message box (none with `FCOP_BATCH=1`, for tests).
   The release ships `dist/game_files/README.txt` (kept there).

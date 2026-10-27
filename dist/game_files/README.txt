@@ -1,5 +1,6 @@
 Put your copy of Future Cop: L.A.P.D. (PC version) into this folder:
-the contents of the CD, or your installed game folder, or both.
+the contents of the CD, an image of the CD (.iso or .bin), or your
+installed game folder.
 
 At its next start fcop.exe finds the game, checks that it is the version
 this port knows, and keeps only what the game needs:
@@ -8,4 +9,5 @@ this port knows, and keeps only what the game needs:
               key bindings and saved games)
   Video\      the videos (from the CD; the game runs without them)
 
-Everything else in this folder is moved to the recycle bin.
+From a CD image these are taken out. Everything else in this folder
+(the image too) is moved to the recycle bin.
