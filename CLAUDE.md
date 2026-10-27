@@ -167,9 +167,12 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   Shift+F1... (Ctrl is player 1's special weapon; the game does not see these keys). They
   run in the mission loop's frame wait (hook of 0x406a30), only while playing. `win`: progress
   +0x40 = goal +0x44 of the game record [0x511f80], state 0xb, as the mission script does (the
-  reward video follows); `lose`: progress != goal, state 0xb; `health`/`ammo`: the robot's
-  values at the mission's start (health: actor +0x1c, 16 bits; the robot data's +0x58 is only
-  the HUD's copy, written every frame; ammunition: data +0x84...). New ones go into `CHEATS`.
+  reward video follows); `lose`: progress != goal, state 0xb; `health`: as the game makes a
+  robot whole (0x447700): health (actor +0x1c, 16 bits; maximum +0x1e) of the robot and its
+  upper part (actor +0xdc) set, then the damage look 0x42bab0(actor, old health) for both
+  (else the sparks below a quarter stayed; the robot data's +0x58 is only the HUD's copy);
+  `ammo`: data +0x84... as at the mission's start; `hurt`: the game's damage 0x446720(actor,
+  max / 4). Game functions are called with `guest_call`. New ones go into `CHEATS`.
 - WM_PAINT (`user32.rs`): windows have a dirty flag (InvalidateRect, first ShowWindow, the
   video window hidden with put_Visible 0); GetMessage/PeekMessage return WM_PAINT when the
   queue is empty, until ValidateRect/BeginPaint. The game's window procedure (0x45a340) redraws

@@ -3,7 +3,7 @@
 //! frame wait (0x406a30, every frame, split screen too), between two frames of the game's
 //! logic, and waits there while no mission is played.
 
-use super::{log, mem};
+use super::{guest_call, log, mem};
 use crate::rt::{call_original, Cpu};
 use std::sync::Mutex;
 
@@ -16,9 +16,17 @@ const GAME_STATE: u32 = 0x511fb8;
 const GAME: u32 = 0x511f80;
 /// The players' actors (two pointers); an actor's data at +0xac.
 const PLAYERS: u32 = 0x511fd0;
-/// An actor's health (16 bits; the robot's data keeps a copy at +0x58 for the HUD, written
-/// every frame).
+/// An actor's health and its maximum (16 bits each; the robot's data keeps a copy of the
+/// health at +0x58 for the HUD, written every frame). A robot's upper part (the actor at
+/// +0xdc) has the same health.
 const HEALTH: u32 = 0x1c;
+const HEALTH_MAX: u32 = 0x1e;
+const PART: u32 = 0xdc;
+/// (actor, old health): after a change of health, the actor's damage look (sparks below a
+/// quarter...) follows the new health.
+const DAMAGE_LOOK: u32 = 0x42bab0;
+/// (actor, amount): a robot takes damage (both parts, the damage look, the HUD's shake).
+const DAMAGE: u32 = 0x446720;
 /// In a robot's data: the three weapons' ammunition.
 const AMMO: u32 = 0x84;
 
@@ -27,14 +35,15 @@ pub struct Cheat {
     /// Shift + this function key (1 = F1)
     pub key: u8,
     pub what: &'static str,
-    run: fn(),
+    run: fn(&mut Cpu),
 }
 
 pub const CHEATS: &[Cheat] = &[
     Cheat { name: "win", key: 1, what: "win the mission (as its script does)", run: win },
     Cheat { name: "lose", key: 2, what: "lose the mission", run: lose },
-    Cheat { name: "health", key: 3, what: "health as at the mission's start", run: health },
+    Cheat { name: "health", key: 3, what: "full health", run: health },
     Cheat { name: "ammo", key: 4, what: "ammunition as at the mission's start", run: ammo },
+    Cheat { name: "hurt", key: 5, what: "a quarter of the health lost (the game's damage)", run: hurt },
 ];
 
 struct State {
@@ -102,20 +111,20 @@ pub fn frame_wait(c: &mut Cpu) {
         };
         for k in run {
             log!("cheat: {}", CHEATS[k].name);
-            (CHEATS[k].run)();
+            (CHEATS[k].run)(c);
         }
     }
     call_original(c, FRAME_WAIT);
 }
 
-fn win() {
+fn win(_: &mut Cpu) {
     let m = mem();
     let g = m.rd32(GAME);
     m.wr32(g + 0x40, m.rd32(g + 0x44));
     m.wr32(GAME_STATE, 0xb);
 }
 
-fn lose() {
+fn lose(_: &mut Cpu) {
     let m = mem();
     let g = m.rd32(GAME);
     m.wr32(g + 0x40, m.rd32(g + 0x44).wrapping_sub(1));
@@ -137,10 +146,36 @@ fn restore(fields: std::ops::Range<usize>) {
     }
 }
 
-fn health() {
-    restore(0..1);
+/// As the game makes a robot whole again (0x447700): the robot and its upper part at their
+/// maximum, then their damage look.
+fn health(c: &mut Cpu) {
+    let m = mem();
+    for p in 0..2 {
+        let actor = player(p);
+        if actor == 0 {
+            continue;
+        }
+        let max = m.rd16(actor + HEALTH_MAX);
+        for a in [actor, m.rd32(actor + PART)].into_iter().filter(|&a| a != 0) {
+            let old = m.rd16(a + HEALTH) as i16;
+            m.wr16(a + HEALTH, max);
+            if m.rd32(a + 0x20) & 0xff != 0 && m.rd32(a + 0x24) & 0x40000 == 0 {
+                guest_call(c, DAMAGE_LOOK, &[a, old as i32 as u32]);
+            }
+        }
+        log!("cheat: player {} health {:#x}", p + 1, max);
+    }
 }
 
-fn ammo() {
+fn ammo(_: &mut Cpu) {
     restore(1..4);
+}
+
+fn hurt(c: &mut Cpu) {
+    let actor = player(0);
+    if actor != 0 {
+        let amount = mem().rd16(actor + HEALTH_MAX) as u32 / 4;
+        guest_call(c, DAMAGE, &[actor, amount]);
+        log!("cheat: player 1 health {:#x}", mem().rd16(actor + HEALTH));
+    }
 }

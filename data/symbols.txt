@@ -57,6 +57,9 @@
 0x4456a0  robot_camera            (actor, dt, dt / 2)
 0x445eb0  camera_turn_toward      (angle, target, n) n times angle = (31 angle + target) / 32
 0x4479f0  robot_part_handler      the aiming upper part; msg 3 robot_draw
+0x446720  robot_damage            (actor, amount): health of the robot and its upper part (+0xdc) down, HUD shake (data +0xa2), damage look
+0x42bab0  damage_look             (actor, old health): when the damage level (quarters of the maximum, 0x42bb10) changed, flag 0x4000 in +0x24 (sparks...)
+0x447700  robot_restore?          (inside 0x447610) robot and upper part at maximum health, damage look for both
 0x447ba0  robot_draw              body, part, side weapons and lights (model records in robot data), glow, muzzle flash
 0x448010  muzzle_flash_draw       picks one of 3 looks at random
 0x458ed0  player_weapon_fire      (actor, weapon 0..2) while its button is held
