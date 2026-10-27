@@ -14,6 +14,7 @@ use fcop::image::{Image, load_functions};
 use fcop::jit::compile;
 use fcop::setup;
 use fcop::smc::Smc;
+use fcop::splash;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -52,6 +53,8 @@ fn main() {
 }
 
 fn run() -> u32 {
+    splash::show();
+    splash::status("Looking for the game...");
     let found = match std::env::args().nth(1) {
         Some(p) => setup::check(Path::new(&p)).map(|_| PathBuf::from(p)),
         None => setup::game_exe(&setup::root()),
@@ -59,13 +62,14 @@ fn run() -> u32 {
     let exe = match found {
         Ok(e) => e,
         Err(text) => {
-            setup::tell(&text);
+            splash::fail(&text);
             std::process::exit(2);
         }
     };
     let img = Image::load(&exe).unwrap_or_else(|e| panic!("{}: {e}", exe.display()));
     let ranges = load_functions();
     fcop::platform::dinput::start(); // gamepads are found while we compile
+    splash::status("Compiling the game...");
     let t = Instant::now();
     let mut code = Code::new(&img);
     let prog = Program::build(&mut code, &ranges);

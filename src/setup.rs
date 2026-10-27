@@ -123,6 +123,17 @@ fn from_image(path: &Path, root: &Path) -> Result<(), String> {
     };
     let mut bytes = Vec::new();
     iso.read(&exe, &mut bytes).map_err(fail)?;
+    // what is copied, for the progress shown
+    let video_dir = iso.find(&top, "intro.mpg", 6).map(|(v, _)| v);
+    let mut total = exe.size as u64;
+    for e in [iso.get(&dir, "febmp.bin"), iso.get(&dir, "missions"), video_dir.clone()].into_iter().flatten() {
+        total += if e.dir { iso.size(&e).map_err(fail)? } else { e.size as u64 };
+    }
+    let total = total.max(1);
+    iso.copied = 0;
+    iso.progress = Some(Box::new(move |n| {
+        crate::splash::status(&format!("Copying the game from the CD image... {}%", n * 100 / total))
+    }));
     let hash = hex(&Sha256::digest(&bytes));
     if hash != GAME_SHA256 {
         return Err(unknown(&format!("FCopLAPD.exe on {}", path.display()), &hash));
@@ -132,8 +143,8 @@ fn from_image(path: &Path, root: &Path) -> Result<(), String> {
     std::fs::create_dir_all(&game).map_err(fail)?;
     let video = root.join(VIDEO);
     if !video.is_dir() {
-        if let Some((v, _)) = iso.find(&top, "intro.mpg", 6) {
-            iso.extract(&v, &video).map_err(fail)?;
+        if let Some(v) = &video_dir {
+            iso.extract(v, &video).map_err(fail)?;
         }
     }
     for name in ["febmp.bin", "missions"] {
@@ -267,16 +278,4 @@ fn trash(p: &Path) -> Result<(), String> {
 #[cfg(not(windows))]
 fn trash(p: &Path) -> Result<(), String> {
     Err(format!("{}: no recycle bin here, left as it is", p.display()))
-}
-
-/// Tell the player: on the console, and in a message box (not with FCOP_BATCH set, for tests).
-pub fn tell(text: &str) {
-    eprintln!("{text}");
-    #[cfg(windows)]
-    if std::env::var_os("FCOP_BATCH").is_none() {
-        use windows_sys::Win32::UI::WindowsAndMessaging::*;
-        let w = |s: &str| s.encode_utf16().chain([0]).collect::<Vec<u16>>();
-        let (t, c) = (w(text), w("Future Cop"));
-        unsafe { MessageBoxW(std::ptr::null_mut(), t.as_ptr(), c.as_ptr(), MB_OK | MB_ICONERROR) };
-    }
 }

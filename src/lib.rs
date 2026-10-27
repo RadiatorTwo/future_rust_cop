@@ -13,3 +13,4 @@ pub mod platform;
 pub mod rt;
 pub mod setup;
 pub mod smc;
+pub mod splash;

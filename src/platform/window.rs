@@ -515,6 +515,7 @@ impl App {
         };
         let (win, gl) = Gl::new(el, attrs);
         self.window = Some(win);
+        crate::splash::close();
         self.gl = Some(gl);
         if let Some((px, w, h)) = self.early.take() {
             self.frame(&px, w, h);

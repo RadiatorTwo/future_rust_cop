@@ -15,6 +15,9 @@ pub struct Entry {
 }
 
 pub struct Iso {
+    /// bytes copied so far, and who hears of them after each file
+    pub copied: u64,
+    pub progress: Option<Box<dyn FnMut(u64)>>,
     file: File,
     /// bytes a sector in the file, and where its 2048 data bytes start
     sector_size: u64,
@@ -31,7 +34,15 @@ impl Iso {
     pub fn open(path: &Path) -> Option<Iso> {
         let file = File::open(path).ok()?;
         for (sector_size, data_at) in LAYOUTS {
-            let mut iso = Iso { file: file.try_clone().ok()?, sector_size, data_at, joliet: false, root: Entry::default() };
+            let mut iso = Iso {
+                copied: 0,
+                progress: None,
+                file: file.try_clone().ok()?,
+                sector_size,
+                data_at,
+                joliet: false,
+                root: Entry::default(),
+            };
             if iso.descriptors().is_some() {
                 return Some(iso);
             }
@@ -113,6 +124,25 @@ impl Iso {
 
     /// Copy a file's contents to `out`.
     pub fn read(&mut self, f: &Entry, out: &mut impl Write) -> std::io::Result<()> {
+        self.copy(f, out)?;
+        self.copied += f.size as u64;
+        let copied = self.copied;
+        if let Some(p) = &mut self.progress {
+            p(copied);
+        }
+        Ok(())
+    }
+
+    /// The bytes of the files in a folder and below.
+    pub fn size(&mut self, dir: &Entry) -> std::io::Result<u64> {
+        let mut n = 0;
+        for e in self.list(dir)? {
+            n += if e.dir { self.size(&e)? } else { e.size as u64 };
+        }
+        Ok(n)
+    }
+
+    fn copy(&mut self, f: &Entry, out: &mut impl Write) -> std::io::Result<()> {
         if self.sector_size == 2048 {
             self.file.seek(SeekFrom::Start(f.sector as u64 * 2048))?;
             std::io::copy(&mut (&mut self.file).take(f.size as u64), out)?;
