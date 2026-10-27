@@ -46,6 +46,10 @@ fn output() {
 fn output() {}
 
 fn main() {
+    #[cfg(unix)]
+    if std::env::args().nth(1).as_deref() == Some("--splash") {
+        return splash::child();
+    }
     output();
     // guest calls nest on the host stack like the original's: run on a thread with a large one
     let code = std::thread::Builder::new().stack_size(256 << 20).spawn(run).unwrap().join().unwrap();

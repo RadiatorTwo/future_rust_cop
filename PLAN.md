@@ -121,7 +121,8 @@ Next:
       missions fine. Done: SIGSEGV/SIGBUS report like Windows' (`catch_faults`), files not
       needed deleted (no recycle bin), the window kept opaque (0RGB frames have alpha 0, which
       Wayland blended with the desktop). Sound checked. CI builds and releases it
-      (0.2.0). Open: start window (`splash.rs` is Win32), gamepads/network checked on Linux
+      (0.2.0). Start window: a second process
+      `fcop --splash` (checked in the VM). Open: gamepads/network checked on Linux
 - [ ] Texture quality (options in Preferences through `dialog/extend.rs`). The source has
       no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`
       resource with `PX16` (16-bit PlayStation 1555 pixels), a 256-entry 16-bit palette

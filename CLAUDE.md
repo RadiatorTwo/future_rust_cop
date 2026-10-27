@@ -68,7 +68,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   moves everything else in both folders to the recycle bin (elsewhere deleted), at every start, without asking.
   `src/splash.rs`: a small Win32 window on its own thread shows what happens until the game's
   window opens (looking, copying from a CD image in %, compiling) or why it cannot start (with
-  a Close button); none with `FCOP_BATCH=1` (tests). Closing it while starting quits.
+  a Close button); none with `FCOP_BATCH=1` (tests). Closing it while starting quits. On Linux
+  it is a second process, `fcop --splash` (winit allows one event loop a process), drawn with
+  the dialogs' font through `gl.rs`, its texts sent line by line on its stdin (end of input:
+  it closes; after an error it waits for Close).
   The release ships `dist/game_files/README.txt` (kept there).
 - `src/main.rs`: compiles the EXE and runs the game (a release build has no console window:
   messages go to the console it was started from or a redirection, else to fcop.log next to

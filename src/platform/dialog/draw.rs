@@ -92,7 +92,7 @@ fn over(p: u32, c: u32) -> u32 {
 }
 
 /// A character's glyph, its first column and width (None: blank, e.g. a space).
-fn glyph(ch: char) -> Option<(&'static [u8; 8], i32, i32)> {
+pub fn glyph(ch: char) -> Option<(&'static [u8; 8], i32, i32)> {
     let ch = if ch.is_ascii() { ch } else { '?' };
     let g = GLYPHS.get((ch as u8).checked_sub(FIRST)? as usize)?;
     let cols = g.iter().fold(0u8, |a, &b| a | b);
