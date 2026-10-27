@@ -181,6 +181,18 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (else the sparks below a quarter stayed; the robot data's +0x58 is only the HUD's copy);
   `ammo`: data +0x84... as at the mission's start; `hurt`: the game's damage 0x446720(actor,
   max / 4). Game functions are called with `guest_call`. New ones go into `CHEATS`.
+- Cameras (`camera.rs`): robot_camera 0x4456a0 (hooked) places the player's camera each
+  frame; the camera key counts the robot data's mode +0xa4 (0...6, a table at 0x48c468 /
+  presets at 0x48c2a8) and sets a timer +0xae to 900 (a press = that timer going up). Modes 5
+  and 6 are skipped (back to 0 at once) where their view is blocked, so our mode (close
+  behind; first person only with FCOP_CAMERA=first, it crashed the visibility pass, see
+  PLAN.md) follows a press that brings the game back to 0; leaving it sets it to 0 again. The original runs in mode 0, then the camera ([0x434900](number at
+  data +0xac)) gets our angles via 0x434760(yaw, pitch, roll) and position via
+  0x4346d0(&pos), both on the camera in [0x511f48]. Positions 20.12, y up; yaw (actor
+  +0xb0, 4096 a turn) faces (sin, 0, cos); pitch > 0 looks down. A press counts once in 250
+  ms (it counted twice while held). First person skips robot_draw 0x447ba0 in the robot's
+  own view (a skipping hook pops the return address itself); the HUD's target markers
+  0x435330 end with the laser line (type 0x3a), which `drop_laser` takes off the list end.
 - WM_PAINT (`user32.rs`): windows have a dirty flag (InvalidateRect, first ShowWindow, the
   video window hidden with put_Visible 0); GetMessage/PeekMessage return WM_PAINT when the
   queue is empty, until ValidateRect/BeginPaint. The game's window procedure (0x45a340) redraws

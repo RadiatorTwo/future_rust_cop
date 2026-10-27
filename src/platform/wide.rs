@@ -150,8 +150,10 @@ pub fn object_visible(c: &mut Cpu) {
 /// level (depth key 0).
 pub fn markers(c: &mut Cpu) {
     let m = mem();
+    let player = m.rd32(c.r[ESP] + 4);
     let from = m.rd32(LIST_TOP);
     call_original(c, MARKERS);
+    super::camera::drop_laser(player, from);
     let to = m.rd32(LIST_TOP);
     if k() == 1.0 || to < from || to - from > 0x38 * 256 {
         return;

@@ -100,6 +100,16 @@ Next:
       `Fullscreen`, applies at OK and at start; Alt+Enter saves it too
 - [ ] High resolution: lines (the laser sight) stay 1 pixel wide; the software renderer
       stays at the game's resolution
+- [x] Camera close behind the robot (user, 2026-10-27; `camera.rs`), after the game's
+      seven on the camera key; the laser line to the target is left out, the target markers
+      stay. Looks good (user). `FCOP_CAMERA=behind`
+- [ ] First-person camera: built (`FCOP_CAMERA=first`, robot hidden) but off the camera key:
+      "lots of problems" (user), and the game crashed with it twice (2026-10-27): "guest
+      memory read at 0x376 in the function at 0x452de0" (the terrain visibility pass) and
+      "read at 0x4140a2a in 0x457340 project_points". Probably looking ahead makes the
+      visibility pass (0x452880 ff.) reach cells beyond what it was made for (the map's edge,
+      far distances). Also to look at: the near plane, the draw distance, eye height
+- [ ] Cameras: own names in the HUD (the game shows its "Standard Camera" when ours start)
 - [ ] Linux, later Android
 - [ ] Texture quality (options in Preferences through `dialog/extend.rs`). The source has
       no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`

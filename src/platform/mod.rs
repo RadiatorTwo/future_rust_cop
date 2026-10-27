@@ -7,6 +7,7 @@
 //! puts its result in eax and removes the return address and (stdcall) arguments.
 
 pub mod advapi32;
+pub mod camera;
 pub mod cheats;
 pub mod ddraw;
 pub mod dialog;
@@ -595,6 +596,8 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (fps::RENDER_END, fps::render_end),
     (fps::UNPAUSED, fps::unpaused),
     (cheats::FRAME_WAIT, cheats::frame_wait),
+    (camera::ROBOT_CAMERA, camera::robot_camera),
+    (camera::ROBOT_DRAW, camera::robot_draw),
 ];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread

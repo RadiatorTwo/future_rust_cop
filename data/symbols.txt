@@ -35,7 +35,7 @@
 0x4280a0  model_draw              (record: +0 model, +4 matrix 3x3, +0x28 position; flags; mode)
 0x4280f0  model_visible
 0x4284b0  model_draw_polygons
-0x4274b0  line_draw?              a line between two points relative to the camera (laser sight?)
+0x4274b0  line_draw?              a line between two points relative to the camera (the muzzle flash's; the laser sight is drawn by 0x435330)
 0x429830  model_point?            a point of a model in world space (the lights' glow)
 0x453740  project_terrain_vertex  (hooked: wide.rs)
 0x457340  project_points          object points (hooked: wide.rs)
@@ -55,6 +55,10 @@
 0x442510  robot_physics_hover     adds dt to the turn speed in every step
 0x444100  robot_physics_walk
 0x4456a0  robot_camera            (actor, dt, dt / 2)
+0x434760  camera_set_angles       (yaw, pitch, roll) on the camera in [0x511f48]: matrices +0x58, +0x28 (transposed), angles +0x20 +0x1c +0x18
+0x4346d0  camera_set_position     (&pos) on the camera in [0x511f48]: +0, copy +0x7c, view translation +0x4c
+0x434900  camera_of               (number) a camera from the list at [0x4a1d44] (robot data +0xac holds its number)
+0x445df0  camera_view_free?       (from, to) whether the line between is clear (robot_camera tries other presets)
 0x445eb0  camera_turn_toward      (angle, target, n) n times angle = (31 angle + target) / 32
 0x4479f0  robot_part_handler      the aiming upper part; msg 3 robot_draw
 0x446720  robot_damage            (actor, amount): health of the robot and its upper part (+0xdc) down, HUD shake (data +0xa2), damage look
