@@ -74,7 +74,18 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   1600x1200), `gdi32.rs`, `advapi32.rs` (registry in `registry.txt`), `ddraw.rs`,
   `dsound.rs` (DirectSound and PlaySoundA: voices in guest memory mixed on cpal's audio
   thread, play cursors advance in real time; without a device a timer thread advances them),
-  `misc.rs` (winmm timers, ole32, comctl32; DirectInput reports "absent"), `dshow.rs`
+  `misc.rs` (winmm timers, ole32, comctl32),
+  `dinput.rs` (DirectInput 5, only for joysticks: gamepads through gilrs, at most 2 reported
+  (the game has room for 2); player i uses pad i, one pad is shared. The game reads only lX/lY
+  by their sign (0 inside its 25% dead zone) and buttons 0...16. Our button order makes the
+  game's own joystick profile 1 a modern layout: 0 RT gun, 1 LT heavy, 2 B special, 3 A jump,
+  4 X action, 5 Y change target, 6/7 LB/RB jink, 8 Back map, 9 R3 camera, 10 L3, 11...14 D-pad
+  (free to bind); the left stick moves; Start is the Escape key (pause). The Controller dialog
+  reads every 250 ms and takes only buttons 0...9: presses are kept until the game reads the
+  pad (a short press counts), and joy_capture 0x412c10 is hooked for 10...16. gilrs starts
+  before compiling (Windows finds pads ~75 ms later, the game looks once at its start), is
+  polled at every `window::pump` and when the game reads a pad on the main thread, never dropped. `FCOP_PAD_LOG=1` logs; `pad@A*500`, `pad@LX=-1*1000` in
+  FCOP_INPUT drive a scripted pad (pad 0)), `dshow.rs`
   (DirectShow for the videos, 0x408800: CoCreateInstance gives the filter graph with
   IMediaControl/IMediaEventEx/IVideoWindow/IBasicAudio; RenderFile demuxes the MPEG file, Run
   plays it on a thread: frames to `window::set_video` (a layer over the frame, in the video

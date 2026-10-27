@@ -11,6 +11,7 @@ pub mod camera;
 pub mod cheats;
 pub mod ddraw;
 pub mod dialog;
+pub mod dinput;
 pub mod display;
 pub mod dplay;
 pub mod dshow;
@@ -578,6 +579,7 @@ fn find_import(dll: &str, name: &str) -> Option<&'static Import> {
         "DSOUND.DLL" => &[dsound::IMPORTS],
         "WINMM.DLL" => &[dsound::IMPORTS, misc::IMPORTS],
         "OLE32.DLL" => &[dshow::IMPORTS, misc::IMPORTS],
+        "DINPUT.DLL" => &[dinput::IMPORTS],
         _ => &[misc::IMPORTS],
     };
     tables.iter().flat_map(|t| t.iter()).find(|i| i.0 == name)
@@ -600,6 +602,7 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (camera::ROBOT_CAMERA, camera::robot_camera),
     (camera::ROBOT_DRAW, camera::robot_draw),
     (camera::RENDER_HUD, camera::render_hud),
+    (dinput::JOY_CAPTURE, dinput::joy_capture),
 ];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread

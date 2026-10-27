@@ -32,6 +32,8 @@ pub enum Input {
     Poke(u32, u32),
     /// scripted only: a debug cheat (`cheats::CHEATS`)
     Cheat(usize),
+    /// scripted only: a control of the scripted pad (`dinput::CONTROLS`) and its value
+    Pad(usize, f32),
 }
 
 struct App {
@@ -131,6 +133,11 @@ pub fn pump(wait: Duration) {
         }
         let _ = h.event_loop.pump_app_events(Some(wait), &mut h.app);
         scripted(&mut h.app.input);
+        // a pad's Start is the Escape key (pause)
+        if let Some(down) = super::dinput::poll() {
+            let (vk, scan) = vk_of(KeyCode::Escape).unwrap();
+            h.app.input.push_back(Input::Key { vk, scan, down, repeat: false });
+        }
     });
 }
 
@@ -140,7 +147,8 @@ pub fn pump(wait: Duration) {
 /// Ctrl, Alt, Shift, A-Z, 0-9, Numpad0-9, F1-F12), `close` (the window's close button),
 /// `blur` / `focus` (the window loses or gets the focus), `poke@511fc0=1` (a dword written to
 /// guest memory, hex address and value), a cheat by name (`win`, see `cheats::CHEATS`),
-/// `text@Name` (typed characters, `_` a space).
+/// `text@Name` (typed characters, `_` a space), `pad@A*500` (a control of the scripted pad held,
+/// `dinput::CONTROLS`), `pad@LX=-1*1000` (its stick at a value, -1...1, y up).
 fn scripted(input: &mut VecDeque<Input>) {
     static SCRIPT: Mutex<Option<VecDeque<(u64, Input)>>> = Mutex::new(None);
     let mut s = SCRIPT.lock().unwrap();
@@ -150,6 +158,7 @@ fn scripted(input: &mut VecDeque<Input>) {
         match script.pop_front().unwrap().1 {
             Input::Poke(a, v) => super::mem().wr32(a, v),
             Input::Cheat(k) => super::cheats::request(k),
+            Input::Pad(k, v) => super::dinput::script(k, v),
             i => input.push_back(i),
         }
     }
@@ -169,6 +178,15 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
             for (n, ch) in text.chars().filter(|&c| (c as u32) < 256).enumerate() {
                 ev.push((t + 50 * n as u64, Input::Char(if ch == '_' { b' ' } else { ch as u8 })));
             }
+        } else if let Some(p) = what.strip_prefix("pad@") {
+            let (name, hold) = p.split_once('*').map_or((p, 100), |(n, h)| (n, h.parse().unwrap_or(100)));
+            let (name, v) = name.split_once('=').map_or((name, 1.0), |(n, v)| (n, v.parse().unwrap_or(0.0)));
+            let Some(k) = super::dinput::CONTROLS.iter().position(|&c| c == name) else {
+                eprintln!("FCOP_INPUT: unknown pad control {name} ({})", super::dinput::CONTROLS.join(", "));
+                continue;
+            };
+            ev.push((t, Input::Pad(k, v)));
+            ev.push((t + hold, Input::Pad(k, 0.0)));
         } else if let Some(p) = what.strip_prefix("poke@") {
             let hex = |s: &str| u32::from_str_radix(s, 16).ok();
             if let Some((a, v)) = p.split_once('=').and_then(|(a, v)| Some((hex(a)?, hex(v)?))) {

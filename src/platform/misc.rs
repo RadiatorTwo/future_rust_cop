@@ -1,5 +1,5 @@
 //! The small DLLs: WINMM timers, ole32 (COM start-up; CoCreateInstance is in `dshow.rs`, DirectPlay in `dplay.rs`),
-//! COMCTL32, and for now DirectInput as an absent device.
+//! COMCTL32.
 
 use super::{Import, arg, guest_call, mem};
 use crate::rt::Cpu;
@@ -65,14 +65,6 @@ fn time_kill_event(c: &mut Cpu) -> u32 {
     }
 }
 
-fn no_dinput(c: &mut Cpu) -> u32 {
-    let out = arg(c, 2);
-    if out != 0 {
-        mem().wr32(out, 0);
-    }
-    0x8000_4005 // E_FAIL
-}
-
 fn ret0(_: &mut Cpu) -> u32 {
     0
 }
@@ -87,5 +79,4 @@ pub const IMPORTS: &[Import] = &[
     ("CoInitialize", 1, ret0),
     ("CoUninitialize", 0, ret0),
     ("#17", 0, ret0), // InitCommonControls
-    ("DirectInputCreateA", 4, no_dinput),
 ];
