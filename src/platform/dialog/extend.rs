@@ -24,7 +24,7 @@ const DISPLAY_MODE: u32 = 1021;
 const GAME_FULLSCREEN: u32 = 1012;
 /// Its "Filtering" box in the 3DFX Options group: our "Widescreen" box goes next to it.
 const FILTERING: u32 = 1013;
-/// Its 3DFX Options group: our frame rate and texture filtering go below it.
+/// Its 3DFX Options group: our frame rate, texture filtering and anti-aliasing go below it.
 const OPTIONS_GROUP: u32 = 1125;
 /// Its OK and Cancel buttons: they move down a row for ours.
 const OK: u32 = 1001;
@@ -39,6 +39,8 @@ const FRAME_RATE_LABEL: u32 = FIRST_OURS + 5;
 const FRAME_RATE: u32 = FIRST_OURS + 6;
 const TEXTURES_LABEL: u32 = FIRST_OURS + 7;
 const TEXTURES: u32 = FIRST_OURS + 8;
+const MSAA_LABEL: u32 = FIRST_OURS + 9;
+const MSAA: u32 = FIRST_OURS + 10;
 
 const VISIBLE: u32 = 0x1000_0000;
 const TABSTOP: u32 = 0x0001_0000;
@@ -91,6 +93,13 @@ pub fn adjust(template: u32, t: &mut Template) {
             t.rect[3] += 15;
             t.items.push(Item { class: Class::Static, id: TEXTURES_LABEL, text: "Textures".into(), style: VISIBLE, ex_style: 0, rect: [g[0], y + 2, 52, 8] });
             t.items.push(Item { class: Class::ComboBox, id: TEXTURES, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: [g[0] + 54, y, g[2] - 54, 100] });
+            let y = y + 15;
+            for i in t.items.iter_mut().filter(|i| i.id == OK || i.id == CANCEL) {
+                i.rect[1] += 15;
+            }
+            t.rect[3] += 15;
+            t.items.push(Item { class: Class::Static, id: MSAA_LABEL, text: "Anti-alias".into(), style: VISIBLE, ex_style: 0, rect: [g[0], y + 2, 52, 8] });
+            t.items.push(Item { class: Class::ComboBox, id: MSAA, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: [g[0] + 54, y, g[2] - 54, 100] });
         }
     }
 }
@@ -164,6 +173,22 @@ pub fn init(d: &mut Dialog) {
                 *sel = items.iter().position(|i| i.1 == filter).unwrap_or(0) as i32;
             }
         }
+        // anti-aliasing: Glide only, too
+        let samples = crate::platform::glide::msaa();
+        for id in [MSAA_LABEL, MSAA] {
+            if let Some(c) = d.control(id) {
+                c.visible = glide;
+            }
+        }
+        if let Some(c) = d.control(MSAA) {
+            if let Kind::Combo { items, sel, .. } = &mut c.kind {
+                *items = crate::platform::glide::MSAA_CHOICES
+                    .iter()
+                    .map(|&n| (if n == 0 { "Off".into() } else { format!("MSAA {n}x") }, n))
+                    .collect();
+                *sel = items.iter().position(|i| i.1 == samples).unwrap_or(0) as i32;
+            }
+        }
         let (desktop, modes) = crate::platform::window::display_modes();
         let current = crate::platform::display::chosen().map_or(0, |(w, h)| w << 16 | h);
         if let Some(c) = d.control(RESOLUTION) {
@@ -216,6 +241,13 @@ pub fn ok(d: &mut Dialog) {
         });
         if let Some(f) = filter {
             crate::platform::glide::set_filtering(f);
+        }
+        let samples = d.control(MSAA).filter(|c| c.visible).and_then(|c| match &c.kind {
+            Kind::Combo { items, sel, .. } => items.get(*sel as usize).map(|i| i.1),
+            _ => None,
+        });
+        if let Some(n) = samples {
+            crate::platform::glide::set_msaa(n);
         }
         if let Some(on) = d.control(WIDESCREEN).map(|c| c.check != 0) {
             crate::platform::wide::set_enabled(on);

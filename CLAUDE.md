@@ -89,7 +89,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   thunk per decorated name `_grX@N`; unknown names get `thunk_not_implemented`, logged at
   their first call. Triangles are batched into a texture of the grSstWinOpen size; only
   blending, chroma key, filtering, clamping, clip window and primitive type end a batch (one
-  draw call): the colour/alpha combine units, the constant colour and the texture are vertex
+  draw call; lines become quads a pixel wide per 720 lines of the target, so the laser sight
+  grows with the resolution): the colour/alpha combine units, the constant colour and the texture are vertex
   attributes, and every texture is a layer of one 256x256 texture array (64 layers, by TMU
   address; a download frees the textures it overwrites in TMU memory). Before that the game's
   per-triangle state changes made ~240 draw calls a frame and capped 300 fps at ~200. Frames are
@@ -102,6 +103,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   attribute) at most at the level where that spans 4 texels (pages are atlases). REG_DWORD
   `TextureFilter` 0 original, 1 trilinear, 2...16 anisotropic (default 16; "Textures" in
   Preferences, below Frame Rate; OK/Cancel moved down a row); `FCOP_FILTER=<n>` overrides.
+  MSAA: drawn into a multisampled renderbuffer (`Glide::ms`, REG_DWORD `Msaa` 0/2/4/8,
+  default 4, "Anti-alias" in Preferences below Textures; `FCOP_MSAA=<n>`), resolved into the
+  shown texture at grBufferSwap.
   Registry `Group` = `3Dfx` (default) or `Software`.
   Frames are drawn as tall as the window (high resolution; the Glide screen, 1280x1024 for
   the game's 1280x960, only gives the coordinates), 4:3 or as wide as the window's aspect;
@@ -161,7 +165,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `_` a space); cheat names run a cheat, below),
   `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_PROF=1` (time in
   each import, every 2 s), `FCOP_COUNT=<file>` (calls per function and second: "second
-  address calls [name]"; counting is compiled in only then), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_WINDOW=1920x1080`
+  address calls [name]"; counting is compiled in only then), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_NO_VIDEO=1` (videos end at
+  once, as played to their end: `FCOP_INPUT="8000:click@484,303"` alone starts the first
+  mission), `FCOP_WINDOW=1920x1080`
   (the window's starting size in pixels; Windows limits it to the screen). An access
   violation in guest memory is reported with the recompiled function it happened in.
 - Key bindings: `controls.txt` in the game folder (14 lines per player: forward, back,

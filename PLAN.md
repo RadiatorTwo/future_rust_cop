@@ -75,8 +75,7 @@ Next:
 - [ ] Later: a native Glide backend (a 64-bit glide2x.dll such as dgVoodoo2's), behind the
       same Glide layer
 - [x] Videos (`dshow.rs`, `src/mpeg/`): EA logo, intro, briefing play with sound, Space skips;
-      all 27 files decode like ffmpeg. Still to check by ear and eye: HELP (cwrules), credits,
-      the fly-overs (po_*), multiplayer briefing
+      all 27 files decode like ffmpeg; all videos checked by the user (2026-10-27)
 - [x] Performance at high frame rates: Glide batches across combine/constant/texture
       changes (texture array), the frame wait sleeps; 300 fps hold in the first mission
 - [x] High frame rates by interpolated pictures (`fps.rs`): logic at 8 ticks, the render
@@ -84,8 +83,7 @@ Next:
       the per-system fixes (weapon, robot physics, hover, camera turn, effects) and the
       frame limit fields are gone. Measured 144 fps, same kills as the original, camera
       moves evenly. Not yet: split screen (0x4076d0), software renderer
-- [ ] Frame rate: checked by the user by eye (smooth? hits, hover, sparks as in the
-      original?)
+- [x] Frame rate: checked by the user by eye, all smooth (2026-10-27)
 
 ### 2. The user's goals after that
 
@@ -98,8 +96,12 @@ Next:
       fullscreen scales it to the display
 - [x] "Fullscreen" box in Preferences (Glide; the game hides its own): REG_DWORD
       `Fullscreen`, applies at OK and at start; Alt+Enter saves it too
-- [ ] High resolution: lines (the laser sight) stay 1 pixel wide; the software renderer
-      stays at the game's resolution
+- [x] High resolution: lines (the laser sight) grow with the resolution (Glide: quads, a
+      pixel per 720 lines, 2026-10-27)
+- [ ] The software renderer stays at the game's resolution
+- [x] MSAA (Glide, 2026-10-27): drawn into a multisampled framebuffer, resolved at
+      grBufferSwap; "Anti-alias" in Preferences (Off, 2x, 4x, 8x; REG_DWORD `Msaa`,
+      default 4x), `FCOP_MSAA=<n>`. No measurable cost at 8x (~500-650 fps)
 - [x] Camera close behind the robot (user, 2026-10-27; `camera.rs`), after the game's
       seven on the camera key; the laser line to the target is left out, the target markers
       stay. Looks good (user). `FCOP_CAMERA=behind`
@@ -118,9 +120,12 @@ Next:
   - [x] Mipmaps and anisotropic filtering (2026-10-27): textures premultiplied by their
         coverage, filtered by the GPU (trilinear, anisotropic up to 16x); a primitive samples
         inside its texture rectangle, at most at the level where that spans 4 texels (pages
-        are atlases). "Textures" in Preferences (REG_DWORD `TextureFilter`). To be checked
-        by the user in motion
-  - [ ] Debanding: a little noise when the 5-bit gradients are widened to 8 bits
+        are atlases). "Textures" in Preferences (REG_DWORD `TextureFilter`). Checked by the
+        user in motion (2026-10-27)
+  - [x] Debanding: tried and dropped (2026-10-27). A flash3kyuu-style filter (4 samples a
+        few texels away, their mean where all are within ~1 step) wiped out the textures'
+        fine 1-step grain (grass, ramps) and found no real bands: the game's textures are
+        grainy by design, not smooth gradients. Only worth another look where banding is seen
   - [ ] An upscaling filter such as xBRZ (sharper edges than bilinear; a matter of taste)
 - [ ] Remastered assets (later): replace textures recognised by their content. Replacements
       must not be limited to the game's formats: full colour (8 bits per channel and more,

@@ -81,6 +81,21 @@ fn trace() -> bool {
     *T.get_or_init(|| std::env::var_os("FCOP_VIDEO_LOG").is_some())
 }
 
+/// `FCOP_NO_VIDEO=1`: videos end at once, as if played to their end (for debugging).
+fn no_video() -> bool {
+    static N: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *N.get_or_init(|| std::env::var("FCOP_NO_VIDEO").is_ok_and(|v| v != "0"))
+}
+
+/// The end of a video: EC_COMPLETE queued, the notify message posted.
+fn complete(g: &mut Graph) {
+    g.events.push_back((EC_COMPLETE, 0, 0));
+    let (hwnd, msg, lp) = g.notify;
+    if msg != 0 {
+        super::user32::post(hwnd, msg, 0, lp);
+    }
+}
+
 fn read_guid(p: u32) -> [u8; 16] {
     mem().slice(p, 16).try_into().unwrap()
 }
@@ -240,6 +255,10 @@ fn run(_: &mut Cpu) -> u32 {
         return OK;
     }
     let Some(movie) = g.movie.clone() else { return E_FAIL };
+    if no_video() {
+        complete(g);
+        return OK;
+    }
     let stop = Arc::new(AtomicBool::new(false));
     let paused = Arc::new(AtomicBool::new(false));
     let (s, p, volume) = (stop.clone(), paused.clone(), g.volume);
@@ -571,11 +590,7 @@ fn play(movie: &mpeg::Streams, stop: &AtomicBool, paused: &AtomicBool, volume: i
     if !stop.load(Ordering::Relaxed) {
         let mut g = graph();
         if let Some(g) = g.as_mut() {
-            g.events.push_back((EC_COMPLETE, 0, 0));
-            let (hwnd, msg, lp) = g.notify;
-            if msg != 0 {
-                super::user32::post(hwnd, msg, 0, lp);
-            }
+            complete(g);
         }
     }
 }

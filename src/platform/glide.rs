@@ -87,9 +87,29 @@ pub fn filtering() -> u32 {
     v.filter(|v| FILTER_CHOICES.contains(v)).unwrap_or(16)
 }
 
+/// Multisample anti-aliasing: samples per pixel (0 off).
+pub const MSAA_CHOICES: &[u32] = &[0, 2, 4, 8];
+static MSAA: AtomicU32 = AtomicU32::new(4);
+
+/// The saved choice (REG_DWORD `Msaa`, default 4x); `FCOP_MSAA=<n>` overrides it.
+pub fn msaa() -> u32 {
+    if let Some(n) = std::env::var("FCOP_MSAA").ok().and_then(|v| v.parse().ok()) {
+        return n;
+    }
+    let v = super::advapi32::value("", "Msaa").and_then(|(_, d)| Some(u32::from_le_bytes(d.get(..4)?.try_into().ok()?)));
+    v.filter(|v| MSAA_CHOICES.contains(v)).unwrap_or(4)
+}
+
+/// Preferences' OK: saved, and used from the next frame on.
+pub fn set_msaa(n: u32) {
+    super::advapi32::set_value("", "Msaa", 4, &n.to_le_bytes());
+    MSAA.store(n, Ordering::Relaxed);
+}
+
 /// At start, after the EXE is loaded.
 pub fn init() {
     FILTER.store(filtering(), Ordering::Relaxed);
+    MSAA.store(msaa(), Ordering::Relaxed);
 }
 
 /// Preferences' OK: saved, and used from the next batch on.
@@ -106,8 +126,13 @@ struct Glide {
     /// the vertices' coordinate space
     space: (u32, u32),
     view: View,
+    /// the texture shown, and its framebuffer
     fbo: glow::Framebuffer,
     color: glow::Texture,
+    /// with MSAA: the multisampled framebuffer drawn into, its renderbuffer and samples;
+    /// resolved into `color` at grBufferSwap
+    ms: Option<(glow::Framebuffer, glow::Renderbuffer, u32)>,
+    ms_max: u32,
     prog: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
@@ -467,6 +492,8 @@ impl Glide {
                 view: View::Full,
                 fbo,
                 color,
+                ms: None,
+                ms_max: gl.get_parameter_i32(glow::MAX_SAMPLES).max(0) as u32,
                 prog,
                 vao,
                 vbo,
@@ -531,6 +558,8 @@ impl Glide {
         let h = h.clamp(240, 4320);
         let w = (h as f32 * a).round() as u32;
         if (w, h) == self.target {
+            // the samples may have changed in Preferences
+            self.multisample(gl, false);
             return;
         }
         self.target = (w, h);
@@ -542,6 +571,55 @@ impl Glide {
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
         }
+        self.multisample(gl, true);
+    }
+
+    /// The multisampled framebuffer for the chosen samples and the target's size (`resized`:
+    /// the target changed).
+    fn multisample(&mut self, gl: &glow::Context, resized: bool) {
+        let samples = MSAA.load(Ordering::Relaxed).min(self.ms_max);
+        let samples = if samples < 2 { 0 } else { samples };
+        if !resized && self.ms.map_or(0, |m| m.2) == samples {
+            return;
+        }
+        unsafe {
+            if let Some((fbo, rb, _)) = self.ms.take() {
+                gl.delete_framebuffer(fbo);
+                gl.delete_renderbuffer(rb);
+            }
+            if samples == 0 {
+                return;
+            }
+            let rb = gl.create_renderbuffer().expect("GL renderbuffer");
+            gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
+            gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, samples as i32, glow::RGBA8, self.target.0 as i32, self.target.1 as i32);
+            let fbo = gl.create_framebuffer().expect("GL framebuffer");
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rb));
+            gl.disable(glow::SCISSOR_TEST);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+            self.ms = Some((fbo, rb, samples));
+        }
+    }
+
+    /// The framebuffer drawn into.
+    fn draw_fbo(&self) -> glow::Framebuffer {
+        self.ms.map_or(self.fbo, |m| m.0)
+    }
+
+    /// The multisampled picture into the texture shown.
+    fn resolve(&self, gl: &glow::Context) {
+        if let Some((fbo, _, _)) = self.ms {
+            let (w, h) = (self.target.0 as i32, self.target.1 as i32);
+            unsafe {
+                gl.disable(glow::SCISSOR_TEST);
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(fbo));
+                gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(self.fbo));
+                gl.blit_framebuffer(0, 0, w, h, 0, 0, w, h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            }
+        }
     }
 
     /// Draw what is batched with the current state.
@@ -551,7 +629,7 @@ impl Glide {
         }
         let s = self.state;
         unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.draw_fbo()));
             self.scissor(gl, s.clip);
             gl.use_program(Some(self.prog));
             gl.bind_vertex_array(Some(self.vao));
@@ -673,13 +751,45 @@ impl Glide {
             b = [b[0].min(s), b[1].min(t), b[2].max(s), b[3].max(t)];
         }
         let b = b.map(f32::to_bits);
-        for &v in verts {
+        let xy = |v: u32| (f32::from_bits(m.rd32(v)), f32::from_bits(m.rd32(v + 4)));
+        // a line: a quad as wide as the game's line at its resolution
+        let quad = if let [v0, v1] = *verts { Some(self.line_offsets(xy(v0), xy(v1))) } else { None };
+        let mut put = |v: u32, (x, y): (f32, f32)| {
             let (s, t) = st(v);
-            self.batch.extend([m.rd32(v), m.rd32(v + 4), m.rd32(v + 0xc), m.rd32(v + 0x10), m.rd32(v + 0x14), m.rd32(v + 0x1c), s.to_bits(), t.to_bits()]);
+            self.batch.extend([x.to_bits(), y.to_bits(), m.rd32(v + 0xc), m.rd32(v + 0x10), m.rd32(v + 0x14), m.rd32(v + 0x1c), s.to_bits(), t.to_bits()]);
             self.batch.extend(konst);
             self.batch.extend(mode);
             self.batch.extend(b);
+        };
+        if let (Some([n0, n1, n2, n3]), &[v0, v1]) = (quad, verts) {
+            put(v0, n0);
+            put(v0, n1);
+            put(v1, n2);
+            put(v1, n2);
+            put(v0, n1);
+            put(v1, n3);
+        } else {
+            for &v in verts {
+                put(v, xy(v));
+            }
         }
+    }
+
+    /// The corners of a line from `a` to `b` (in the vertices' space) drawn as a quad: a pixel
+    /// wide at 720 lines (the laser sight: 1 pixel stayed hair-thin at high resolution), at
+    /// least one; past the ends by half that, as GL draws lines.
+    fn line_offsets(&self, a: (f32, f32), b: (f32, f32)) -> [(f32, f32); 4] {
+        let ([_, _, vw, vh], _) = self.view_rect();
+        // target pixels per unit of the vertices' space
+        let (kx, ky) = (vw / self.space.0 as f32, vh / self.space.1 as f32);
+        let width = (self.target.1 as f32 / 720.0).round().max(1.0);
+        let (dx, dy) = ((b.0 - a.0) * kx, (b.1 - a.1) * ky);
+        let len = (dx * dx + dy * dy).sqrt();
+        let (ux, uy) = if len > 0.0 { (dx / len, dy / len) } else { (1.0, 0.0) };
+        let h = width / 2.0;
+        // along (u) and across (n = u turned) in pixels, back to the space's units
+        let p = |o: (f32, f32), along: f32, across: f32| (o.0 + (ux * along - uy * across) / kx, o.1 + (uy * along + ux * across) / ky);
+        [p(a, -h, -h), p(a, -h, h), p(b, h, -h), p(b, h, h)]
     }
 
     /// Texels into the texture at TMU address `addr` (rows `rows` of its top level, or all).
@@ -805,6 +915,10 @@ fn sst_win_open(c: &mut Cpu) -> u32 {
 
 fn sst_win_close(_: &mut Cpu) -> u32 {
     with(|g, gl| unsafe {
+        if let Some((fbo, rb, _)) = g.ms.take() {
+            gl.delete_framebuffer(fbo);
+            gl.delete_renderbuffer(rb);
+        }
         gl.delete_framebuffer(g.fbo);
         gl.delete_texture(g.color);
         gl.delete_texture(g.array);
@@ -821,7 +935,7 @@ fn buffer_clear(c: &mut Cpu) -> u32 {
     with(|g, gl| {
         g.flush(gl);
         unsafe {
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(g.fbo));
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(g.draw_fbo()));
             g.scissor(gl, g.state.clip);
             let ch = |sh: u32| (color >> sh & 0xff) as f32 / 255.0;
             gl.clear_color(ch(16), ch(8), ch(0), 1.0);
@@ -835,6 +949,7 @@ fn buffer_clear(c: &mut Cpu) -> u32 {
 fn buffer_swap(_: &mut Cpu) -> u32 {
     let shown = with(|g, gl| {
         g.flush(gl);
+        g.resolve(gl);
         (g.color, g.target, g.gamma)
     });
     if let Some((tex, (w, h), gamma)) = shown {
@@ -877,7 +992,7 @@ fn draw_triangle(c: &mut Cpu) -> u32 {
 
 fn draw_line(c: &mut Cpu) -> u32 {
     let v = [arg(c, 0), arg(c, 1)];
-    with(|g, gl| g.add(gl, glow::LINES, &v));
+    with(|g, gl| g.add(gl, glow::TRIANGLES, &v));
     0
 }
 
