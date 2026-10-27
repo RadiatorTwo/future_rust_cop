@@ -10,13 +10,16 @@ releases: you need your own copy of the game.
 ## Playing (Windows)
 
 1. Download `fcop-...-windows-x64.zip` from the [releases] and unpack it.
-2. Put `fcop.exe` into your game folder (the one with `FCopLAPD.exe` and its `missions`
-   folder), or next to it. The videos are read from a `Video` folder in the game folder or in
-   the folder above it (as on the CD).
-3. Start `fcop.exe`. Compiling the game takes a few seconds; then it starts as usual.
+2. Copy your game into its `game_files` folder: the contents of the CD, or your installed
+   game folder, or both.
+3. Start `fcop.exe`. It finds the game, checks the version, and keeps only what the game
+   needs (`game_files\FCopLAPD`: FCopLAPD.exe, febmp.bin, missions; `game_files\Video`: the
+   videos); everything else in `game_files` goes to the recycle bin. Compiling the game takes
+   a few seconds; then it starts as usual.
 
-Only the PC version's `FCopLAPD.exe` (SHA-256 `2dcdd1e7...7e5e`) is supported. Settings go
-to `registry.txt` and key bindings to `controls.txt` in the game folder.
+Only the PC version's `FCopLAPD.exe` (SHA-256 `2dcdd1e7...7e5e`) is supported; with any other,
+or without one, fcop.exe says so. Settings go to `registry.txt`, key bindings to
+`controls.txt` and saves to `save.cfg` in `game_files\FCopLAPD`.
 
 What is new compared to the original:
 - High resolution and widescreen (Hor+), fullscreen (Alt+Enter), anti-aliasing,
@@ -36,7 +39,8 @@ cargo build --release
 cargo run --release -- path/to/FCopLAPD.exe
 ```
 
-Without a path it uses the first FCopLAPD.exe under `game_files/`. `cargo test --release`
+Without a path it sets up and uses `game_files` (next to fcop.exe, else in the current
+folder) as above. `cargo test --release`
 needs no game files. How it works and what is open: `CLAUDE.md` and `PLAN.md`.
 
 [iced-x86]: https://github.com/icedland/iced

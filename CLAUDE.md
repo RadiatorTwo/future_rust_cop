@@ -58,8 +58,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (`to_rgb`), `mp2.rs` Layer II audio; `tables.rs` holds pl_mpeg's tables (VLC trees as
   (next index, value) pairs). Matches ffmpeg (frames within IDCT rounding, sound within float
   noise); `examples/movie.rs <file.mpg> [dir]` decodes one and writes raw frames/samples.
-- `src/main.rs`: compiles the EXE and runs the game (`fcop [exe]`; default: the first
-  FCopLAPD.exe under `game_files/`, else in or below fcop.exe's folder, a copy of the old project's game folder without its
+- `src/setup.rs`: the game files in `game_files` (next to fcop.exe, else in the current
+  folder): finds FCopLAPD.exe (6 folders deep), checks its SHA-256, moves FCopLAPD.exe,
+  febmp.bin, missions (and registry.txt, controls.txt, save.cfg) into `game_files/FCopLAPD`
+  and the folder with intro.mpg into `game_files/Video`, clears read-only (CD copies), and
+  moves everything else in both folders to the recycle bin, at every start, without asking.
+  Errors go to the console and a message box (none with `FCOP_BATCH=1`, for tests).
+  The release ships `dist/game_files/README.txt` (kept there).
+- `src/main.rs`: compiles the EXE and runs the game (`fcop [exe]`, the EXE checked too;
+  default: `setup`; here `game_files/`, a copy of the old project's game folder without its
   registry.txt/controls.txt). `examples/crt.rs` tests strchr/strncpy/strstr/strcspn/
   strncmp/strpbrk (0x4780d0 ...), __aulldiv/__aullrem and _ftol (0x478090) against Rust.
 - `src/platform/`: the Windows/DirectX layer. `mod.rs`: guest memory layout (TIB 0x10000,
@@ -307,7 +314,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 
 `.github/workflows/build.yml`: on windows-latest, tests and builds every push to main;
 a tag `v*` also makes a GitHub release with `fcop-<tag>-windows-x64.zip` (fcop.exe, README,
-LICENSE). Version in Cargo.toml.
+LICENSE, `game_files/README.txt`). Version in Cargo.toml.
 
 ## Known facts about the game (from the earlier project)
 

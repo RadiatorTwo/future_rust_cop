@@ -10,4 +10,5 @@ pub mod lift;
 pub mod mpeg;
 pub mod platform;
 pub mod rt;
+pub mod setup;
 pub mod smc;
