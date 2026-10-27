@@ -143,11 +143,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),
-  `FCOP_SHOT=file.png` (the frame shown, every half second), `FCOP_INPUT="6000:click@484,303
+  `FCOP_SHOT=file.png` (the frame shown, every half second; `{t}` in the name: ms since start,
+  every picture kept), `FCOP_INPUT="6000:click@484,303
   14000:Up*5000"` (scripted input, ms after start; that one starts the first mission and
   walks forward with the user's bindings in `controls.txt`: player 1 on the arrow keys, the
   keypad belongs to player 2; times count from the game's start, after the ~5.5 s compile:
-  give `timeout` enough on top), `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_PROF=1` (time in
+  give `timeout` enough on top; the intro videos now come first: "3000:Space 5000:Space
+  8000:Space 11000:click@484,303 20000:Space" skips them and the briefing and starts the
+  mission; `poke@addr=value` writes a dword (hex); cheat names run a cheat, below),
+  `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_PROF=1` (time in
   each import, every 2 s), `FCOP_COUNT=<file>` (calls per function and second: "second
   address calls [name]"; counting is compiled in only then), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_WINDOW=1920x1080`
   (the window's starting size in pixels; Windows limits it to the screen). An access
@@ -159,6 +163,18 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (player 1) / 0x48b120 (player 2): 3 profiles of 0x78 bytes, (device, key) pairs, device 0
   keyboard with virtual keys, 1 joystick. Both keyboard profiles are the keypad;
   `user32::single_player_keys` rewrites player 1's at start (arrows, A/D jink).
+- Cheats (`cheats.rs`): by name in FCOP_INPUT ("30000:win") and, with `FCOP_CHEATS=1`, on
+  Shift+F1... (Ctrl is player 1's special weapon; the game does not see these keys). They
+  run in the mission loop's frame wait (hook of 0x406a30), only while playing. `win`: progress
+  +0x40 = goal +0x44 of the game record [0x511f80], state 0xb, as the mission script does (the
+  reward video follows); `lose`: progress != goal, state 0xb; `health`/`ammo`: the robot's
+  values at the mission's start (data +0x58, +0x84...). New ones go into `CHEATS`.
+- WM_PAINT (`user32.rs`): windows have a dirty flag (InvalidateRect, first ShowWindow, the
+  video window hidden with put_Visible 0); GetMessage/PeekMessage return WM_PAINT when the
+  queue is empty, until ValidateRect/BeginPaint. The game's window procedure (0x45a340) redraws
+  the whole menu (0x40b250) at WM_PAINT; that is how the menu comes back after a video that
+  played to its end (a skipped one redraws it itself; without WM_PAINT the mission's loading
+  bar stayed on the menu after a won level).
 - Focus: the game pauses itself on WM_ACTIVATEAPP 0; we never send it, so it keeps running
   in the background, and keys held when the focus goes are released (WM_KEYUP).
 - Spin-waits: `rt::POLL` is nonzero while a guest thread waits for its turn; generated code

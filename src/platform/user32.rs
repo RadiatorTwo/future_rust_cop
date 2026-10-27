@@ -20,6 +20,7 @@ pub const WM_SIZE: u32 = 0x05;
 pub const WM_ACTIVATE: u32 = 0x06;
 pub const WM_SETFOCUS: u32 = 0x07;
 pub const WM_KILLFOCUS: u32 = 0x08;
+pub const WM_PAINT: u32 = 0x0f;
 pub const WM_CLOSE: u32 = 0x10;
 pub const WM_QUIT: u32 = 0x12;
 pub const WM_ACTIVATEAPP: u32 = 0x1c;
@@ -49,6 +50,9 @@ struct Win {
     user: u32,
     id: u32,
     shown: bool,
+    /// needs painting (Windows' update region, whole or nothing): WM_PAINT comes when the
+    /// queue is empty, until ValidateRect or BeginPaint
+    dirty: bool,
 }
 
 struct Timer {
@@ -186,7 +190,7 @@ fn poll(wait: Duration) {
                     }
                 }
             }
-            Input::Focus(true) => {}
+            Input::Focus(true) | Input::Poke(..) | Input::Cheat(_) => {}
         }
     }
     let now = super::kernel32::ms_since_start();
@@ -250,8 +254,28 @@ pub fn dispatch(c: &mut Cpu, m: &Msg) -> u32 {
 
 fn take_msg(min: u32, max: u32, remove: bool) -> Option<Msg> {
     let mut s = st();
-    let k = s.queue.iter().position(|m| min == 0 && max == 0 || (min..=max).contains(&m.msg))?;
+    let wanted = |msg| min == 0 && max == 0 || (min..=max).contains(&msg);
+    let Some(k) = s.queue.iter().position(|m| wanted(m.msg)) else {
+        // WM_PAINT is not queued: it comes when nothing else is waiting
+        let h = s.wins.iter().find(|(_, w)| w.dirty).map(|(&h, _)| h).filter(|_| wanted(WM_PAINT))?;
+        return Some(Msg { hwnd: h, msg: WM_PAINT, wp: 0, lp: 0 });
+    };
     if remove { s.queue.remove(k) } else { s.queue.get(k).copied() }
+}
+
+/// InvalidateRect: the window (0: every window) needs painting.
+pub fn invalidate(hwnd: u32) {
+    for (&h, w) in st().wins.iter_mut() {
+        if hwnd == 0 || h == hwnd {
+            w.dirty = true;
+        }
+    }
+}
+
+fn validate(hwnd: u32) {
+    if let Some(w) = st().wins.get_mut(&hwnd) {
+        w.dirty = false;
+    }
 }
 
 fn write_msg(p: u32, m: &Msg) {
@@ -331,6 +355,11 @@ fn def_window_proc_for(c: &mut Cpu, hwnd: u32, msg: u32, wp: u32, lp: u32) -> u3
             put_cstr(lp, &t, wp)
         }
         0x0e => st().wins.get(&hwnd).map_or(0, |w| w.title.len() as u32),
+        WM_PAINT => {
+            // BeginPaint and EndPaint
+            validate(hwnd);
+            0
+        }
         0x14 | 0x20 => 1, // WM_ERASEBKGND, WM_SETCURSOR
         0x84 => 1,        // WM_NCHITTEST: client
         _ => {
@@ -367,7 +396,7 @@ fn create_window_ex(c: &mut Cpu) -> u32 {
         let hwnd = s.next;
         s.wins.insert(
             hwnd,
-            Win { proc_, style: a[3], exstyle: a[0], rect: [x, y, x + w, y + h], title: title.clone(), user: 0, id: a[9], shown: false },
+            Win { proc_, style: a[3], exstyle: a[0], rect: [x, y, x + w, y + h], title: title.clone(), user: 0, id: a[9], shown: false, dirty: false },
         );
         let first = s.main == 0 && a[8] == 0;
         if first {
@@ -400,6 +429,7 @@ fn show(c: &mut Cpu, hwnd: u32) {
     let first = match st().wins.get_mut(&hwnd) {
         Some(w) if !w.shown => {
             w.shown = true;
+            w.dirty = true;
             true
         }
         _ => false,
@@ -640,6 +670,7 @@ fn set_rect(c: &mut Cpu) -> u32 {
 
 fn begin_paint(c: &mut Cpu) -> u32 {
     let (h, ps) = (arg(c, 0), arg(c, 1));
+    validate(h);
     mem().slice(ps, 64).fill(0);
     mem().wr32(ps, super::gdi32::SCREEN_DC);
     let r = st().wins.get(&h).map_or([0; 4], |w| w.rect);
@@ -701,6 +732,22 @@ fn ret0(_: &mut Cpu) -> u32 {
 fn ret1(_: &mut Cpu) -> u32 {
     1
 }
+fn invalidate_rect(c: &mut Cpu) -> u32 {
+    invalidate(arg(c, 0));
+    1
+}
+fn validate_rect(c: &mut Cpu) -> u32 {
+    validate(arg(c, 0));
+    1
+}
+/// UpdateWindow: WM_PAINT at once if the window needs painting.
+fn update_window(c: &mut Cpu) -> u32 {
+    let h = arg(c, 0);
+    if st().wins.get(&h).is_some_and(|w| w.dirty) {
+        send(c, h, WM_PAINT, 0, 0);
+    }
+    1
+}
 fn first_arg(c: &mut Cpu) -> u32 {
     arg(c, 0)
 }
@@ -735,7 +782,7 @@ pub const IMPORTS: &[Import] = &[
     ("CreateWindowExA", 12, create_window_ex),
     ("DestroyWindow", 1, destroy_window),
     ("ShowWindow", 2, show_window),
-    ("UpdateWindow", 1, ret1),
+    ("UpdateWindow", 1, update_window),
     ("SetWindowPos", 7, set_window_pos),
     ("GetWindowRect", 2, get_window_rect),
     ("GetClientRect", 2, get_client_rect),
@@ -764,8 +811,8 @@ pub const IMPORTS: &[Import] = &[
     ("PostQuitMessage", 1, post_quit_message),
     ("SetTimer", 4, set_timer),
     ("KillTimer", 2, kill_timer),
-    ("ValidateRect", 2, ret1),
-    ("InvalidateRect", 3, ret1),
+    ("ValidateRect", 2, validate_rect),
+    ("InvalidateRect", 3, invalidate_rect),
     ("GetDC", 1, get_dc),
     ("ReleaseDC", 2, ret1),
     ("BeginPaint", 2, begin_paint),

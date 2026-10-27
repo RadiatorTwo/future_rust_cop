@@ -28,6 +28,10 @@ pub enum Input {
     Wheel(i32),
     Close,
     Focus(bool),
+    /// scripted only: a dword written to guest memory (address, value)
+    Poke(u32, u32),
+    /// scripted only: a debug cheat (`cheats::CHEATS`)
+    Cheat(usize),
 }
 
 struct App {
@@ -42,6 +46,7 @@ struct App {
     cursor: PhysicalPosition<f64>,
     /// an Alt key is held (Alt+Enter toggles fullscreen)
     alt: bool,
+    shift: bool,
 }
 
 struct Host {
@@ -88,6 +93,7 @@ fn with_host<R>(f: impl FnOnce(&mut Host) -> R) -> R {
                     overlay_changed: false,
                     cursor: PhysicalPosition::new(0.0, 0.0),
                     alt: false,
+                    shift: false,
                 },
             }
         });
@@ -132,14 +138,19 @@ pub fn pump(wait: Duration) {
 /// after start) for tests. `click@x,y` / `rclick@x,y` (frame pixels, after a move there),
 /// `move@x,y`, a key held 100 ms or `*ms` (Enter, Escape, Space, Tab, Up, Down, Left, Right,
 /// Ctrl, Alt, Shift, A-Z, 0-9, Numpad0-9, F1-F12), `close` (the window's close button),
-/// `blur` / `focus` (the window loses or gets the focus).
+/// `blur` / `focus` (the window loses or gets the focus), `poke@511fc0=1` (a dword written to
+/// guest memory, hex address and value), a cheat by name (`win`, see `cheats::CHEATS`).
 fn scripted(input: &mut VecDeque<Input>) {
     static SCRIPT: Mutex<Option<VecDeque<(u64, Input)>>> = Mutex::new(None);
     let mut s = SCRIPT.lock().unwrap();
     let script = s.get_or_insert_with(|| std::env::var("FCOP_INPUT").map(|v| parse_script(&v)).unwrap_or_default());
     let now = super::kernel32::start_time().elapsed().as_millis() as u64;
     while script.front().is_some_and(|e| e.0 <= now) {
-        input.push_back(script.pop_front().unwrap().1);
+        match script.pop_front().unwrap().1 {
+            Input::Poke(a, v) => super::mem().wr32(a, v),
+            Input::Cheat(k) => super::cheats::request(k),
+            i => input.push_back(i),
+        }
     }
 }
 
@@ -152,7 +163,12 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
             let (x, y) = s.split_once(',')?;
             Some((x.parse().ok()?, y.parse().ok()?))
         };
-        if let Some((b, xy)) = what.split_once('@') {
+        if let Some(p) = what.strip_prefix("poke@") {
+            let hex = |s: &str| u32::from_str_radix(s, 16).ok();
+            if let Some((a, v)) = p.split_once('=').and_then(|(a, v)| Some((hex(a)?, hex(v)?))) {
+                ev.push((t, Input::Poke(a, v)));
+            }
+        } else if let Some((b, xy)) = what.split_once('@') {
             let Some((x, y)) = at(xy) else { continue };
             ev.push((t, Input::Move(x, y)));
             let b = match b {
@@ -166,10 +182,12 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
             ev.push((t, Input::Close));
         } else if what == "blur" || what == "focus" {
             ev.push((t, Input::Focus(what == "focus")));
+        } else if let Some(k) = super::cheats::find(what) {
+            ev.push((t, Input::Cheat(k)));
         } else {
             let (name, hold) = what.split_once('*').map_or((what, 100), |(n, h)| (n, h.parse().unwrap_or(100)));
             let Some((vk, scan)) = key_by_name(name).and_then(vk_of) else {
-                eprintln!("FCOP_INPUT: unknown key {name}");
+                eprintln!("FCOP_INPUT: unknown key {name} (cheats: {})", super::cheats::names());
                 continue;
             };
             ev.push((t, Input::Key { vk, scan, down: true, repeat: false }));
@@ -180,6 +198,11 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
     ev.into()
 }
 
+const FN: [KeyCode; 12] = [
+    KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4, KeyCode::F5, KeyCode::F6, KeyCode::F7, KeyCode::F8, KeyCode::F9, KeyCode::F10,
+    KeyCode::F11, KeyCode::F12,
+];
+
 fn key_by_name(n: &str) -> Option<KeyCode> {
     use KeyCode::*;
     const LETTERS: [KeyCode; 26] = [
@@ -188,7 +211,6 @@ fn key_by_name(n: &str) -> Option<KeyCode> {
     ];
     const DIGITS: [KeyCode; 10] = [Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9];
     const PAD: [KeyCode; 10] = [Numpad0, Numpad1, Numpad2, Numpad3, Numpad4, Numpad5, Numpad6, Numpad7, Numpad8, Numpad9];
-    const FN: [KeyCode; 12] = [F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12];
     let b = n.as_bytes();
     if b.len() == 1 && b[0].is_ascii_alphabetic() {
         return Some(LETTERS[(b[0].to_ascii_uppercase() - b'A') as usize]);
@@ -257,7 +279,9 @@ pub fn show_texture(tex: glow::Texture, w: u32, h: u32, gamma: f32) {
 }
 
 /// FCOP_SHOT=file.png: the picture shown is written there (as the window shows it), at most
-/// every half second, and at every change of the overlay (for checks without looking).
+/// every half second, and at every change of the overlay (for checks without looking). A
+/// `{t}` in the name is replaced by the time since start in ms (as in FCOP_INPUT), so every
+/// picture is kept.
 fn shot_path() -> Option<&'static String> {
     static PATH: OnceLock<Option<String>> = OnceLock::new();
     PATH.get_or_init(|| std::env::var("FCOP_SHOT").ok()).as_ref()
@@ -272,7 +296,8 @@ fn shot_due(force: bool) -> bool {
 fn write_shot(px: &[u32], w: u32, h: u32) {
     *LAST_SHOT.lock().unwrap() = Some(std::time::Instant::now());
     if let Some(path) = shot_path() {
-        let _ = std::fs::write(path, png(px, w, h));
+        let t = super::kernel32::start_time().elapsed().as_millis();
+        let _ = std::fs::write(path.replace("{t}", &format!("{t:06}")), png(px, w, h));
     }
 }
 
@@ -527,7 +552,10 @@ impl ApplicationHandler for App {
                 };
                 self.input.push_back(Input::Button(b, state == ElementState::Pressed));
             }
-            WindowEvent::ModifiersChanged(m) => self.alt = m.state().alt_key(),
+            WindowEvent::ModifiersChanged(m) => {
+                self.alt = m.state().alt_key();
+                self.shift = m.state().shift_key();
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 let down = event.state == ElementState::Pressed;
                 if self.alt && matches!(event.physical_key, PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter)) {
@@ -542,6 +570,14 @@ impl ApplicationHandler for App {
                     return;
                 }
                 if let PhysicalKey::Code(code) = event.physical_key {
+                    // Shift+F<n>: a debug cheat with FCOP_CHEATS (the game does not see the key)
+                    let f = FN.iter().position(|&k| k == code).map(|i| i as u8 + 1);
+                    if let Some(k) = f.filter(|_| self.shift).and_then(super::cheats::by_key) {
+                        if down && !event.repeat {
+                            super::cheats::request(k);
+                        }
+                        return;
+                    }
                     if let Some((vk, scan)) = vk_of(code) {
                         self.input.push_back(Input::Key { vk, scan, down, repeat: event.repeat });
                     }

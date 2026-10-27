@@ -341,6 +341,11 @@ fn put_visible(c: &mut Cpu) -> u32 {
     if let Some(g) = graph().as_mut() {
         // OATRUE is -1
         g.visible = arg(c, 1) != 0;
+        if !g.visible {
+            // the owner is painted where the video window was: the game redraws its menu
+            // at that WM_PAINT after a video that played to its end
+            super::user32::invalidate(super::user32::main_window());
+        }
     }
     OK
 }

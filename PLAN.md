@@ -116,9 +116,14 @@ Next:
 
 ### 3. Smaller open points
 
-- [ ] Bug (user, 2026-10-27, not looked into yet): after finishing a level, back in the
-      menu, the menu is not drawn again; the whole picture is the pause menu's purple
-      background instead
+- [x] Debug cheats (`cheats.rs`, 2026-10-27): `win`, `lose`, `health`, `ammo` by name in
+      FCOP_INPUT and on Shift+F1...F4 with `FCOP_CHEATS=1`. Ideas: invulnerable, all missions
+      open, mission choice
+
+- [x] Bug (user, 2026-10-27): after a won level the menu was not drawn again (the mission's
+      loading bar stayed on it; seen by the user as the pause menu's purple background too).
+      The game redraws its menu at WM_PAINT after the reward video ends; we never sent
+      WM_PAINT. Now `user32` keeps a dirty flag per window (fixed 2026-10-27)
 - [ ] Bug (user, 2026-10-27, not looked into yet): the game is not saved (the Load/Save
       dialog shows, but no save game is kept)
 - [ ] Network play missing (user, 2026-10-27): Host Game and Join Game. The game takes

@@ -7,6 +7,7 @@
 //! puts its result in eax and removes the return address and (stdcall) arguments.
 
 pub mod advapi32;
+pub mod cheats;
 pub mod ddraw;
 pub mod dialog;
 pub mod display;
@@ -593,6 +594,7 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (fps::RENDER_START, fps::render_start),
     (fps::RENDER_END, fps::render_end),
     (fps::UNPAUSED, fps::unpaused),
+    (cheats::FRAME_WAIT, cheats::frame_wait),
 ];
 
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread
@@ -612,6 +614,7 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
     }
     user32::single_player_keys();
     fps::init();
+    cheats::by_key(0);
     m.map(TIB, TIB + 0x1000);
     m.map(STACK_LO, STACK_HI);
     m.map(THUNK_LO, THUNK_LO + 4 * THUNK_N);

@@ -5,7 +5,7 @@
 ## Main loop and timing
 0x405e60  run_mission?            calls the mission loop
 0x406820  mission_loop            per frame: input, frame_wait, frame (0x407360 / 0x4076d0), then camera, HUD messages, frame_end
-0x406a30  frame_wait              waits until 8 ticks passed since frame_start_ticks (busy loop on clock_ticks, returns to 0x406a56), sets frame_dt (max 60), small palette/light animations
+0x406a30  frame_wait              waits until 8 ticks passed since frame_start_ticks (busy loop on clock_ticks, returns to 0x406a56), sets frame_dt (max 60), small palette/light animations; hooked: cheats.rs runs cheats here
 0x406b20  frame_wait_net          the same for network games
 0x407360  frame_one_view          one frame, one view: logic block, render block, after-render logic (see fps.rs)
 0x4076d0  frame_split_screen      the same for split screen (render block twice)
@@ -80,7 +80,12 @@
 0x416bf0  file_read_done
 0x417aa0  controls_default        copies profile [0x4a01b0] of the default key tables
 0x408800  video_play              DirectShow
-0x408ab0  video_stop              Space or a click
+0x408ab0  video_stop              Space or a click; the caller then redraws the menu (0x40b250)
+0x4086c0  video_events            at the notify message: EC_COMPLETE stops and releases the graph (no menu redraw: WM_PAINT does it)
+0x40b250  menu_redraw             blits the whole menu again
+0x45a340  window_proc             main window; WM_PAINT: ValidateRect, menu_redraw when no video plays and the menu is up ([0x499a9c])
+0x44ec90  script_command?         mission script commands by hash; 0x1adcfed mission won (progress = goal, or the end timer)
+0x406630  mission_result          by game_state: game record +0x10 = result (0xb/0xc: 0 if progress +0x40 = goal +0x44, else 1)
 
 ## C runtime
 0x4780d0  strchr                  (then strncpy, strstr, strcspn, strncmp, strpbrk; see examples/crt.rs)
@@ -92,7 +97,9 @@
 0x511e4c  frame_start_ticks
 0x511f58  frame_dt                ticks of this frame (8, at most 60)
 0x511f40  frame_count
-0x511fb8  game_state              4 playing (also 8, 0xb, 0xd)
+0x511fb8  game_state              4 playing, 8 paused, 0xb mission over (won or lost by game record +0x40/+0x44), 0xd ending (timer)
+0x511fc0  mission_end_timer       counts frame_dt down to the end of a mission (mode +0x5c = 1), then game_state 0xd
+0x511f80  game_record             pointer (0x10002e0): +0x10 mission result, +0x40 progress, +0x44 goal, +0x5c mode
 0x511f50  views                   1 one view
 0x511f54  split_screen            nonzero in split screen
 0x511fa4  glide_active
