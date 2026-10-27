@@ -51,8 +51,9 @@ pub enum Kind {
     Static,
     Edit { limit: u32 },
     List { items: Vec<(String, u32)>, sel: i32, top: i32 },
-    /// a drop-down list; `drop` is the height of the open list
-    Combo { items: Vec<(String, u32)>, sel: i32, open: bool, top: i32, drop: i32 },
+    /// a drop-down list; `drop` is the height of the open list. With `edit` (CBS_DROPDOWN) its
+    /// text (the control's) can be typed; `whole`: the text is selected, a key replaces it.
+    Combo { items: Vec<(String, u32)>, sel: i32, open: bool, top: i32, drop: i32, edit: bool, whole: bool },
     Track { lo: i32, hi: i32, pos: i32 },
     Other,
 }
@@ -143,6 +144,21 @@ impl Control {
         }
     }
 
+    /// A combo box shows its selected item (selected as a whole when it can be typed).
+    fn sync_combo(&mut self) {
+        if let Kind::Combo { items, sel, whole, .. } = &mut self.kind {
+            if let Some(t) = items.get(*sel as usize) {
+                self.text = t.0.clone();
+                *whole = true;
+            }
+        }
+    }
+
+    /// A combo box whose text can be typed.
+    fn typed_combo(&self) -> bool {
+        matches!(self.kind, Kind::Combo { edit: true, .. })
+    }
+
     fn items(&mut self) -> Option<(&mut Vec<(String, u32)>, &mut i32)> {
         match &mut self.kind {
             Kind::List { items, sel, .. } | Kind::Combo { items, sel, .. } => Some((items, sel)),
@@ -172,7 +188,15 @@ fn kind_of(i: &Item, h: i32) -> (Kind, i32) {
         Class::Edit => Kind::Edit { limit: 0x7fff },
         Class::ListBox => Kind::List { items: Vec::new(), sel: -1, top: 0 },
         // the template's height includes the open list
-        Class::ComboBox => Kind::Combo { items: Vec::new(), sel: -1, open: false, top: 0, drop: (h - 14).max(4 * ROW) },
+        Class::ComboBox => Kind::Combo {
+            items: Vec::new(),
+            sel: -1,
+            open: false,
+            top: 0,
+            drop: (h - 14).max(4 * ROW),
+            edit: i.style & 3 == 2,
+            whole: false,
+        },
         Class::Other(n) if n.eq_ignore_ascii_case("msctls_trackbar32") => Kind::Track { lo: 0, hi: 100, pos: 0 },
         _ => Kind::Other,
     };
@@ -348,6 +372,7 @@ impl Dialog {
                         let row = *top + (y - r[1] - 2) / ROW;
                         if inside(r, x, y) && row >= 0 && (row as usize) < items.len() {
                             *sel = row;
+                            self.controls[k].sync_combo();
                             out.push(self.command(k, 1)); // CBN_SELCHANGE
                         }
                     }
@@ -358,8 +383,14 @@ impl Dialog {
                 let Some(k) = self.hit(x, y) else { return };
                 self.pressed = Some(k);
                 let r = self.controls[k].rect;
+                let face = self.controls[k].face();
                 match &mut self.controls[k].kind {
-                    Kind::Combo { open, top, sel, items, drop } => {
+                    // a combo box that can be typed: its text takes the focus, all selected
+                    Kind::Combo { edit: true, whole, .. } if x < face[2] - 14 => {
+                        *whole = true;
+                        self.focus = Some(k);
+                    }
+                    Kind::Combo { open, top, sel, items, drop, .. } => {
                         *open = true;
                         // a little above the selection, but no empty rows at the end
                         let rows = (*drop - 4) / ROW;
@@ -429,6 +460,16 @@ impl Dialog {
                     if let Some(k) = self.focus.filter(|&k| matches!(self.controls[k].kind, Kind::Edit { .. })) {
                         self.controls[k].text.pop();
                         out.push(self.command(k, 0x300)); // EN_CHANGE
+                    } else if let Some(k) = self.focus.filter(|&k| self.controls[k].typed_combo()) {
+                        let c = &mut self.controls[k];
+                        if let Kind::Combo { whole, .. } = &mut c.kind {
+                            if std::mem::take(whole) {
+                                c.text.clear();
+                            } else {
+                                c.text.pop();
+                            }
+                        }
+                        out.push(self.command(k, 5)); // CBN_EDITCHANGE
                     }
                 }
                 0x26 | 0x28 => {
@@ -449,6 +490,17 @@ impl Dialog {
                         if ch >= 32 && ch != 127 && (self.controls[k].text.len() as u32) < limit {
                             self.controls[k].text.push(ch as char);
                             out.push(self.command(k, 0x300));
+                        }
+                    }
+                } else if let Some(k) = self.focus.filter(|&k| self.controls[k].typed_combo()) {
+                    let c = &mut self.controls[k];
+                    if let Kind::Combo { whole, .. } = &mut c.kind {
+                        if ch >= 32 && ch != 127 {
+                            if std::mem::take(whole) {
+                                c.text.clear();
+                            }
+                            c.text.push(ch as char);
+                            out.push(self.command(k, 5)); // CBN_EDITCHANGE
                         }
                     }
                 }
@@ -586,7 +638,7 @@ fn control_message(d: &mut Dialog, k: usize, msg: u32, wp: u32, lp: u32, out: &m
                     })
                     .map_or(ERR, |k| k as u32)
             };
-            match op {
+            let r = match op {
                 "add" => {
                     items.push((text_of(lp), 0));
                     items.len() as u32 - 1
@@ -645,7 +697,11 @@ fn control_message(d: &mut Dialog, k: usize, msg: u32, wp: u32, lp: u32, out: &m
                     let _ = m;
                     0
                 }
+            };
+            if matches!(op, "setsel" | "select") {
+                c.sync_combo();
             }
+            r
         }
     }
 }

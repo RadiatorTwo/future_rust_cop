@@ -83,6 +83,7 @@
 0x416bf0  file_read_done
 0x417aa0  controls_default        copies profile [0x4a01b0] of the default key tables
 0x408800  video_play              DirectShow
+0x403f10  save_game               (dialog): slot = CB_GETCURSEL of 0x45b (or the default), its name from the combo's text (24 bytes, "-EMPTY-" refused), the progress (0x11 dwords from [0x498d00]) into the slot, then save.cfg ("wb", 0x8d8 bytes from 0x498d18: slots of 0x70 bytes from +0x28, name first)
 0x408ab0  video_stop              Space or a click; the caller then redraws the menu (0x40b250)
 0x4086c0  video_events            at the notify message: EC_COMPLETE stops and releases the graph (no menu redraw: WM_PAINT does it)
 0x40b250  menu_redraw             blits the whole menu again

@@ -124,8 +124,9 @@ Next:
       loading bar stayed on it; seen by the user as the pause menu's purple background too).
       The game redraws its menu at WM_PAINT after the reward video ends; we never sent
       WM_PAINT. Now `user32` keeps a dirty flag per window (fixed 2026-10-27)
-- [ ] Bug (user, 2026-10-27, not looked into yet): the game is not saved (the Load/Save
-      dialog shows, but no save game is kept)
+- [x] Bug (user, 2026-10-27): saves had no name and showed as -EMPTY-: the slot combo box
+      (CBS_DROPDOWN) is where the name is typed, and ours could not be typed into. Fixed
+      2026-10-27; saving and loading checked by script (progress comes back)
 - [ ] Network play missing (user, 2026-10-27): Host Game and Join Game. The game takes
       DirectPlay through CoCreateInstance (no import of its own), which only gives
       DirectShow so far; its receive thread is 0x405180, its frame wait 0x406b20. Needs a

@@ -139,7 +139,8 @@ pub fn pump(wait: Duration) {
 /// `move@x,y`, a key held 100 ms or `*ms` (Enter, Escape, Space, Tab, Up, Down, Left, Right,
 /// Ctrl, Alt, Shift, A-Z, 0-9, Numpad0-9, F1-F12), `close` (the window's close button),
 /// `blur` / `focus` (the window loses or gets the focus), `poke@511fc0=1` (a dword written to
-/// guest memory, hex address and value), a cheat by name (`win`, see `cheats::CHEATS`).
+/// guest memory, hex address and value), a cheat by name (`win`, see `cheats::CHEATS`),
+/// `text@Name` (typed characters, `_` a space).
 fn scripted(input: &mut VecDeque<Input>) {
     static SCRIPT: Mutex<Option<VecDeque<(u64, Input)>>> = Mutex::new(None);
     let mut s = SCRIPT.lock().unwrap();
@@ -163,7 +164,12 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
             let (x, y) = s.split_once(',')?;
             Some((x.parse().ok()?, y.parse().ok()?))
         };
-        if let Some(p) = what.strip_prefix("poke@") {
+        if let Some(text) = what.strip_prefix("text@") {
+            // typed characters (WM_CHAR), 50 ms apart; `_` is a space
+            for (n, ch) in text.chars().filter(|&c| (c as u32) < 256).enumerate() {
+                ev.push((t + 50 * n as u64, Input::Char(if ch == '_' { b' ' } else { ch as u8 })));
+            }
+        } else if let Some(p) = what.strip_prefix("poke@") {
             let hex = |s: &str| u32::from_str_radix(s, 16).ok();
             if let Some((a, v)) = p.split_once('=').and_then(|(a, v)| Some((hex(a)?, hex(v)?))) {
                 ev.push((t, Input::Poke(a, v)));

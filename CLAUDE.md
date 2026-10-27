@@ -150,7 +150,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   keypad belongs to player 2; times count from the game's start, after the ~5.5 s compile:
   give `timeout` enough on top; the intro videos now come first: "3000:Space 5000:Space
   8000:Space 11000:click@484,303 20000:Space" skips them and the briefing and starts the
-  mission; `poke@addr=value` writes a dword (hex); cheat names run a cheat, below),
+  mission; `poke@addr=value` writes a dword (hex); `text@Name` types characters (WM_CHAR,
+  `_` a space); cheat names run a cheat, below),
   `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_PROF=1` (time in
   each import, every 2 s), `FCOP_COUNT=<file>` (calls per function and second: "second
   address calls [name]"; counting is compiled in only then), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_WINDOW=1920x1080`
@@ -197,6 +198,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   controls have ids from 0x7E00 and the game's procedure never sees them. Keyboard hooks
   (SetWindowsHookExA WH_KEYBOARD) get key messages as they are taken from the queue: the
   controller dialog reads rebound keys that way, and marks the waiting box with InvertRect.
+  Combo boxes with CBS_DROPDOWN can be typed into (click on the text; a selection puts the
+  item's text there, selected as a whole): the Load/Save dialog (163) takes the save's name
+  from it (GetDlgItemTextA; "-EMPTY-" is refused), else saves had no name and showed empty.
   `FCOP_DLG_LOG=1` logs dialogs and the messages sent to their procedures.
 - DDBLTFX: dwFillColor is at 0x50 (the old project read 0x48 and drew the pause screen's
   dark purple 0x1c2a as black).

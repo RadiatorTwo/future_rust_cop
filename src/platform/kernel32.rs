@@ -777,7 +777,12 @@ fn create_file(c: &mut Cpu) -> u32 {
         _ => &mut o,
     };
     match o.open(&path) {
-        Ok(f) => objects().add(Obj::File(Arc::new(Mutex::new(f)))),
+        Ok(f) => {
+            if super::trace_api() {
+                log!("CreateFileA {name} (access {access:#x}, disposition {disp})");
+            }
+            objects().add(Obj::File(Arc::new(Mutex::new(f))))
+        }
         Err(e) => {
             if super::trace_api() {
                 log!("CreateFileA {name}: {e}");

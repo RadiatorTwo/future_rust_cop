@@ -207,12 +207,27 @@ fn control(cv: &mut Canvas, d: &Dialog, k: usize) {
             cv.frame(r, EDGE);
             rows(cv, inset(r, 1), items, *sel, *top, fg);
         }
-        Kind::Combo { items, sel, .. } => {
+        Kind::Combo { items, sel, edit, whole, .. } => {
             let f = c.face();
             cv.fill(inset(f, 1), if hot { FACE_HOT } else { FACE });
-            cv.frame(f, if hot { EDGE_HI } else { EDGE });
-            let t = items.get(*sel as usize).map_or("", |t| t.0.as_str());
-            cv.label([f[0] + 4, f[1], f[2] - 14, f[3]], t, fg, 0);
+            cv.frame(f, if hot || d.focus == Some(k) { EDGE_HI } else { EDGE });
+            if *edit {
+                // the text that can be typed: in a well, selected as a whole or with a caret
+                let w = [f[0] + 2, f[1] + 2, f[2] - 14, f[3] - 2];
+                cv.fill(w, WELL);
+                let mut t = c.text.clone();
+                if d.focus == Some(k) {
+                    if *whole {
+                        t = format!("[{t}]");
+                    } else {
+                        t.push('_');
+                    }
+                }
+                cv.label([w[0] + 2, f[1], w[2], f[3]], &t, fg, 0);
+            } else {
+                let t = items.get(*sel as usize).map_or("", |t| t.0.as_str());
+                cv.label([f[0] + 4, f[1], f[2] - 14, f[3]], t, fg, 0);
+            }
             // the arrow
             let (ax, ay) = (f[2] - 10, (f[1] + f[3]) / 2 - 2);
             for i in 0..4 {
