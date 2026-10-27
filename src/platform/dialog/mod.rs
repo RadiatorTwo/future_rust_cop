@@ -479,7 +479,8 @@ impl Dialog {
                 }
                 0x26 | 0x28 => {
                     let d = if m.wp == 0x26 { -1 } else { 1 };
-                    if let Some(k) = self.focus.filter(|&k| matches!(self.controls[k].kind, Kind::List { .. })) {
+                    // (an empty list has nothing to select)
+                    if let Some(k) = self.focus.filter(|&k| matches!(&self.controls[k].kind, Kind::List { items, .. } if !items.is_empty())) {
                         if let Kind::List { items, sel, .. } = &mut self.controls[k].kind {
                             *sel = (*sel + d).clamp(0, items.len() as i32 - 1);
                         }

@@ -153,9 +153,33 @@ Next:
       back at its dialog when the other leaves
 - [x] Network play between two computers: works (user, 2026-10-27). Windows asks to let
       the host through its firewall (TCP and UDP port 47624) the first time it listens
-- [ ] Network play shows ~57 pictures a second whatever the Frame Rate setting: `fps.rs`
-      only draws between frames in the single-player wait (0x406a56), the network loop
-      waits in 0x406b20
+- [x] Network play follows the Frame Rate setting (2026-10-27): `fps.rs` also draws in
+      the network loop's waits (0x406b20, the joiner's wait for the host's frame too) and
+      knows its two-view frame 0x4076d0; two instances unlimited: ~950 / ~1600 fps instead of 75.
+      Pictures are placed by game time (the network game's frames come in pairs, 8+0 / 7+1
+      ticks; between frames the client's pictures stood still and felt like 37 fps, user):
+      measured, the robot's speed per tick is now even on both sides. A pair's frames do not
+      move things in step with their ticks (a 1-tick frame hardly moves them), which showed
+      as ghosting on the host, worse at 300 fps (user): only frames 8 ticks after the last
+      kept are kept. Measured at 300 fps: robot and camera speed within 1-2% of the
+      neighbouring pictures, host and client
+- [x] Walls and terrain shook on the host (user, 2026-10-27: static things only, robots and
+      vehicles fine): the two-view frame 0x4076d0 runs the visibility pass 0x452880 before the
+      render block, with the real camera, then draws with the shown (interpolated) one; its own
+      picture now runs the pass again (what it leaves for the logic put back at 0x4114c0)
+- [x] The client looked like a low frame rate, blurred (user): in a network game each computer
+      shows only its own player's view ([0x511fa0] & 0xf, 0x40ca10 skips the other's display
+      list); the client's is view 1. Its pictures drew view 0 (no triangles at all, the last
+      frame stayed), and its own frames' view 1 was not interpolated. Now the local view
+      (checked by reading the rendered frame back: the client's picture moves every frame)
+- [x] A dialog list without items crashed on the arrow keys (clamp(0, -1))
+- [x] Network play: "Lost Net Synchronization" (user, 2026-10-27, with the higher frame
+      rate). The game compares the random generators' indices; pictures changed the
+      generators' tables and the views' centres (0x4a39b8, from the visibility pass), which the
+      next frame's logic uses to wake objects (0x42e570), so it depended on when pictures were
+      drawn. Both kept now: two instances with movement and screenshots stayed identical for
+      2779 frames (actors compared every frame). Before, the joining computer's picture
+      alternated between two views after the loss
 
 - [ ] FPU exception bits (status word bits 0-5) are not modelled (0x47c070, 0x469f60)
 - [ ] Difftest: Linux support (demand paging uses a Windows exception handler)

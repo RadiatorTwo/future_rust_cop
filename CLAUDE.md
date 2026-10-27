@@ -146,16 +146,28 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (rate * ticks) >> 8 in many places, and shorter frames broke hits, effects, hovering...
   (an earlier attempt wrote the loop's tick limit 0x406a7f etc.). Instead pictures are drawn
   in between: the frame's render block (0x426eb0 ... 0x4114c0, see the module) runs again
-  while the loop waits for its next frame (clock read from 0x406a56), shown with 0x4153a0,
+  while the loop waits for its next frame (clock read from 0x406a56; network game: 0x4071e4,
+  0x407282 in 0x406b20, frames in pairs of 8+0 ticks on the host, 7+1 on the joining computer,
+  which waits for the host's frame at 0x406cc6; its frame is the two-view
+  0x4076d0, and 0x40ca10 draws only this computer's view, [0x511fa0] & 0xf: the host 0, the
+  other 1 (its player [0x511fd0 + 4 * view]); pictures draw that one with its camera 0x4348e0
+  selected; it runs the visibility pass
+  0x452880 before 0x426eb0 with the real camera, so its own picture runs it again with the shown
+  one, else walls and terrain shook), shown with 0x4153a0,
   with every actor (list at 0x50e428, count [0x50e420]; matrix +0x2c, position +0x50; the
   player robot's side weapons and lights are model records in its data [+0xac] at +0x178,
   +0x1c4, +0x210, placed at +4, drawn by 0x447ba0: interpolated too, else they jerked) and the
-  camera ([0x511f48], up to +0x88) put between their places in the last two frames; the
-  frame's own render shows the start of the interval, so pictures lag one frame. 0x44fd20
+  camera ([0x511f48], up to +0x88) put where they were at a game time ([0x511ee4] of each
+  frame, last 4 kept; only a frame 8 ticks after the last kept, as a pair of the network
+  game's frames moves things evenly, its single frames do not) 10 ticks behind the newest frame, as far as the clock went on since (the
+  clock's lead over the game time averaged): by game time, so uneven frames do not matter;
+  the frame's own render too. 0x44fd20
   in the render block is logic (the actor grid 0x4a31b0 for hits, per-frame lists): it runs
   only in the game's frame, with the real places (in pictures it multiplied enemy damage
-  and made temporary things flicker). Otherwise drawing only changes the random seed
-  0x50e370 and the display list (records from [0x499b0c] to [0x511dc0]; 0x40ca10 links them
+  and made temporary things flicker). Otherwise drawing only changes the random generators
+  (0x50e370/0x4a2b08, 0x50e36c/0x4a2ab8: index and table), the views' centres and cells the
+  visibility pass leaves for the logic (0x4a39b8, 0x4a3b00: 0x42e570 wakes objects near them)
+  and the display list (records from [0x499b0c] to [0x511dc0]; 0x40ca10 links them
   by depth, resets the end, draws), both kept: the loop adds records after the frame's
   render (0x407d70: messages, indicator 0x4357f0) for the next frame, and a picture would
   use them up (they flickered), so each picture puts them back. Only with Glide, one view, playing ([0x511fb8] = 4), not paused. Choices 60 ... 300 and unlimited (REG_DWORD
