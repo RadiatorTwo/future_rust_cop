@@ -24,8 +24,11 @@ const DISPLAY_MODE: u32 = 1021;
 const GAME_FULLSCREEN: u32 = 1012;
 /// Its "Filtering" box in the 3DFX Options group: our "Widescreen" box goes next to it.
 const FILTERING: u32 = 1013;
-/// Its 3DFX Options group: our frame rate goes below it.
+/// Its 3DFX Options group: our frame rate and texture filtering go below it.
 const OPTIONS_GROUP: u32 = 1125;
+/// Its OK and Cancel buttons: they move down a row for ours.
+const OK: u32 = 1001;
+const CANCEL: u32 = 1002;
 
 const RENDERER_LABEL: u32 = FIRST_OURS;
 const RENDERER: u32 = FIRST_OURS + 1;
@@ -34,6 +37,8 @@ const RESOLUTION: u32 = FIRST_OURS + 3;
 const FULLSCREEN: u32 = FIRST_OURS + 4;
 const FRAME_RATE_LABEL: u32 = FIRST_OURS + 5;
 const FRAME_RATE: u32 = FIRST_OURS + 6;
+const TEXTURES_LABEL: u32 = FIRST_OURS + 7;
+const TEXTURES: u32 = FIRST_OURS + 8;
 
 const VISIBLE: u32 = 0x1000_0000;
 const TABSTOP: u32 = 0x0001_0000;
@@ -78,6 +83,14 @@ pub fn adjust(template: u32, t: &mut Template) {
             let y = g[1] + g[3] + 5;
             t.items.push(Item { class: Class::Static, id: FRAME_RATE_LABEL, text: "Frame Rate".into(), style: VISIBLE, ex_style: 0, rect: [g[0], y + 2, 52, 8] });
             t.items.push(Item { class: Class::ComboBox, id: FRAME_RATE, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: [g[0] + 54, y, g[2] - 54, 100] });
+            // one more row: OK and Cancel move down, the dialog grows
+            let y = y + 15;
+            for i in t.items.iter_mut().filter(|i| i.id == OK || i.id == CANCEL) {
+                i.rect[1] += 15;
+            }
+            t.rect[3] += 15;
+            t.items.push(Item { class: Class::Static, id: TEXTURES_LABEL, text: "Textures".into(), style: VISIBLE, ex_style: 0, rect: [g[0], y + 2, 52, 8] });
+            t.items.push(Item { class: Class::ComboBox, id: TEXTURES, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: [g[0] + 54, y, g[2] - 54, 100] });
         }
     }
 }
@@ -128,6 +141,29 @@ pub fn init(d: &mut Dialog) {
                 *sel = items.iter().position(|i| i.1 == fps).unwrap_or(0) as i32;
             }
         }
+        // texture filtering: only Glide filters
+        let filter = crate::platform::glide::filtering();
+        for id in [TEXTURES_LABEL, TEXTURES] {
+            if let Some(c) = d.control(id) {
+                c.visible = glide;
+            }
+        }
+        if let Some(c) = d.control(TEXTURES) {
+            if let Kind::Combo { items, sel, .. } = &mut c.kind {
+                *items = crate::platform::glide::FILTER_CHOICES
+                    .iter()
+                    .map(|&f| {
+                        let name = match f {
+                            0 => "Original".into(),
+                            1 => "Trilinear".into(),
+                            _ => format!("Anisotropic {f}x"),
+                        };
+                        (name, f)
+                    })
+                    .collect();
+                *sel = items.iter().position(|i| i.1 == filter).unwrap_or(0) as i32;
+            }
+        }
         let (desktop, modes) = crate::platform::window::display_modes();
         let current = crate::platform::display::chosen().map_or(0, |(w, h)| w << 16 | h);
         if let Some(c) = d.control(RESOLUTION) {
@@ -173,6 +209,13 @@ pub fn ok(d: &mut Dialog) {
         });
         if let Some(f) = fps {
             crate::platform::fps::set_chosen(f);
+        }
+        let filter = d.control(TEXTURES).filter(|c| c.visible).and_then(|c| match &c.kind {
+            Kind::Combo { items, sel, .. } => items.get(*sel as usize).map(|i| i.1),
+            _ => None,
+        });
+        if let Some(f) = filter {
+            crate::platform::glide::set_filtering(f);
         }
         if let Some(on) = d.control(WIDESCREEN).map(|c| c.check != 0) {
             crate::platform::wide::set_enabled(on);

@@ -614,6 +614,7 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
     }
     user32::single_player_keys();
     fps::init();
+    glide::init();
     cheats::by_key(0);
     m.map(TIB, TIB + 0x1000);
     m.map(STACK_LO, STACK_HI);

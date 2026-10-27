@@ -95,7 +95,14 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   per-triangle state changes made ~240 draw calls a frame and capped 300 fps at ~200. Frames are
   shown at grBufferSwap with the game's gamma; the fragment shader does Glide's colour and
   alpha combine units and the chroma key, with bilinear filtering of the unkeyed texels and
-  their coverage as a soft edge). Registry `Group` = `3Dfx` (default) or `Software`.
+  their coverage as a soft edge). Textures are stored premultiplied by coverage (key black,
+  as the game always sets it; texels' alpha in a second RG8 array), so the GPU's filtering is
+  that keyed filter: mipmaps (`glGenerateMipmap` before the next draw after a download) and
+  anisotropic filtering, a primitive sampling inside its texture rectangle (flat vertex
+  attribute) at most at the level where that spans 4 texels (pages are atlases). REG_DWORD
+  `TextureFilter` 0 original, 1 trilinear, 2...16 anisotropic (default 16; "Textures" in
+  Preferences, below Frame Rate; OK/Cancel moved down a row); `FCOP_FILTER=<n>` overrides.
+  Registry `Group` = `3Dfx` (default) or `Software`.
   Frames are drawn as tall as the window (high resolution; the Glide screen, 1280x1024 for
   the game's 1280x960, only gives the coordinates), 4:3 or as wide as the window's aspect;
   `display.rs`: the resolution chosen in Preferences (our list replaces the game's Display

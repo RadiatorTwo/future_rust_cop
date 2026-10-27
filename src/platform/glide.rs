@@ -12,6 +12,13 @@
 //! screen pixels. Widescreen (`wide.rs`): the texture takes the window's aspect, the 3D
 //! picture fills it and the HUD is drawn into 4:3 parts of it (`set_view`). With filtering on, the chroma key leaves the keyed texels
 //! out of the bilinear filter, and their share becomes a soft alpha edge.
+//!
+//! Textures are kept premultiplied by their coverage (the key is black, as the game always
+//! sets it): rgb and coverage in `array`, the texture's alpha (covered and keyed share) in
+//! `alpha`. Filtered by the GPU that is the keyed bilinear filter above, and it also gives
+//! mipmaps and anisotropic filtering without dark fringes (`filtering`: REG_DWORD
+//! `TextureFilter`). A page is an atlas of small pictures: a primitive samples inside the
+//! rectangle of its texture coordinates, at a level that still has a few texels of it.
 
 use super::gl::{compile, texture};
 use super::{arg, log, mem, thunk, thunk_not_implemented};
@@ -19,6 +26,7 @@ use crate::rt::{Cpu, EDX};
 use glow::HasContext;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The module handle LoadLibraryA gives for glide2x.dll.
 pub const MODULE: u32 = 0x1000_0000;
@@ -62,6 +70,33 @@ struct Texture {
 
 /// Layers of the texture array: TMU memory holds 64 textures of 256x256 at 8 bits.
 const LAYERS: u32 = 64;
+/// Levels of a 256x256 texture: 256 ... 1.
+const LEVELS: i32 = 9;
+
+/// Texture filtering when the game filters: 0 the original (bilinear, no mipmaps),
+/// 1 trilinear mipmaps, 2...16 also anisotropic.
+pub const FILTER_CHOICES: &[u32] = &[0, 1, 2, 4, 8, 16];
+static FILTER: AtomicU32 = AtomicU32::new(16);
+
+/// The saved choice (default: anisotropic 16x); `FCOP_FILTER=<n>` overrides it.
+pub fn filtering() -> u32 {
+    if let Some(n) = std::env::var("FCOP_FILTER").ok().and_then(|v| v.parse().ok()) {
+        return n;
+    }
+    let v = super::advapi32::value("", "TextureFilter").and_then(|(_, d)| Some(u32::from_le_bytes(d.get(..4)?.try_into().ok()?)));
+    v.filter(|v| FILTER_CHOICES.contains(v)).unwrap_or(16)
+}
+
+/// At start, after the EXE is loaded.
+pub fn init() {
+    FILTER.store(filtering(), Ordering::Relaxed);
+}
+
+/// Preferences' OK: saved, and used from the next batch on.
+pub fn set_filtering(n: u32) {
+    super::advapi32::set_value("", "TextureFilter", 4, &n.to_le_bytes());
+    FILTER.store(n, Ordering::Relaxed);
+}
 
 struct Glide {
     /// the Glide screen
@@ -76,8 +111,16 @@ struct Glide {
     prog: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
-    /// every texture, 256x256 at most, in one array
+    /// every texture, 256x256 at most, in one array: rgb premultiplied by coverage and the
+    /// coverage, with mipmaps (see the module)
     array: glow::Texture,
+    /// the textures' alpha: its share in covered texels, and in keyed ones
+    alpha: glow::Texture,
+    /// a download changed level 0: the mipmaps are built before the next draw
+    stale: bool,
+    /// the anisotropy set on the arrays, and the most the driver takes
+    aniso: f32,
+    aniso_max: f32,
     textures: BTreeMap<u32, Texture>,
     downloads: u64,
     state: State,
@@ -91,7 +134,8 @@ struct Glide {
     /// uniform locations
     uniforms: Uniforms,
     /// vertices waiting to be drawn with `state` (`VERTEX` words each): x y r g b a s t,
-    /// constant r g b a (floats), then the combine units and texture (see `add`)
+    /// constant r g b a (floats), the combine units and texture (see `add`), then the
+    /// rectangle of the primitive's texture coordinates s0 t0 s1 t1 (floats)
     batch: Vec<u32>,
     batch_mode: u32,
     gamma: f32,
@@ -108,13 +152,16 @@ layout(location = 1) in vec4 col;
 layout(location = 2) in vec2 tc;
 layout(location = 3) in vec4 kc;
 layout(location = 4) in uvec4 mode;
+layout(location = 5) in vec4 box;
 out vec4 vcol;
 noperspective out vec2 st;
 flat out vec4 konst;
 flat out uvec4 vmode;
+flat out vec4 st_box;
 void main() {
     vcol = col / 255.0;
     konst = kc;
+    st_box = box;
     vmode = mode;
     st = tc;
     gl_Position = vec4(pos.x / space.x * 2.0 - 1.0, 1.0 - pos.y / space.y * 2.0, 0.0, 1.0);
@@ -122,7 +169,9 @@ void main() {
 "#;
 
 const FS: &str = r#"
-uniform sampler2DArray tex;
+uniform sampler2DArray tex;     // rgb * coverage, coverage
+uniform sampler2DArray tex_a;   // alpha * coverage, alpha * (1 - coverage)
+uniform int mipmaps;            // filtered by the GPU with mipmaps
 uniform ivec2 clamp_st;
 uniform int chroma;
 uniform vec3 key;
@@ -132,6 +181,7 @@ in vec4 vcol;
 noperspective in vec2 st;
 flat in vec4 konst;    // the constant colour
 flat in uvec4 vmode;   // combine units and texture, packed by `add`
+flat in vec4 st_box;   // the primitive's texture rectangle
 out vec4 color;
 
 ivec4 cc;              // colour combine: function, factor, local, other
@@ -148,13 +198,42 @@ vec4 texel(ivec2 p) {
     ivec2 s = tex_size;
     p = ivec2(clamp_st.x != 0 ? clamp(p.x, 0, s.x - 1) : ((p.x % s.x) + s.x) % s.x,
               clamp_st.y != 0 ? clamp(p.y, 0, s.y - 1) : ((p.y % s.y) + s.y) % s.y);
-    return texelFetch(tex, ivec3(p, layer), 0);
+    vec4 a = texelFetch(tex_a, ivec3(p, layer), 0);
+    return vec4(texelFetch(tex, ivec3(p, layer), 0).rgb, a.r + a.g);
+}
+
+// The GPU's trilinear (and anisotropic) filter: inside the primitive's texture rectangle,
+// at most at the level where that still spans 4 texels (a page is an atlas).
+vec4 sample_mip(out float cover) {
+    vec2 size = vec2(textureSize(tex, 0).xy);
+    vec2 dx = dFdx(st), dy = dFdy(st);
+    vec2 lo = st_box.xy, hi = st_box.zw;
+    float lod = log2(max(max(length(dx), length(dy)), 1e-8));
+    float top = max(log2(max(min(hi.x - lo.x, hi.y - lo.y), 1.0)) - 2.0, 0.0);
+    if (lod > top) {
+        float k = exp2(top - lod);
+        dx *= k;
+        dy *= k;
+        lod = top;
+    }
+    vec2 m = vec2(0.5 * exp2(max(lod, 0.0)));
+    vec2 p = clamp(st, lo + min(m, (hi - lo) * 0.5), hi - min(m, (hi - lo) * 0.5));
+    vec3 uv = vec3(p / size, float(layer));
+    vec4 c = textureGrad(tex, uv, dx / size, dy / size);
+    vec4 a = textureGrad(tex_a, uv, dx / size, dy / size);
+    if (chroma == 0) {
+        cover = 1.0;
+        return vec4(c.rgb, a.r + a.g);
+    }
+    cover = c.a;
+    return c.a > 0.0 ? vec4(c.rgb / c.a, a.r / c.a) : vec4(0.0);
 }
 
 bool keyed(vec3 c) { return chroma != 0 && all(lessThan(abs(c - key), vec3(0.5 / 255.0))); }
 
 // the texture colour and how much of it is not keyed out
 vec4 sample_tex(out float cover) {
+    if (linear_filter != 0 && mipmaps != 0) return sample_mip(cover);
     if (linear_filter == 0) {
         vec4 t = texel(ivec2(floor(st)));
         cover = keyed(t.rgb) ? 0.0 : 1.0;
@@ -240,12 +319,14 @@ void main() {
 "#;
 
 /// Words per batched vertex.
-const VERTEX: usize = 16;
+const VERTEX: usize = 20;
 
 /// The shaders' uniforms, looked up once.
 struct Uniforms {
     space: Option<glow::UniformLocation>,
     tex: Option<glow::UniformLocation>,
+    tex_a: Option<glow::UniformLocation>,
+    mipmaps: Option<glow::UniformLocation>,
     clamp_st: Option<glow::UniformLocation>,
     chroma: Option<glow::UniformLocation>,
     key: Option<glow::UniformLocation>,
@@ -259,6 +340,8 @@ impl Uniforms {
         Uniforms {
             space: u("space"),
             tex: u("tex"),
+            tex_a: u("tex_a"),
+            mipmaps: u("mipmaps"),
             clamp_st: u("clamp_st"),
             chroma: u("chroma"),
             key: u("key"),
@@ -357,12 +440,26 @@ impl Glide {
             }
             gl.enable_vertex_attrib_array(4);
             gl.vertex_attrib_pointer_i32(4, 4, glow::UNSIGNED_INT, 4 * VERTEX as i32, 48);
-            let array = gl.create_texture().expect("GL texture");
-            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(array));
-            for p in [glow::TEXTURE_MIN_FILTER, glow::TEXTURE_MAG_FILTER] {
-                gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, p, glow::NEAREST as i32);
-            }
-            gl.tex_image_3d(glow::TEXTURE_2D_ARRAY, 0, glow::RGBA8 as i32, 256, 256, LAYERS as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+            gl.enable_vertex_attrib_array(5);
+            gl.vertex_attrib_pointer_f32(5, 4, glow::FLOAT, false, 4 * VERTEX as i32, 64);
+            let aniso_max = if gl.supported_extensions().iter().any(|e| e.ends_with("texture_filter_anisotropic")) {
+                gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+            } else {
+                1.0
+            };
+            let layers = |format: u32| {
+                let t = gl.create_texture().expect("GL texture");
+                gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(t));
+                gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR as i32);
+                gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+                for p in [glow::TEXTURE_WRAP_S, glow::TEXTURE_WRAP_T] {
+                    gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, p, glow::CLAMP_TO_EDGE as i32);
+                }
+                gl.tex_storage_3d(glow::TEXTURE_2D_ARRAY, LEVELS, format, 256, 256, LAYERS as i32);
+                t
+            };
+            let array = layers(glow::RGBA8);
+            let alpha = layers(glow::RG8);
             Glide {
                 res: (w, h),
                 target,
@@ -374,6 +471,10 @@ impl Glide {
                 vao,
                 vbo,
                 array,
+                alpha,
+                stale: false,
+                aniso: 0.0,
+                aniso_max,
                 textures: BTreeMap::new(),
                 downloads: 0,
                 cc: [1, 0, 0, 0, 0],
@@ -456,9 +557,26 @@ impl Glide {
             gl.bind_vertex_array(Some(self.vao));
             let u = &self.uniforms;
             gl.uniform_2_f32(u.space.as_ref(), self.space.0 as f32, self.space.1 as f32);
-            gl.active_texture(glow::TEXTURE0);
+            let filter = FILTER.load(Ordering::Relaxed);
+            let mipmaps = filter != 0 && s.key & 0xff_ffff == 0;
+            gl.uniform_1_i32(u.mipmaps.as_ref(), mipmaps as i32);
+            gl.uniform_1_i32(u.tex_a.as_ref(), 1);
             gl.uniform_1_i32(u.tex.as_ref(), 0);
-            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.array));
+            let aniso = (filter.max(1) as f32).min(self.aniso_max);
+            for (k, t) in [(glow::TEXTURE1, self.alpha), (glow::TEXTURE0, self.array)] {
+                gl.active_texture(k);
+                gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(t));
+                if mipmaps && self.stale {
+                    gl.generate_mipmap(glow::TEXTURE_2D_ARRAY);
+                }
+                if aniso != self.aniso && self.aniso_max > 1.0 {
+                    gl.tex_parameter_f32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAX_ANISOTROPY_EXT, aniso);
+                }
+            }
+            if mipmaps {
+                self.stale = false;
+            }
+            self.aniso = aniso;
             gl.uniform_2_i32(u.clamp_st.as_ref(), s.clamp.0 as i32, s.clamp.1 as i32);
             gl.uniform_1_i32(u.chroma.as_ref(), s.chroma as i32);
             let key = s.key;
@@ -543,14 +661,24 @@ impl Glide {
             (self.cc[4] & 1) | (self.ac[4] & 1) << 1 | (tex.is_some() as u32) << 2 | tex.map_or(0, |t| t.layer) << 8,
             tex.map_or(0, |t| t.w | t.h << 16),
         ];
-        for &v in verts {
-            // x y z r g b ooz a oow, then tmu 0: sow tow oow
+        // x y z r g b ooz a oow, then tmu 0: sow tow oow
+        let st = |v: u32| {
             let oow = f32::from_bits(m.rd32(v + 0x2c));
             let oow = if oow != 0.0 { oow } else { 1.0 };
-            let st = |a: u32| (f32::from_bits(m.rd32(a)) / oow).to_bits();
-            self.batch.extend([m.rd32(v), m.rd32(v + 4), m.rd32(v + 0xc), m.rd32(v + 0x10), m.rd32(v + 0x14), m.rd32(v + 0x1c), st(v + 0x24), st(v + 0x28)]);
+            (f32::from_bits(m.rd32(v + 0x24)) / oow, f32::from_bits(m.rd32(v + 0x28)) / oow)
+        };
+        let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+        for &v in verts {
+            let (s, t) = st(v);
+            b = [b[0].min(s), b[1].min(t), b[2].max(s), b[3].max(t)];
+        }
+        let b = b.map(f32::to_bits);
+        for &v in verts {
+            let (s, t) = st(v);
+            self.batch.extend([m.rd32(v), m.rd32(v + 4), m.rd32(v + 0xc), m.rd32(v + 0x10), m.rd32(v + 0x14), m.rd32(v + 0x1c), s.to_bits(), t.to_bits()]);
             self.batch.extend(konst);
             self.batch.extend(mode);
+            self.batch.extend(b);
         }
     }
 
@@ -589,19 +717,31 @@ impl Glide {
             }
             let n = ((r1 - r0 + 1) * w) as usize;
             let px = convert(format, data, n);
-            gl.tex_sub_image_3d(
-                glow::TEXTURE_2D_ARRAY,
-                0,
-                0,
-                r0 as i32,
-                layer as i32,
-                w as i32,
-                (r1 - r0 + 1) as i32,
-                1,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(Some(&px)),
-            );
+            // premultiplied by coverage: a black texel is keyed out
+            let mut rgb = Vec::with_capacity(n * 4);
+            let mut alpha = Vec::with_capacity(n * 2);
+            for p in px.chunks(4) {
+                let covered = p[..3] != [0, 0, 0];
+                rgb.extend(if covered { [p[0], p[1], p[2], 255] } else { [0; 4] });
+                alpha.extend(if covered { [p[3], 0] } else { [0, p[3]] });
+            }
+            for (t, format, px) in [(self.array, glow::RGBA, &rgb), (self.alpha, glow::RG, &alpha)] {
+                gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(t));
+                gl.tex_sub_image_3d(
+                    glow::TEXTURE_2D_ARRAY,
+                    0,
+                    0,
+                    r0 as i32,
+                    layer as i32,
+                    w as i32,
+                    (r1 - r0 + 1) as i32,
+                    1,
+                    format,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(Some(px)),
+                );
+            }
+            self.stale = true;
         }
     }
 }
@@ -668,6 +808,7 @@ fn sst_win_close(_: &mut Cpu) -> u32 {
         gl.delete_framebuffer(g.fbo);
         gl.delete_texture(g.color);
         gl.delete_texture(g.array);
+        gl.delete_texture(g.alpha);
     });
     GLIDE.with(|s| *s.borrow_mut() = None);
     super::wide::set_aspect(None);

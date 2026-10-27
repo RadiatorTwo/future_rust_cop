@@ -71,7 +71,7 @@ Next:
 - [ ] Glide: other resolutions, filtering off, split screen checked with precise mode
 - [x] Default keys for player 1 without a keypad (`user32::single_player_keys`): arrows,
       A/D jink, X action, S change target; player 2 keeps the game's keypad profile
-- [ ] Other missions
+- [x] Other missions: all played by the user, they work (2026-10-27)
 - [ ] Later: a native Glide backend (a 64-bit glide2x.dll such as dgVoodoo2's), behind the
       same Glide layer
 - [x] Videos (`dshow.rs`, `src/mpeg/`): EA logo, intro, briefing play with sound, Space skips;
@@ -105,8 +105,11 @@ Next:
       no more colour than Glide gets: mission files hold each 256x256 page as a `Cbmp`
       resource with `PX16` (16-bit PlayStation 1555 pixels), a 256-entry 16-bit palette
       `PLUT` and a lookup table `LkUp`. Ideas, most useful first:
-  - [ ] Mipmaps and anisotropic filtering (distant floors and walls shimmer): built per
-        sub-texture, since a page is an atlas and must not bleed
+  - [x] Mipmaps and anisotropic filtering (2026-10-27): textures premultiplied by their
+        coverage, filtered by the GPU (trilinear, anisotropic up to 16x); a primitive samples
+        inside its texture rectangle, at most at the level where that spans 4 texels (pages
+        are atlases). "Textures" in Preferences (REG_DWORD `TextureFilter`). To be checked
+        by the user in motion
   - [ ] Debanding: a little noise when the 5-bit gradients are widened to 8 bits
   - [ ] An upscaling filter such as xBRZ (sharper edges than bilinear; a matter of taste)
 - [ ] Remastered assets (later): replace textures recognised by their content. Replacements
