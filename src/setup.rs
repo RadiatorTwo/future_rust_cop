@@ -1,5 +1,6 @@
 //! The player's game files: the folder `game_files` next to fcop.exe (in a checkout: in the
-//! current folder). The player copies the CD, an image of it or an installed game into it; at every
+//! current folder). The player copies the CD, an image of it or an installed game into it (or
+//! puts the image next to fcop.exe: what the game needs is copied out of it); at every
 //! start we find FCopLAPD.exe, check it is the one version we know, and keep only what the game
 //! needs, in this layout (the CD's: the game folder and the videos next to it):
 //!
@@ -26,27 +27,31 @@ const GAME_FILES: [&str; 6] = ["FCopLAPD.exe", "febmp.bin", "missions", "registr
 const NOTE: &str = "README.txt";
 
 /// The folder with the game files: `game_files` next to fcop.exe, else in the current folder.
+/// When there is neither, the one next to fcop.exe (made when a CD image is found there).
 pub fn root() -> PathBuf {
-    let here = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("game_files")));
-    match here {
-        Some(d) if d.is_dir() => d,
+    match home().map(|d| d.join("game_files")) {
+        Some(d) if d.is_dir() || !Path::new("game_files").is_dir() => d,
         _ => PathBuf::from("game_files"),
     }
+}
+
+/// The folder fcop.exe is in.
+fn home() -> Option<PathBuf> {
+    std::env::current_exe().ok()?.parent().map(Path::to_path_buf)
 }
 
 /// Set up the game files in `root` and return FCopLAPD.exe's path, or what the player must do.
 pub fn game_exe(root: &Path) -> Result<PathBuf, String> {
     let copy_in = format!(
-        "Copy your Future Cop: L.A.P.D. CD (or your installed game folder) into this folder:\n\n{}\n\nThen start fcop.exe again.",
+        "Put an image of your Future Cop: L.A.P.D. CD (.iso or .bin) next to fcop.exe, or copy the CD (or your installed game folder) into this folder:\n\n{}\n\nThen start fcop.exe again.",
         root.display()
     );
-    if !root.is_dir() {
-        return Err(format!("The folder game_files was not found.\n\n{copy_in}"));
-    }
     let game = root.join(GAME);
     let mut exe = find(&game, "FCopLAPD.exe", 0).or_else(|| find(root, "FCopLAPD.exe", 6));
     if exe.is_none() {
-        if let Some(image) = find_image(root, 6) {
+        // a CD image in game_files (it goes to the recycle bin afterwards), or next to fcop.exe
+        // (it stays there)
+        if let Some(image) = find_image(root, 6).or_else(|| home().and_then(|h| find_image(&h, 0))) {
             from_image(&image, root)?;
             exe = find(&game, "FCopLAPD.exe", 0);
         }

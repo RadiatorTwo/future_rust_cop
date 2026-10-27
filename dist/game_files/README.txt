@@ -1,4 +1,5 @@
-Put your copy of Future Cop: L.A.P.D. (PC version) into this folder:
+Put an image of your Future Cop: L.A.P.D. CD (.iso or .bin) next to
+fcop.exe, or put your copy of the game (PC version) into this folder:
 the contents of the CD, an image of the CD (.iso or .bin), or your
 installed game folder.
 

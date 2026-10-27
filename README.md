@@ -10,8 +10,8 @@ releases: you need your own copy of the game.
 ## Playing (Windows)
 
 1. Download `fcop-...-windows-x64.zip` from the [releases] and unpack it.
-2. Copy your game into its `game_files` folder: the contents of the CD, an image of the CD
-   (`.iso`, or `.bin`), or your installed game folder.
+2. Put an image of your CD (`.iso` or `.bin`) next to `fcop.exe`, or copy your game into the
+   `game_files` folder: the contents of the CD, an image of it, or your installed game folder.
 3. Start `fcop.exe`. It finds the game, checks the version, and keeps only what the game
    needs (`game_files\FCopLAPD`: FCopLAPD.exe, febmp.bin, missions; `game_files\Video`: the
    videos; taken out of a CD image); everything else in `game_files` goes to the recycle bin. Compiling the game takes
