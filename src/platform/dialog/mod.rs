@@ -351,6 +351,9 @@ impl Dialog {
 
     /// Mouse and keyboard input for the topmost dialog.
     fn input(&mut self, m: &Msg, out: &mut Vec<Notify>) {
+        if matches!(m.msg, 0x100 | 0x102 | 0x201) {
+            draw::caret_reset();
+        }
         let (fw, fh) = super::window::frame_size();
         let (sx, sw) = super::window::overlay_span(fw, fh);
         let x = ((m.lp & 0xffff) as i16 as i32 - sx as i32) * OV_W / sw.max(1) as i32;
@@ -748,6 +751,7 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
         extend::init(d);
     }
     redraw();
+    let mut phase = draw::caret_phase();
     loop {
         let done = stack().dialogs.iter().find(|d| d.hwnd == hwnd).and_then(|d| d.result);
         if let Some(r) = done {
@@ -772,6 +776,17 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
                 deliver(c, out);
             } else {
                 user32::dispatch(c, &m);
+            }
+        }
+        // the caret blinks in a focused text
+        if draw::caret_phase() != phase {
+            phase = draw::caret_phase();
+            let mut s = stack();
+            if let Some(top) = s.dialogs.last() {
+                let typed = |c: &Control| matches!(c.kind, Kind::Edit { .. }) || c.typed_combo();
+                if top.focus.is_some_and(|k| typed(&top.controls[k])) {
+                    s.dirty = true;
+                }
             }
         }
         if stack().dirty {

@@ -199,7 +199,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (SetWindowsHookExA WH_KEYBOARD) get key messages as they are taken from the queue: the
   controller dialog reads rebound keys that way, and marks the waiting box with InvertRect.
   Combo boxes with CBS_DROPDOWN can be typed into (click on the text; a selection puts the
-  item's text there, selected as a whole): the Load/Save dialog (163) takes the save's name
+  item's text there, selected as a whole, shown highlighted; texts with the focus have a caret
+  blinking at Windows' 530 ms, restarted by keys and clicks): the Load/Save dialog (163) takes the save's name
   from it (GetDlgItemTextA; "-EMPTY-" is refused), else saves had no name and showed empty.
   `FCOP_DLG_LOG=1` logs dialogs and the messages sent to their procedures.
 - DDBLTFX: dwFillColor is at 0x50 (the old project read 0x48 and drew the pause screen's

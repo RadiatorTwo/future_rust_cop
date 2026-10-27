@@ -110,6 +110,35 @@ pub fn text_width(s: &str) -> i32 {
     (w - 1).max(0)
 }
 
+static CARET: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// The text caret blinks as Windows' does: shown and hidden for 530 ms each.
+pub fn caret_phase() -> u64 {
+    let mut c = CARET.lock().unwrap();
+    c.get_or_insert_with(std::time::Instant::now).elapsed().as_millis() as u64 / 530
+}
+
+/// After a key or a click into the text the caret shows at once and blinks from there.
+pub fn caret_reset() {
+    *CARET.lock().unwrap() = Some(std::time::Instant::now());
+}
+
+/// Text that can be typed, in `r` (its well): when it has the focus, selected as a whole
+/// (highlighted) or not, and the blinking caret after it.
+fn typed_text(cv: &mut Canvas, r: [i32; 4], text: &str, focus: bool, whole: bool, fg: u32) {
+    let t = [r[0] + 2, r[1], r[2] - 2, r[3]];
+    let w = text_width(text);
+    let y = (r[1] + r[3] - 8) / 2;
+    if focus && whole && !text.is_empty() {
+        cv.fill([t[0] - 1, y - 1, t[0] + w + 1, y + 10], SELECT);
+    }
+    cv.label(t, text, fg, 0);
+    if focus && caret_phase() % 2 == 0 {
+        let x = (t[0] + w + if text.is_empty() { 0 } else { 2 }).min(t[2] - 1);
+        cv.fill([x, y - 1, x + 1, y + 10], TEXT);
+    }
+}
+
 fn inset(r: [i32; 4], d: i32) -> [i32; 4] {
     [r[0] + d, r[1] + d, r[2] - d, r[3] - d]
 }
@@ -196,11 +225,7 @@ fn control(cv: &mut Canvas, d: &Dialog, k: usize) {
         Kind::Edit { .. } => {
             cv.fill(r, WELL);
             cv.frame(r, if d.focus == Some(k) { EDGE_HI } else { EDGE });
-            let mut t = c.text.clone();
-            if d.focus == Some(k) {
-                t.push('_');
-            }
-            cv.label([r[0] + 3, r[1], r[2] - 3, r[3]], &t, fg, 0);
+            typed_text(cv, [r[0] + 1, r[1], r[2] - 1, r[3]], &c.text, d.focus == Some(k), false, fg);
         }
         Kind::List { items, sel, top } => {
             cv.fill(r, WELL);
@@ -215,15 +240,7 @@ fn control(cv: &mut Canvas, d: &Dialog, k: usize) {
                 // the text that can be typed: in a well, selected as a whole or with a caret
                 let w = [f[0] + 2, f[1] + 2, f[2] - 14, f[3] - 2];
                 cv.fill(w, WELL);
-                let mut t = c.text.clone();
-                if d.focus == Some(k) {
-                    if *whole {
-                        t = format!("[{t}]");
-                    } else {
-                        t.push('_');
-                    }
-                }
-                cv.label([w[0] + 2, f[1], w[2], f[3]], &t, fg, 0);
+                typed_text(cv, w, &c.text, d.focus == Some(k), *whole, fg);
             } else {
                 let t = items.get(*sel as usize).map_or("", |t| t.0.as_str());
                 cv.label([f[0] + 4, f[1], f[2] - 14, f[3]], t, fg, 0);
