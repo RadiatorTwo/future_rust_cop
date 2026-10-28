@@ -7,6 +7,19 @@ Windows/DirectX functions it calls are implemented in Rust (OpenGL for the 3D re
 videos, sound, network play). No game code or data is part of this repository or its
 releases: you need your own copy of the game.
 
+![A mission in widescreen at 1920x1080](docs/screenshots/game.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/precinct.png" alt="Precinct Assault"></td>
+    <td width="50%"><img src="docs/screenshots/menu.png" alt="The main menu"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Precinct Assault</em></td>
+    <td align="center"><em>The main menu</em></td>
+  </tr>
+</table>
+
 ## Playing
 
 1. Download from the [releases]: `fcop-...-windows-x64.zip` for Windows or
