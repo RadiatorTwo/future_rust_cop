@@ -16,6 +16,12 @@
 //! and `page.png` (the page). Pieces already there are kept: they may be someone's work. A page
 //! several missions share is cut once, by what all of them use. Pictures may overlap.
 //!
+//! Beside each piece `<piece>.json`: the faces that show it, for making it anew (by hand or by
+//! an AI given the picture and this): each face's corners as texture coordinates in the piece
+//! (0...1 from its top left corner, so they hold for a larger one too) and, for a model, where
+//! the corners are on the model (its units, y up as in the game's world: the robot's legs,
+//! model 019 of M2C, lie below its origin). The same face once.
+//!
 //! `fcop import`: the changed pieces back into pages,
 //! `game_files/Textures/<mission>_page<n>_<hash>.png` (the replacement, `platform::hd`):
 //! pieces may be larger than the originals (up to 4x; all scaled to the largest's scale),
@@ -24,6 +30,7 @@
 
 use crate::mission;
 use crate::platform::hd::{self, Image};
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -34,8 +41,15 @@ struct Page {
     name: String,
     texels: Vec<u16>,
     /// by model ("<mission>_model<n>")
-    models: BTreeMap<String, Vec<[u16; 4]>>,
-    terrain: Vec<[u16; 4]>,
+    models: BTreeMap<String, Vec<Face>>,
+    terrain: Vec<Face>,
+}
+
+/// A face showing part of a page: its corners' texel coordinates and (models) positions.
+#[derive(PartialEq)]
+struct Face {
+    uv: Vec<[u8; 2]>,
+    pos: Vec<[i16; 3]>,
 }
 
 /// One picture: what it is from ("<mission>_model<n>", "terrain") and its rectangle.
@@ -77,14 +91,18 @@ fn pages(missions: &Path) -> Result<BTreeMap<u64, Page>, String> {
         for model in &m.models {
             for f in &model.faces {
                 let uv: Vec<[u8; 2]> = f.corners.iter().map(|c| c.uv).collect();
-                if let (Some(page), Some(r)) = (hashes.get(&f.page).and_then(|h| out.get_mut(h)), bounds(&uv)) {
-                    page.models.entry(format!("{mission}_model{:03}", model.id)).or_default().push(r);
+                let pos = f.corners.iter().map(|c| model.vertices[c.vertex as usize]).collect();
+                if let Some(page) = hashes.get(&f.page).and_then(|h| out.get_mut(h)) {
+                    page.models.entry(format!("{mission}_model{:03}", model.id)).or_default().push(Face { uv, pos });
                 }
             }
         }
         for t in m.tiles.iter().filter(|t| square(&t.uv)) {
-            if let (Some(page), Some(r)) = (hashes.get(&t.page).and_then(|h| out.get_mut(h)), bounds(&t.uv)) {
-                page.terrain.push(r);
+            if let Some(page) = hashes.get(&t.page).and_then(|h| out.get_mut(h)) {
+                let face = Face { uv: t.uv.clone(), pos: Vec::new() };
+                if !page.terrain.contains(&face) {
+                    page.terrain.push(face);
+                }
             }
         }
     }
@@ -143,8 +161,9 @@ fn groups(rects: &[[u16; 4]], joined: fn(&[u16; 4], &[u16; 4]) -> bool) -> Vec<[
 /// A page's pictures: each model's sheet, then the terrain's; the same rectangle once.
 fn pictures(page: &Page) -> Vec<Piece> {
     let mut out: Vec<Piece> = Vec::new();
-    let all = page.models.iter().map(|(what, r)| (what.as_str(), groups(r, close))).chain([("terrain", groups(&page.terrain, close))]);
-    for (what, rects) in all {
+    let rects = |faces: &[Face]| faces.iter().filter_map(|f| bounds(&f.uv)).collect::<Vec<_>>();
+    let models = page.models.iter().map(|(what, f)| (what.as_str(), groups(&rects(f), close)));
+    for (what, rects) in models.chain([("terrain", groups(&rects(&page.terrain), close))]) {
         for rect in rects {
             if !out.iter().any(|p| p.rect == rect) {
                 out.push(Piece { what: what.to_string(), rect });
@@ -195,6 +214,43 @@ fn piece_rect(name: &str) -> Option<[u16; 4]> {
     (w > 0 && h > 0 && x + w <= 256 && y + h <= 256).then_some([x, y, x + w, y + h])
 }
 
+/// A piece's faces as JSON (see the module).
+fn faces_json(page: &Page, p: &Piece, file: &str) -> String {
+    let faces = if p.what == "terrain" { &page.terrain } else { &page.models[&p.what] };
+    let r = p.rect;
+    let (w, h) = ((r[2] - r[0]) as f64, (r[3] - r[1]) as f64);
+    let round = |v: f64| (v * 10000.0).round() / 10000.0;
+    let mut seen: Vec<&Face> = Vec::new();
+    let mut list = Vec::new();
+    for f in faces {
+        let Some(b) = bounds(&f.uv) else { continue };
+        if b[0] < r[0] || b[1] < r[1] || b[2] > r[2] || b[3] > r[3] || seen.contains(&f) {
+            continue;
+        }
+        seen.push(f);
+        let uv: Vec<[f64; 2]> = f.uv.iter().map(|c| [round((c[0] as f64 - r[0] as f64) / w), round((c[1] as f64 - r[1] as f64) / h)]).collect();
+        let face = if f.pos.is_empty() { json!({ "uv": uv }) } else { json!({ "uv": uv, "position": f.pos }) };
+        list.push(face.to_string());
+    }
+    // by hand: the description first, a face a line
+    let head = json!({
+        "image": file,
+        "width": r[2] - r[0],
+        "height": r[3] - r[1],
+        "what": p.what,
+        "uv": "texture coordinates of each face's corners in the image: 0...1 from its top left corner",
+        "position": "models: the corners on the model (its own units; y up, as in the game's world)"
+    });
+    let head = serde_json::to_string_pretty(&head).unwrap();
+    format!("{},
+  \"faces\": [
+    {}
+  ]
+}}
+", head.trim_end().trim_end_matches('}').trim_end(), list.join(",
+    "))
+}
+
 /// The page twice the size with the pictures outlined: models' magenta, terrain's cyan.
 fn layout(page: &Image, pictures: &[Piece]) -> Image {
     let mut img = hd::resize(page, 512, 512);
@@ -233,13 +289,16 @@ pub fn export(missions: &Path, out: &Path) -> Result<(), String> {
         let img = rgba(&page.texels);
         let pictures = pictures(page);
         for p in &pictures {
-            let path = dir.join(piece_name(p));
+            let name = piece_name(p);
+            let path = dir.join(&name);
             if path.exists() {
                 kept += 1;
             } else {
                 write_png(&path, &cut(&img, &p.rect))?;
                 written += 1;
             }
+            let json = path.with_extension("json");
+            std::fs::write(&json, faces_json(page, p, &name)).map_err(|e| format!("{}: {e}", json.display()))?;
         }
         write_png(&dir.join("page.png"), &img)?;
         write_png(&dir.join("layout.png"), &layout(&img, &pictures))?;

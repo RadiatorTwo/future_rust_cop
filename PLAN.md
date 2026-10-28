@@ -170,6 +170,15 @@ Next:
       the robot's page (user: "the robot's front has no rectangles"); only terrain is filtered
       now (garbage coordinates on tiles drawn in a colour). Upscaling alone is not enough
       (user): the textures are to be made anew
+- [x] `<piece>.json` beside each piece (2026-10-28): its faces' corners as texture coordinates
+      in the piece (0...1) and, for models, their positions on the model, for an AI to make the
+      texture anew (user). Model y is up (the robot's legs, M2C model 019, lie below the origin;
+      the world's y is up); a face once, a face a line
+- [x] `tools/texview` (2026-10-28): navigator for the pieces' folders (user: hard to find
+      one's way in them; the layout stays). Its own crate (egui, own Cargo.lock, not linked to
+      fcop): folders | thumbnails | piece with UV grid, original beside it, place on the page,
+      JSON; changed = differs from page.png as `fcop import` decides; files polled every second.
+      Later perhaps: a 3D view of a model with its pieces, a button for `fcop import`
 - [ ] Export: sprites, effects, the HUD (not in models or terrain), the other vertex lists of
       animated models
 - [ ] Replacement textures: a switch in Preferences

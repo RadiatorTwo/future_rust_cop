@@ -1,0 +1,15 @@
+[package]
+name = "texview"
+version = "0.1.0"
+edition = "2024"
+description = "Navigator for the texture pieces `fcop export` writes"
+license = "MIT"
+
+# its own workspace: its dependencies never mix with the game's
+[workspace]
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+png = "0.18"
+serde_json = "1"
+open = "5"

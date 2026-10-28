@@ -68,10 +68,22 @@ mission's pages into their pictures, found from what uses them: each model's par
 the terrain takes windows anywhere in it). They go to
 `game_files/Textures/pieces/<mission>_page<n>_<hash>/`, named after what uses them and where
 they are (`M2C_model018_x1_y32_127x119.png`), with `layout.png` showing them on the page
-(models magenta, terrain cyan) and `page.png`. Make new ones of the same name (larger is
+(models magenta, terrain cyan) and `page.png`. Beside each picture a `.json` lists the faces
+that show it: each corner's texture coordinates in the picture (0...1 from its top left
+corner) and, for models, the corner's position on the model; for making it anew by hand or
+with an AI given the picture and the file. Make new ones of the same name (larger is
 fine, up to 4 times, transparent where nothing is to be drawn), then `fcop import` puts the
 changed ones back into pages, `game_files/Textures/<mission>_page<n>_<hash>.png`: the game
 uses them from its next start. `fcop export` keeps pieces that are already there.
+
+`tools/texview` is a navigator for these folders (`cargo build --release` there; start
+`texview` with the `pieces` folder, a page's folder or a piece, or drop one onto it): the
+folders by mission on the left, the folder's pieces as thumbnails next to them, then the
+selected piece, zoomable (mouse wheel, drag), with its faces drawn over it (UV grid; a face
+under the mouse is lit, in the JSON too), the original beside it when it was changed, where it
+lies on its page (a click there selects a piece) and its JSON. Changed pieces and folders are
+marked orange; a piece saved by an image editor shows at once. Keys: Up/Down folder, Left/Right
+piece, G grid, O original, E open in the editor, +/-/0 zoom, Ctrl+F filter.
 
 Parts the game changes while it runs (the HUD's message icon) are only found by playing:
 start fcop with `FCOP_DUMP_TEXTURES=1` set and every texture it has not seen before is

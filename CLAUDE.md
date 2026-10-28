@@ -177,9 +177,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   cells at 0x3c4 (first tile << 6 | count), tile count << 6 at 0x5c4, tiles from 0x5c8 (u32:
   bits 1-10 byte offset of its pairs, 15-21 shape (triangles: < 60, 71...102), 22-31
   texture), then the pairs, then the textures (u16: bits 8-10 page, 0x2000 four pairs, 13-15
-  how drawn); read at 0x4537f0/0x453930), `Cact`, `Cwav`... The game's y points down.
+  how drawn); read at 0x4537f0/0x453930), `Cact`, `Cwav`... Model y is up, as the world's.
   `src/export.rs`: `fcop export` cuts pages into pictures by what uses them (models' sheets,
-  terrain), `fcop import` puts changed ones back into replacement pages.
+  terrain), `fcop import` puts changed ones back into replacement pages. `tools/texview`:
+  a separate egui program (own crate and Cargo.lock) to browse those pieces (UV grid,
+  original, place on the page, JSON; reloads what an editor saves).
   Registry `Group` = `3Dfx` (default) or `Software`.
   Frames are drawn as tall as the window (high resolution; the Glide screen, 1280x1024 for
   the game's 1280x960, only gives the coordinates), 4:3 or as wide as the window's aspect;
