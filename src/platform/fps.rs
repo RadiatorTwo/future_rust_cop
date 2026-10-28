@@ -19,7 +19,7 @@
 //! from [0x499b0c] up to [0x511dc0]) already holds what the loop added after the frame's
 //! render (0x407d70: messages, an indicator at 0x4357f0) for the next frame to draw; drawing
 //! empties it (0x40ca10 links the records by depth and resets the end), so every picture
-//! puts those records back. Only with Glide, one view (0x407360) and while playing.
+//! puts those records back. Only with Glide and while playing.
 //!
 //! The network game waits in 0x406b20 instead (the same test in two loops), from a start one
 //! frame older, so its frames come in pairs (7 and 1 ticks, or 8 and 0; the other computer
@@ -30,6 +30,11 @@
 //! 0xf: the host 0, the other 1); pictures draw that one, with its camera selected. It runs
 //! the visibility pass before 0x426eb0, with the real places: its own picture runs it again
 //! with the shown ones (else the terrain and walls chosen did not fit the camera and shook).
+//!
+//! Split screen (two players on one computer) uses the same frame 0x4076d0 in the one-view
+//! loop: both views are drawn, each with its player's camera, into its half ([0x499b24],
+//! which every 0x4114c0 moves on). Both cameras are interpolated; the places stay until the
+//! second view's block ends. Not while a player's view shows 0x405cb0 instead of the world.
 //!
 //! The player chooses the rate in Preferences (REG_DWORD `FrameRate` in the game's key,
 //! frames per second; missing or 0: the original; 0xffffffff: unlimited).
@@ -110,6 +115,8 @@ const VIEW1_START: u32 = 0x407b5a;
 const VIEW_RECORD: [u32; 2] = [0x18, 0x3c];
 /// Selects the camera by its number: 0x4348e0(robot data [+0xac] byte +0xac).
 const CAMERA_SELECT: u32 = 0x4348e0;
+/// The cameras: a list from [0x4a1d44], number at +0x88, next at +0x8c (0x434900).
+const CAMERAS: u32 = 0x4a1d44;
 /// The display list: the start of its records and their end.
 const LIST_START: u32 = 0x499b0c;
 const LIST_END: u32 = 0x511dc0;
@@ -156,7 +163,51 @@ fn ticks() -> f64 {
 /// Drawn frames in between: a higher rate is chosen and the game draws as we know it.
 fn active() -> bool {
     let m = mem();
-    RATE.load(Ordering::Relaxed) != 0 && m.rd8(GLIDE) != 0 && m.rd32(STATE) == 4 && (m.rd32(VIEWS) == 1 || network())
+    RATE.load(Ordering::Relaxed) != 0
+        && m.rd8(GLIDE) != 0
+        && m.rd32(STATE) == 4
+        && (m.rd32(VIEWS) == 1 || network() || split() && (0..2).all(|v| !waiting(m.rd32(PLAYER + 4 * v))))
+}
+
+/// Split screen: two views on this computer.
+fn split() -> bool {
+    let m = mem();
+    m.rd32(VIEWS) == 2 && m.rd8(SPLIT) != 0
+}
+
+/// A player whose view 0x4076d0 draws with 0x405cb0 instead of the world (its robot data's
+/// +0x310 set, its flags +0x24 without 0x1000000).
+fn waiting(player: u32) -> bool {
+    let m = mem();
+    player != 0 && m.rd32(player + 0x24) & 0x100_0000 == 0 && m.rd8(m.rd32(player + 0xac) + 0x310) != 0
+}
+
+/// The camera number in a player's robot data.
+fn camera_number(player: u32) -> u32 {
+    let m = mem();
+    m.rd8(m.rd32(player + 0xac) + 0xac) as i8 as i32 as u32
+}
+
+/// A player's camera (0x434900; 0: none).
+fn camera_of(player: u32) -> u32 {
+    let m = mem();
+    let number = camera_number(player);
+    let mut cam = m.rd32(CAMERAS);
+    while cam != 0 && m.rd32(cam + 0x88) != number {
+        cam = m.rd32(cam + 0x8c);
+    }
+    cam
+}
+
+/// The cameras drawn with: in split screen both players', else the one selected.
+fn cameras() -> Vec<u32> {
+    let m = mem();
+    if !split() {
+        return vec![m.rd32(CAMERA)];
+    }
+    let mut cams: Vec<u32> = (0..2).map(|v| camera_of(m.rd32(PLAYER + 4 * v))).filter(|&c| c != 0).collect();
+    cams.dedup();
+    cams
 }
 
 /// The view shown on this computer: in a network game its player's number (the host 0, the
@@ -183,7 +234,7 @@ fn network() -> bool {
 /// Where the actors and the camera were when a frame was drawn: each place by its address.
 struct Places {
     actors: Vec<(u32, [i32; PLACE_N])>,
-    camera: [i32; CAMERA_N],
+    cameras: Vec<(u32, [i32; CAMERA_N])>,
 }
 
 fn read(a: u32, out: &mut [i32]) {
@@ -205,7 +256,9 @@ impl Places {
         for (a, p) in &self.actors {
             write(*a, p);
         }
-        write(mem().rd32(CAMERA), &self.camera);
+        for (a, p) in &self.cameras {
+            write(*a, p);
+        }
     }
 
     fn now() -> Places {
@@ -224,9 +277,15 @@ impl Places {
                 actors.extend(ROBOT_MODELS.iter().map(|&r| place(data + r + 4)));
             }
         }
-        let mut camera = [0; CAMERA_N];
-        read(m.rd32(CAMERA), &mut camera);
-        Places { actors, camera }
+        let cameras = cameras()
+            .into_iter()
+            .map(|a| {
+                let mut p = [0; CAMERA_N];
+                read(a, &mut p);
+                (a, p)
+            })
+            .collect();
+        Places { actors, cameras }
     }
 
     /// Put everything a fraction `f` of the way from `self` to `to`; what moved too far for
@@ -255,18 +314,20 @@ impl Places {
             }
             write(*a, &v);
         }
-        let (a, b) = (&self.camera, &to.camera);
-        if (0..3).all(|i| (b[i] - a[i]).abs() <= 0x10000) {
-            let mut v = *b;
-            for i in 0..CAMERA_N {
-                if i == YAW {
-                    let d = ((b[i] - a[i] + 0x800) & 0xfff) - 0x800;
-                    v[i] = a[i] + (d as f64 * f).round() as i32;
-                } else if !CAMERA_KEEP.contains(&i) {
-                    v[i] = lerp(a[i], b[i]);
+        for (cam, b) in &to.cameras {
+            let Some((_, a)) = self.cameras.iter().find(|x| x.0 == *cam) else { continue };
+            if (0..3).all(|i| (b[i] - a[i]).abs() <= 0x10000) {
+                let mut v = *b;
+                for i in 0..CAMERA_N {
+                    if i == YAW {
+                        let d = ((b[i] - a[i] + 0x800) & 0xfff) - 0x800;
+                        v[i] = a[i] + (d as f64 * f).round() as i32;
+                    } else if !CAMERA_KEEP.contains(&i) {
+                        v[i] = lerp(a[i], b[i]);
+                    }
                 }
+                write(*cam, &v);
             }
-            write(mem().rd32(CAMERA), &v);
         }
     }
 }
@@ -280,7 +341,7 @@ const LAG: f64 = FRAME as f64 + 2.0;
 static BEHIND: Mutex<Option<f64>> = Mutex::new(None);
 /// The real places while a picture is drawn with others (put back at its end).
 static REAL: Mutex<Option<Places>> = Mutex::new(None);
-/// A picture between the game's frames is being drawn.
+/// A picture between the game's frames is being drawn (from its start to its end).
 static SHOWING: AtomicBool = AtomicBool::new(false);
 /// The frame (its start tick) the game drew in its own way, and drew unpaused (+1: none).
 static DRAWN: AtomicU32 = AtomicU32::new(0);
@@ -303,13 +364,22 @@ fn period() -> f64 {
 /// too, shows the game as it was `LAG` ticks before the newest it drew, as far as the clock
 /// has gone on since: between the two frames around that time. So how the game splits its
 /// time into frames does not matter (the network game's take 8 and 0 or 7 and 1 ticks in
-/// turn: a pair is kept as one). In a network game only this computer's view is done.
+/// turn: a pair is kept as one). In a network game only this computer's view is done; split
+/// screen places everything at the first view's block.
 pub fn render_start(c: &mut Cpu) {
     let m = mem();
-    // the two-view frame starts a render block for each view: only this computer's is shown
-    let showing = SHOWING.swap(false, Ordering::Relaxed);
+    let showing = SHOWING.load(Ordering::Relaxed);
     let view = local_view();
-    let second = !showing && network() && (m.rd32(c.r[ESP]) == VIEW1_START) != (view == 1);
+    let view1 = m.rd32(c.r[ESP]) == VIEW1_START;
+    // the two-view frame starts a render block for each view: in a network game only this
+    // computer's is shown, split screen keeps the first's places for the second
+    let second = if showing {
+        REAL.lock().unwrap().is_some()
+    } else if split() {
+        view1
+    } else {
+        network() && view1 != (view == 1)
+    };
     if active() && !second {
         let now = ticks();
         let mut history = HISTORY.lock().unwrap();
@@ -349,13 +419,20 @@ pub fn render_start(c: &mut Cpu) {
                 }
                 // the two-view frame ran the visibility pass before, with the real camera: the
                 // terrain and walls it chose did not fit the camera drawn with (they shook)
-                if !showing && network() {
+                if !showing && (network() || split()) {
                     let views: Vec<Vec<u8>> = VIEW_STATE.iter().map(|&(a, n)| m.slice(a, n).to_vec()).collect();
                     *VIEWS_KEPT.lock().unwrap() = Some(views);
                     let regs = c.r;
-                    let record = c.r[ESP] + 4 + VIEW_RECORD[view as usize & 1];
+                    let records = c.r[ESP] + 4;
+                    let camera = m.rd32(CAMERA);
                     c.r[ESP] -= 0x40;
-                    super::guest_call(c, VISIBILITY, &[view, local_player(), record]);
+                    let shown = if split() { vec![0, 1] } else { vec![view] };
+                    for v in shown {
+                        let record = records + VIEW_RECORD[v as usize & 1];
+                        super::guest_call(c, VISIBILITY, &[v, m.rd32(PLAYER + 4 * v), record]);
+                    }
+                    // it selects its player's camera
+                    m.wr32(CAMERA, camera);
                     c.r = regs;
                 }
             }
@@ -364,9 +441,14 @@ pub fn render_start(c: &mut Cpu) {
     call_original(c, RENDER_START);
 }
 
-/// 0x4114c0 ends the render block: the real places come back.
+/// 0x4114c0 ends the render block: the real places come back (split screen: after the
+/// second view's).
 pub fn render_end(c: &mut Cpu) {
+    let view = mem().rd32(c.r[ESP] + 4);
     call_original(c, RENDER_END);
+    if split() && view == 0 {
+        return;
+    }
     if let Some(views) = VIEWS_KEPT.lock().unwrap().take() {
         for (&(a, n), v) in VIEW_STATE.iter().zip(&views) {
             mem().slice(a, n).copy_from_slice(v);
@@ -403,17 +485,40 @@ fn picture(c: &mut Cpu) {
     let esp = c.r[ESP];
     let view = esp - 0x200;
     c.r[ESP] = esp - 0x400;
-    let (v, player) = (local_view(), local_player());
-    let (net, camera) = (network(), m.rd32(CAMERA));
+    let camera = m.rd32(CAMERA);
+    SHOWING.store(true, Ordering::Relaxed);
+    if split() {
+        split_views(c, view);
+    } else {
+        one_view(c, view);
+    }
+    SHOWING.store(false, Ordering::Relaxed);
+    super::guest_call(c, 0x4153a0, &[]);
+    for (&(seed, table), (s, t)) in RANDOM.iter().zip(&random) {
+        m.wr32(seed, *s);
+        m.slice(table, 80).copy_from_slice(t);
+    }
+    m.slice(start, waiting.len()).copy_from_slice(&waiting);
+    m.wr32(LIST_END, end);
+    for (&(a, n), v) in VIEW_STATE.iter().zip(&views) {
+        m.slice(a, n).copy_from_slice(v);
+    }
+    m.wr32(CAMERA, camera);
+    c.r = regs;
+}
+
+/// The render block of one view: 0x407360's, or in a network game this computer's view of
+/// 0x4076d0's (its view record at `record`).
+fn one_view(c: &mut Cpu, record: u32) {
+    let m = mem();
+    let (v, player, net) = (local_view(), local_player(), network());
     if net {
         // the loop leaves the last player's camera selected
-        let number = m.rd8(m.rd32(player + 0xac) + 0xac) as i8 as i32 as u32;
-        super::guest_call(c, CAMERA_SELECT, &[number]);
+        super::guest_call(c, CAMERA_SELECT, &[camera_number(player)]);
     }
-    SHOWING.store(true, Ordering::Relaxed);
     super::guest_call(c, RENDER_START, &[]);
-    super::guest_call(c, VISIBILITY, &[v, player, view]);
-    super::guest_call(c, 0x453260, &[v, player, view]);
+    super::guest_call(c, VISIBILITY, &[v, player, record]);
+    super::guest_call(c, 0x453260, &[v, player, record]);
     let hud = m.rd32(HUD_OWNER);
     if net {
         // in 0x4076d0's order, with its indicator (the one-view frame adds it after)
@@ -427,18 +532,45 @@ fn picture(c: &mut Cpu) {
         }
     }
     super::guest_call(c, RENDER_END, &[v]);
-    super::guest_call(c, 0x4153a0, &[]);
-    for (&(seed, table), (s, t)) in RANDOM.iter().zip(&random) {
-        m.wr32(seed, *s);
-        m.slice(table, 80).copy_from_slice(t);
+}
+
+/// Both views' render blocks, as 0x4076d0 draws them in split screen (view records from
+/// `records`). Each view hides the other player's robot while that one's data +0x324 is above
+/// 0 (flag 0x20 on it and its upper part).
+fn split_views(c: &mut Cpu, records: u32) {
+    let m = mem();
+    let players = [m.rd32(PLAYER), m.rd32(PLAYER + 4)];
+    let records = [records, records + 0x80];
+    for v in 0..2 {
+        let (player, other) = (players[v], players[1 - v]);
+        super::guest_call(c, CAMERA_SELECT, &[camera_number(player)]);
+        super::guest_call(c, RENDER_START, &[]);
+        if v == 0 {
+            for w in 0..2 {
+                super::guest_call(c, VISIBILITY, &[w as u32, players[w], records[w]]);
+            }
+            // it selects its player's camera
+            super::guest_call(c, CAMERA_SELECT, &[camera_number(player)]);
+        }
+        let hide = other != 0 && m.rd16(m.rd32(other + 0xac) + 0x324) as i16 > 0;
+        let parts = [other, m.rd32(other + 0xdc)];
+        let was = m.rd32(other + 0x24) & 0x20;
+        if hide {
+            for p in parts {
+                m.wr32(p + 0x24, m.rd32(p + 0x24) | 0x20);
+            }
+        }
+        super::guest_call(c, 0x453260, &[v as u32, player, records[v]]);
+        super::guest_call(c, 0x434c90, &[player]);
+        super::guest_call(c, 0x4075b0, &[v as u32, 0]);
+        if hide && was == 0 {
+            for p in parts {
+                m.wr32(p + 0x24, m.rd32(p + 0x24) & !0x20);
+            }
+        }
+        super::guest_call(c, 0x4357f0, &[v as u32]);
+        super::guest_call(c, RENDER_END, &[v as u32]);
     }
-    m.slice(start, waiting.len()).copy_from_slice(&waiting);
-    m.wr32(LIST_END, end);
-    for (&(a, n), v) in VIEW_STATE.iter().zip(&views) {
-        m.slice(a, n).copy_from_slice(v);
-    }
-    m.wr32(CAMERA, camera);
-    c.r = regs;
 }
 
 /// 0x4130c0() reads the clock (ticks). The mission loop calls it in a busy loop until the

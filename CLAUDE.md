@@ -208,7 +208,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   and the display list (records from [0x499b0c] to [0x511dc0]; 0x40ca10 links them
   by depth, resets the end, draws), both kept: the loop adds records after the frame's
   render (0x407d70: messages, indicator 0x4357f0) for the next frame, and a picture would
-  use them up (they flickered), so each picture puts them back. Only with Glide, one view, playing ([0x511fb8] = 4), not paused. Choices 60 ... 300 and unlimited (REG_DWORD
+  use them up (they flickered), so each picture puts them back. Split screen ([0x511f54], two views in 0x4076d0 from the
+  one-view loop): pictures draw both views, each with its player's camera (both cameras
+  interpolated, found by number as 0x434900 does; [0x499b24] picks the half and every 0x4114c0
+  moves it on), places put back after the second view's 0x4114c0; not while a player's view
+  shows 0x405cb0 instead of the world. Only with Glide, playing ([0x511fb8] = 4), not paused. Choices 60 ... 300 and unlimited (REG_DWORD
   `FrameRate`, 0 = original 37.5, 0xffffffff unlimited: ~950 fps in the first mission; our combo below the 3DFX Options group in Preferences).
   Between frames it sleeps (turn handed over) until 2 ms before the next picture or frame.
   `FCOP_FPS=1` logs the frames shown per second (Glide).

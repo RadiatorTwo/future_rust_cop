@@ -11,10 +11,12 @@ releases: you need your own copy of the game.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/precinct.png" alt="Precinct Assault"></td>
-    <td width="50%"><img src="docs/screenshots/menu.png" alt="The main menu"></td>
+    <td width="33%"><img src="docs/screenshots/coop.png" alt="Two players in split screen"></td>
+    <td width="33%"><img src="docs/screenshots/precinct.png" alt="Precinct Assault"></td>
+    <td width="33%"><img src="docs/screenshots/menu.png" alt="The main menu"></td>
   </tr>
   <tr>
+    <td align="center"><em>Two players in split screen</em></td>
     <td align="center"><em>Precinct Assault</em></td>
     <td align="center"><em>The main menu</em></td>
   </tr>

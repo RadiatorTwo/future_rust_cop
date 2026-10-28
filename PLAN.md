@@ -87,7 +87,11 @@ Next:
       block drawn again in between with actors and camera interpolated (one frame late);
       the per-system fixes (weapon, robot physics, hover, camera turn, effects) and the
       frame limit fields are gone. Measured 144 fps, same kills as the original, camera
-      moves evenly. Not yet: split screen (0x4076d0), software renderer
+      moves evenly. Not yet: software renderer
+- [x] Frame rate in split screen (2-player co-op on one computer, 2026-10-28): pictures draw
+      both views of 0x4076d0, both cameras interpolated. Measured at 144: ~141 fps (one view
+      151), both cameras move evenly (128 units a tick in frames and pictures alike).
+      Checked by the user: works
 - [x] Frame rate: checked by the user by eye, all smooth (2026-10-27)
 
 ### 2. The user's goals after that
