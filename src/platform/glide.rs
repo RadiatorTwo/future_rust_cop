@@ -66,12 +66,26 @@ struct Texture {
     bytes: u32,
     /// when it was last downloaded (a count)
     stamp: u64,
+    /// its layer in the replacements' array, when parts of it are replaced (`hd.rs`)
+    hd: Option<u32>,
 }
 
 /// Layers of the texture array: TMU memory holds 64 textures of 256x256 at 8 bits.
 const LAYERS: u32 = 64;
 /// Levels of a 256x256 texture: 256 ... 1.
 const LEVELS: i32 = 9;
+/// Layers of the replacements' array.
+const HD_LAYERS: u32 = 32;
+
+/// The replacement textures: pages at `scale` times the size, rgb premultiplied by the
+/// coverage and the coverage (as `array`), with mipmaps; framebuffers to copy between layers.
+struct Hd {
+    array: glow::Texture,
+    scale: u32,
+    stale: bool,
+    read: glow::Framebuffer,
+    draw: glow::Framebuffer,
+}
 
 /// Texture filtering when the game filters: 0 the original (bilinear, no mipmaps),
 /// 1 trilinear mipmaps, 2...16 also anisotropic.
@@ -143,6 +157,8 @@ struct Glide {
     alpha: glow::Texture,
     /// a download changed level 0: the mipmaps are built before the next draw
     stale: bool,
+    /// replacement textures, when there are any
+    hd: Option<Hd>,
     /// the anisotropy set on the arrays, and the most the driver takes
     aniso: f32,
     aniso_max: f32,
@@ -196,6 +212,7 @@ void main() {
 const FS: &str = r#"
 uniform sampler2DArray tex;     // rgb * coverage, coverage
 uniform sampler2DArray tex_a;   // alpha * coverage, alpha * (1 - coverage)
+uniform sampler2DArray tex_hd;  // replacements: rgb * coverage, coverage, larger
 uniform int mipmaps;            // filtered by the GPU with mipmaps
 uniform ivec2 clamp_st;
 uniform int chroma;
@@ -215,6 +232,7 @@ ivec4 ac;              // alpha combine
 int ac_inv;
 int use_tex;
 int layer;
+int hd_layer;          // the replacement's layer, -1: none
 ivec2 tex_size;
 
 ivec4 bytes4(uint w) { return ivec4(w & 255u, (w >> 8) & 255u, (w >> 16) & 255u, w >> 24); }
@@ -228,7 +246,8 @@ vec4 texel(ivec2 p) {
 }
 
 // The GPU's trilinear (and anisotropic) filter: inside the primitive's texture rectangle,
-// at most at the level where that still spans 4 texels (a page is an atlas).
+// at most at the level where that still spans 4 texels (a page is an atlas). A replacement
+// gives the colour and coverage; the texel alpha stays the original's.
 vec4 sample_mip(out float cover) {
     vec2 size = vec2(textureSize(tex, 0).xy);
     vec2 dx = dFdx(st), dy = dFdy(st);
@@ -246,19 +265,21 @@ vec4 sample_mip(out float cover) {
     vec3 uv = vec3(p / size, float(layer));
     vec4 c = textureGrad(tex, uv, dx / size, dy / size);
     vec4 a = textureGrad(tex_a, uv, dx / size, dy / size);
+    float ta = c.a > 0.0 ? a.r / c.a : 0.0;
+    if (hd_layer >= 0) c = textureGrad(tex_hd, vec3(uv.xy, float(hd_layer)), dx / size, dy / size);
     if (chroma == 0) {
         cover = 1.0;
         return vec4(c.rgb, a.r + a.g);
     }
     cover = c.a;
-    return c.a > 0.0 ? vec4(c.rgb / c.a, a.r / c.a) : vec4(0.0);
+    return c.a > 0.0 ? vec4(c.rgb / c.a, ta) : vec4(0.0);
 }
 
 bool keyed(vec3 c) { return chroma != 0 && all(lessThan(abs(c - key), vec3(0.5 / 255.0))); }
 
 // the texture colour and how much of it is not keyed out
 vec4 sample_tex(out float cover) {
-    if (linear_filter != 0 && mipmaps != 0) return sample_mip(cover);
+    if (hd_layer >= 0 || linear_filter != 0 && mipmaps != 0) return sample_mip(cover);
     if (linear_filter == 0) {
         vec4 t = texel(ivec2(floor(st)));
         cover = keyed(t.rgb) ? 0.0 : 1.0;
@@ -316,7 +337,8 @@ void main() {
     cc_inv = int(vmode.z & 1u);
     ac_inv = int((vmode.z >> 1) & 1u);
     use_tex = int((vmode.z >> 2) & 1u);
-    layer = int(vmode.z >> 8);
+    layer = int((vmode.z >> 8) & 255u);
+    hd_layer = int(vmode.z >> 16) - 1;
     tex_size = ivec2(vmode.w & 0xffffu, vmode.w >> 16);
     float cover = 1.0;
     vec4 t = use_tex != 0 ? sample_tex(cover) : vec4(1.0);
@@ -351,6 +373,7 @@ struct Uniforms {
     space: Option<glow::UniformLocation>,
     tex: Option<glow::UniformLocation>,
     tex_a: Option<glow::UniformLocation>,
+    tex_hd: Option<glow::UniformLocation>,
     mipmaps: Option<glow::UniformLocation>,
     clamp_st: Option<glow::UniformLocation>,
     chroma: Option<glow::UniformLocation>,
@@ -366,6 +389,7 @@ impl Uniforms {
             space: u("space"),
             tex: u("tex"),
             tex_a: u("tex_a"),
+            tex_hd: u("tex_hd"),
             mipmaps: u("mipmaps"),
             clamp_st: u("clamp_st"),
             chroma: u("chroma"),
@@ -443,6 +467,65 @@ fn bytes_per_texel(format: u32) -> u32 {
     if format >= 8 { 2 } else { 1 }
 }
 
+impl Hd {
+    /// The array for replacements, when there are any.
+    fn open(gl: &glow::Context) -> Option<Hd> {
+        let scale = super::hd::scale();
+        if scale == 0 {
+            return None;
+        }
+        let size = 256 * scale as i32;
+        unsafe {
+            let array = gl.create_texture().expect("GL texture");
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(array));
+            gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR as i32);
+            gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+            for p in [glow::TEXTURE_WRAP_S, glow::TEXTURE_WRAP_T] {
+                gl.tex_parameter_i32(glow::TEXTURE_2D_ARRAY, p, glow::CLAMP_TO_EDGE as i32);
+            }
+            gl.tex_storage_3d(glow::TEXTURE_2D_ARRAY, LEVELS + scale.trailing_zeros() as i32, glow::RGBA8, size, size, HD_LAYERS as i32);
+            let read = gl.create_framebuffer().expect("GL framebuffer");
+            let draw = gl.create_framebuffer().expect("GL framebuffer");
+            Some(Hd { array, scale, stale: false, read, draw })
+        }
+    }
+
+    /// Rows `r0..=r1` of the original texture (`w` wide, in `layer` of `array`) scaled up into
+    /// the replacement's `hd_layer`.
+    fn scale_up(&mut self, gl: &glow::Context, array: glow::Texture, layer: u32, hd_layer: u32, w: u32, (r0, r1): (u32, u32)) {
+        let k = self.scale as i32;
+        let (w, r0, r1) = (w as i32, r0 as i32, r1 as i32 + 1);
+        unsafe {
+            gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(self.read));
+            gl.framebuffer_texture_layer(glow::READ_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, Some(array), 0, layer as i32);
+            gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(self.draw));
+            gl.framebuffer_texture_layer(glow::DRAW_FRAMEBUFFER, glow::COLOR_ATTACHMENT0, Some(self.array), 0, hd_layer as i32);
+            gl.blit_framebuffer(0, r0, w, r1, 0, r0 * k, w * k, r1 * k, glow::COLOR_BUFFER_BIT, glow::LINEAR);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        }
+        self.stale = true;
+    }
+
+    /// A replacement (straight alpha) into rows from `r0` (of the original) of `hd_layer`.
+    fn put(&mut self, gl: &glow::Context, hd_layer: u32, r0: u32, img: &super::hd::Image) {
+        let px: Vec<u8> = img
+            .rgba
+            .chunks(4)
+            .flat_map(|p| {
+                let a = p[3] as u32;
+                let m = |c: u8| ((c as u32 * a + 127) / 255) as u8;
+                [m(p[0]), m(p[1]), m(p[2]), p[3]]
+            })
+            .collect();
+        unsafe {
+            gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(self.array));
+            let y = (r0 * self.scale) as i32;
+            gl.tex_sub_image_3d(glow::TEXTURE_2D_ARRAY, 0, 0, y, hd_layer as i32, img.w as i32, img.h as i32, 1, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&px)));
+        }
+        self.stale = true;
+    }
+}
+
 impl Glide {
     fn open(gl: &glow::Context, w: u32, h: u32) -> Glide {
         let target = (w, w * 3 / 4);
@@ -500,6 +583,7 @@ impl Glide {
                 array,
                 alpha,
                 stale: false,
+                hd: Hd::open(gl),
                 aniso: 0.0,
                 aniso_max,
                 textures: BTreeMap::new(),
@@ -640,18 +724,32 @@ impl Glide {
             gl.uniform_1_i32(u.mipmaps.as_ref(), mipmaps as i32);
             gl.uniform_1_i32(u.tex_a.as_ref(), 1);
             gl.uniform_1_i32(u.tex.as_ref(), 0);
+            gl.uniform_1_i32(u.tex_hd.as_ref(), 2);
             let aniso = (filter.max(1) as f32).min(self.aniso_max);
+            // replacements are always drawn with mipmaps, and read the originals' alpha with them
+            let levels = mipmaps || self.hd.is_some();
+            if let Some(hd) = &mut self.hd {
+                gl.active_texture(glow::TEXTURE2);
+                gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(hd.array));
+                if hd.stale {
+                    gl.generate_mipmap(glow::TEXTURE_2D_ARRAY);
+                    hd.stale = false;
+                }
+                if aniso != self.aniso && self.aniso_max > 1.0 {
+                    gl.tex_parameter_f32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAX_ANISOTROPY_EXT, aniso);
+                }
+            }
             for (k, t) in [(glow::TEXTURE1, self.alpha), (glow::TEXTURE0, self.array)] {
                 gl.active_texture(k);
                 gl.bind_texture(glow::TEXTURE_2D_ARRAY, Some(t));
-                if mipmaps && self.stale {
+                if levels && self.stale {
                     gl.generate_mipmap(glow::TEXTURE_2D_ARRAY);
                 }
                 if aniso != self.aniso && self.aniso_max > 1.0 {
                     gl.tex_parameter_f32(glow::TEXTURE_2D_ARRAY, glow::TEXTURE_MAX_ANISOTROPY_EXT, aniso);
                 }
             }
-            if mipmaps {
+            if levels {
                 self.stale = false;
             }
             self.aniso = aniso;
@@ -730,13 +828,14 @@ impl Glide {
         let k = self.constant;
         let ch = |sh: u32| ((k >> sh & 0xff) as f32 / 255.0).to_bits();
         let konst = [ch(16), ch(8), ch(0), ch(24)];
-        // the combine units a byte each, then invert bits, texturing and the layer, its size
+        // the combine units a byte each, then invert bits, texturing, the layer and the
+        // replacement's layer + 1, its size
         let bytes = |u: [u32; 5]| u[0] | u[1] << 8 | u[2] << 16 | u[3] << 24;
         let tex = self.tex.and_then(|a| self.textures.get(&a));
         let mode = [
             bytes(self.cc),
             bytes(self.ac),
-            (self.cc[4] & 1) | (self.ac[4] & 1) << 1 | (tex.is_some() as u32) << 2 | tex.map_or(0, |t| t.layer) << 8,
+            (self.cc[4] & 1) | (self.ac[4] & 1) << 1 | (tex.is_some() as u32) << 2 | tex.map_or(0, |t| t.layer << 8 | t.hd.map_or(0, |l| l + 1) << 16),
             tex.map_or(0, |t| t.w | t.h << 16),
         ];
         // x y z r g b ooz a oow, then tmu 0: sow tow oow
@@ -814,7 +913,7 @@ impl Glide {
                     self.textures.remove(&a);
                     l
                 });
-                self.textures.insert(addr, Texture { layer, w, h, bytes, stamp });
+                self.textures.insert(addr, Texture { layer, w, h, bytes, stamp, hd: None });
                 layer
             }
         };
@@ -827,6 +926,8 @@ impl Glide {
             }
             let n = ((r1 - r0 + 1) * w) as usize;
             let px = convert(format, data, n);
+            let key = super::hd::hash(format, w, r1 - r0 + 1, mem().slice(data, n * bytes_per_texel(format) as usize));
+            super::hd::dump(key, w, r1 - r0 + 1, &px.chunks(4).flat_map(|p| [p[0], p[1], p[2], if p[..3] == [0, 0, 0] { 0 } else { 255 }]).collect::<Vec<u8>>());
             // premultiplied by coverage: a black texel is keyed out
             let mut rgb = Vec::with_capacity(n * 4);
             let mut alpha = Vec::with_capacity(n * 2);
@@ -852,6 +953,44 @@ impl Glide {
                 );
             }
             self.stale = true;
+            self.replace(gl, addr, key, (r0, r1));
+        }
+    }
+
+    /// After a download of rows `r0..=r1` (known by `key`) into the texture at `addr`: its
+    /// replacement into the replacements' layer, or the original scaled up when other parts of
+    /// the page are replaced. A whole page without a replacement gives its layer up.
+    fn replace(&mut self, gl: &glow::Context, addr: u32, key: u64, rows: (u32, u32)) {
+        let Some(hd) = &mut self.hd else { return };
+        let t = &self.textures[&addr];
+        let (layer, w, h) = (t.layer, t.w, t.h);
+        let img = super::hd::find(key, w, rows.1 - rows.0 + 1);
+        let whole = rows == (0, h - 1);
+        let hd_layer = match (t.hd, &img) {
+            (Some(l), Some(_)) => l,
+            (Some(l), None) if !whole => l,
+            (Some(_), None) => {
+                self.textures.get_mut(&addr).unwrap().hd = None;
+                return;
+            }
+            (None, None) => return,
+            (None, Some(_)) => {
+                // a free layer, or the one of the texture downloaded longest ago
+                let l = (0..HD_LAYERS).find(|l| self.textures.values().all(|t| t.hd != Some(*l))).unwrap_or_else(|| {
+                    let t = self.textures.values_mut().filter(|t| t.hd.is_some()).min_by_key(|t| t.stamp).unwrap();
+                    t.hd.take().unwrap()
+                });
+                self.textures.get_mut(&addr).unwrap().hd = Some(l);
+                // the rest of the page as it is
+                if !whole {
+                    hd.scale_up(gl, self.array, layer, l, w, (0, h - 1));
+                }
+                l
+            }
+        };
+        match img {
+            Some(img) => hd.put(gl, hd_layer, rows.0, &img),
+            None => hd.scale_up(gl, self.array, layer, hd_layer, w, rows),
         }
     }
 }

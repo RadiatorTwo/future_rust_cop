@@ -51,6 +51,18 @@ What is new compared to the original:
 - Network play over TCP/IP (Host Game / Join Game; port 47624, type the host's address in
   the Join dialog)
 - The arrow keys for player 1, and a camera close behind the robot
+- Replacement textures (HD textures), see below
+
+### Replacement textures
+
+The game's textures are 256x256 pages (atlases of many small pictures). Each page, and each
+part of one the game changes while it runs, is known by a hash of its contents. A PNG named
+by that hash in `game_files/Textures` (or a folder below it; anything may come before the
+hash, e.g. `street_0123456789abcdef.png`) replaces it: full colour, alpha for transparency
+(soft edges are fine), up to 4 times the size (1024x1024 for a page). The game's own
+textures to start from: start fcop with `FCOP_DUMP_TEXTURES=1` set and play; every texture it
+has not seen before is written to `game_files/Textures/dump` (transparent where the game
+leaves texels out). `FCOP_HD=0` turns replacements off.
 
 ## Building
 

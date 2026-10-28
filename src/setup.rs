@@ -8,6 +8,7 @@
 //! game_files/FCopLAPD/   FCopLAPD.exe, febmp.bin, missions/ (and our registry.txt,
 //!                        controls.txt, save.cfg: settings, key bindings, saves)
 //! game_files/Video/      the videos (optional)
+//! game_files/Textures/   replacement textures (optional, `platform::hd`)
 //! ```
 //!
 //! Everything else in `game_files` (the CD's installer, DirectX, the Mac version's MISSIONS
@@ -21,6 +22,8 @@ use std::path::{Path, PathBuf};
 const GAME_SHA256: &str = "2dcdd1e78b99947d125712e1a159548e6f5f3929020c29af9e156314ed1c7e5e";
 const GAME: &str = "FCopLAPD";
 const VIDEO: &str = "Video";
+/// replacement textures (`platform::hd`), the player's
+const TEXTURES: &str = "Textures";
 /// what stays in the game folder: the game's files and ours
 const GAME_FILES: [&str; 7] = ["FCopLAPD.exe", "febmp.bin", "missions", "registry.txt", "controls.txt", "save.cfg", COMPILED];
 /// the game's compiled code, kept for the next start (`jit::compile_cached`)
@@ -84,7 +87,7 @@ pub fn game_exe(root: &Path) -> Result<PathBuf, String> {
     writable(&game);
     writable(&video);
     // what the game does not need
-    let mut rest = others(root, &[GAME, VIDEO, NOTE]);
+    let mut rest = others(root, &[GAME, VIDEO, TEXTURES, NOTE]);
     rest.extend(others(&game, &GAME_FILES));
     for p in rest {
         eprintln!("setup: not needed, removed: {}", p.display());

@@ -20,6 +20,7 @@ pub mod fps;
 pub mod gdi32;
 pub mod gl;
 pub mod glide;
+pub mod hd;
 pub mod kernel32;
 pub mod misc;
 pub mod user32;

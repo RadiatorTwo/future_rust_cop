@@ -144,10 +144,19 @@ Next:
         fine 1-step grain (grass, ramps) and found no real bands: the game's textures are
         grainy by design, not smooth gradients. Only worth another look where banding is seen
   - [ ] An upscaling filter such as xBRZ (sharper edges than bilinear; a matter of taste)
-- [ ] Remastered assets (later): replace textures recognised by their content. Replacements
-      must not be limited to the game's formats: full colour (8 bits per channel and more,
-      e.g. PNG), real alpha, higher resolution than the 256x256 page; the renderer keeps
-      them as their own textures instead of converting them to 1555
+- [x] Replacement textures (HD textures, 2026-10-28; `hd.rs`): every download (a whole page,
+      or a band of rows the game changes later) is known by a hash of its texels; a PNG named
+      by it in `game_files/Textures` replaces it: RGBA8, straight alpha as coverage (soft
+      edges), up to 4x (all scaled to the largest's scale). Kept in their own texture array
+      (32 layers of up to 1024x1024, mipmaps), the rest of a page that has replacements is the
+      original scaled up on the GPU; the texel alpha the game blends with stays the original's.
+      `FCOP_DUMP_TEXTURES=1` writes the originals to `Textures/dump`, `FCOP_HD=0` off.
+      Measured in the first mission: 15 pages at start (all downloaded twice), then only the
+      HUD's message icon (rows 208-255 of the page at TMU 0x1a0000, composed anew ~10 times a
+      second, rarely the same: replaced only where a band repeats). Tested with all pages
+      4x (lanczos, and tinted to see them used). Checked by the user (the robot painted pink)
+- [ ] Replacement textures: a switch in Preferences; real HD textures (an AI upscale of the
+      dumps, or remade by hand)
 
 ### 3. Smaller open points
 

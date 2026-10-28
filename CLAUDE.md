@@ -71,7 +71,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   or raw .bin/.img, in game_files (then trashed) or next to fcop.exe (kept; game_files is made
   there): `src/iso.rs` (ISO 9660, Joliet names when there are) extracts those from it,
   checked first; `examples/iso.rs` lists an image), clears read-only (CD copies), and
-  moves everything else in both folders to the recycle bin (elsewhere deleted), at every start, without asking.
+  moves everything else in both folders to the recycle bin (elsewhere deleted), at every start, without asking
+  (kept beside them: `game_files/Textures`, the player's replacement textures).
   `src/splash.rs`: a small Win32 window on its own thread shows what happens until the game's
   window opens (looking, copying from a CD image in %, compiling) or why it cannot start (with
   a Close button); none with `FCOP_BATCH=1` (tests). Closing it while starting quits. On Linux
@@ -155,6 +156,13 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   MSAA: drawn into a multisampled renderbuffer (`Glide::ms`, REG_DWORD `Msaa` 0/2/4/8,
   default 4, "Anti-alias" in Preferences below Textures; `FCOP_MSAA=<n>`), resolved into the
   shown texture at grBufferSwap.
+  Replacement textures (`hd.rs`): each download (whole page or band of rows) hashed (FNV-1a of
+  format, size, texels); `game_files/Textures/**/<...><16 hex>.png` replaces it (RGBA, alpha =
+  coverage, up to 4x; all scaled to the largest's scale). `Hd`: a second array (32 layers,
+  mipmaps; `Texture::hd` its layer, vertex mode bits 16... layer + 1); a band without a
+  replacement on a page with one is the original blitted up (`Hd::scale_up`); the shader
+  takes colour and coverage from it, the texel alpha from the original. `FCOP_DUMP_TEXTURES=1`
+  writes every new download to `Textures/dump/<hash>.png`; `FCOP_HD=0` off.
   Registry `Group` = `3Dfx` (default) or `Software`.
   Frames are drawn as tall as the window (high resolution; the Glide screen, 1280x1024 for
   the game's 1280x960, only gives the coordinates), 4:3 or as wide as the window's aspect;
