@@ -163,6 +163,23 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   replacement on a page with one is the original blitted up (`Hd::scale_up`); the shader
   takes colour and coverage from it, the texel alpha from the original. `FCOP_DUMP_TEXTURES=1`
   writes every new download to `Textures/dump/<hash>.png`; `FCOP_HD=0` off.
+  Replacements equal to the original (exported pages nobody changed) are left out.
+- `src/mission.rs`: mission files (`missions/M2C`..., the first mission M2C; `GlblData` has no
+  models): chunks with reversed tags ("COHS" = SHOC); SHOC holds SHDR (kind at +24, id +28) or
+  SDAT (data from +20). Resources `Cbmp` (pages: `PX16` 256x256 16-bit, colour as Glide's 1555;
+  the game sets the alpha bit where a texel is not black and its own top bit (PS1 STP) is
+  clear: that gives the download's hash), `Cobj` (models: `4DVL` vertices (word, count, x y z
+  pad i16), `3DQL` faces (word, count, 12 bytes: flags, corners in the low 3 bits of byte 1
+  (3/4; 7, 8 are points/lines), u16 byte offset into `3DTL`'s entries, 4 vertex, 4 normal
+  indices), `3DTL` (word, 16 bytes each: kind, colour 80 80 80, 4 u v bytes in page texels,
+  page = Cbmp id - 1), also `4DNL`, `3DRF`, `3DRL`, `3DBB`, `3DHY`/`3DMI`/`3DHS`/`AnmD`
+  (animated: several vertex lists)), `Ctil` (`Sect`: u16 at 2 = texel coordinate pairs, 16x16
+  cells at 0x3c4 (first tile << 6 | count), tile count << 6 at 0x5c4, tiles from 0x5c8 (u32:
+  bits 1-10 byte offset of its pairs, 15-21 shape (triangles: < 60, 71...102), 22-31
+  texture), then the pairs, then the textures (u16: bits 8-10 page, 0x2000 four pairs, 13-15
+  how drawn); read at 0x4537f0/0x453930), `Cact`, `Cwav`... The game's y points down.
+  `src/export.rs`: `fcop export` cuts pages into pictures by what uses them (models' sheets,
+  terrain), `fcop import` puts changed ones back into replacement pages.
   Registry `Group` = `3Dfx` (default) or `Software`.
   Frames are drawn as tall as the window (high resolution; the Glide screen, 1280x1024 for
   the game's 1280x960, only gives the coordinates), 4:3 or as wide as the window's aspect;

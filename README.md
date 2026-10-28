@@ -59,10 +59,24 @@ The game's textures are 256x256 pages (atlases of many small pictures). Each pag
 part of one the game changes while it runs, is known by a hash of its contents. A PNG named
 by that hash in `game_files/Textures` (or a folder below it; anything may come before the
 hash, e.g. `street_0123456789abcdef.png`) replaces it: full colour, alpha for transparency
-(soft edges are fine), up to 4 times the size (1024x1024 for a page). The game's own
-textures to start from: start fcop with `FCOP_DUMP_TEXTURES=1` set and play; every texture it
-has not seen before is written to `game_files/Textures/dump` (transparent where the game
-leaves texels out). `FCOP_HD=0` turns replacements off.
+(soft edges are fine), up to 4 times the size (1024x1024 for a page). A replacement that is
+the same as the original is left out.
+
+To make them picture by picture, `fcop export` (in a terminal, in fcop's folder) cuts every
+mission's pages into their pictures, found from what uses them: each model's part of a page
+(the robot's upper body is one picture) and the terrain's (mostly a large part of a page;
+the terrain takes windows anywhere in it). They go to
+`game_files/Textures/pieces/<mission>_page<n>_<hash>/`, named after what uses them and where
+they are (`M2C_model018_x1_y32_127x119.png`), with `layout.png` showing them on the page
+(models magenta, terrain cyan) and `page.png`. Make new ones of the same name (larger is
+fine, up to 4 times, transparent where nothing is to be drawn), then `fcop import` puts the
+changed ones back into pages, `game_files/Textures/<mission>_page<n>_<hash>.png`: the game
+uses them from its next start. `fcop export` keeps pieces that are already there.
+
+Parts the game changes while it runs (the HUD's message icon) are only found by playing:
+start fcop with `FCOP_DUMP_TEXTURES=1` set and every texture it has not seen before is
+written to `game_files/Textures/dump` (transparent where the game leaves texels out).
+`FCOP_HD=0` turns replacements off.
 
 ## Building
 

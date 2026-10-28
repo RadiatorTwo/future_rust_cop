@@ -155,8 +155,24 @@ Next:
       HUD's message icon (rows 208-255 of the page at TMU 0x1a0000, composed anew ~10 times a
       second, rarely the same: replaced only where a band repeats). Tested with all pages
       4x (lanczos, and tinted to see them used). Checked by the user (the robot painted pink)
-- [ ] Replacement textures: a switch in Preferences; real HD textures (an AI upscale of the
-      dumps, or remade by hand)
+- [x] Making replacement textures (2026-10-28; `export.rs`, `mission.rs`): the pictures of a
+      page are not in the page; edge detection cut signs apart, the rectangles drawn at run
+      time are only parts. The mission files tell what uses which part: models (`Cobj`, freely
+      mapped sheets: the robot's upper body, M2C model 018, is one picture) and terrain
+      (`Ctil`: its tiles take windows anywhere in large painted areas; joining windows that
+      share 30% chained over whole pages, 90% gave thousands of windows, so close parts are
+      one picture, mostly most of a page). `fcop export` cuts every page into these pictures
+      (`pieces/<mission>_page<n>_<hash>/<what>_x_y_wxh.png`, `layout.png`), `fcop import`
+      puts changed ones back (any size up to 4x; only changed ones, pictures overlap) into
+      `<mission>_page<n>_<hash>.png`; the hash comes from the mission file. Checked: the robot's
+      picture 4x and recoloured, imported: recoloured in the game; put back, import removed the
+      page. A first try filtered skewed texture coordinates: it dropped 202 of 471 faces of
+      the robot's page (user: "the robot's front has no rectangles"); only terrain is filtered
+      now (garbage coordinates on tiles drawn in a colour). Upscaling alone is not enough
+      (user): the textures are to be made anew
+- [ ] Export: sprites, effects, the HUD (not in models or terrain), the other vertex lists of
+      animated models
+- [ ] Replacement textures: a switch in Preferences
 
 ### 3. Smaller open points
 

@@ -10,6 +10,7 @@ this port knows, and keeps only what the game needs:
               key bindings and saved games)
   Video\      the videos (from the CD; the game runs without them)
   Textures\   replacement textures, if you have any (they are kept)
+              ("fcop export" cuts the game's own into pictures to start from)
 
 From a CD image these are taken out. Everything else in this folder
 (the image too) is moved to the recycle bin (Linux: deleted).

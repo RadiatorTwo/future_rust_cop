@@ -11,9 +11,10 @@
 //! most 4x), and whatever is not replaced on a page that has replacements is the original,
 //! scaled up.
 //!
-//! `FCOP_DUMP_TEXTURES=1` writes every download not seen before to `Textures/dump/<hash>.png`
-//! (alpha 0 where keyed out): the originals to make replacements from. `FCOP_HD=0` turns
-//! replacements off.
+//! `fcop export` / `fcop import` (`crate::export`) cut the pages into pictures to make anew and
+//! put them back into replacements. A replacement the same as the original is left out. `FCOP_DUMP_TEXTURES=1` writes every download
+//! not seen before to `Textures/dump/<hash>.png` (alpha 0 where keyed out): also the parts the
+//! game changes while it runs. `FCOP_HD=0` turns replacements off.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -60,13 +61,14 @@ fn index() -> &'static Index {
     })
 }
 
-/// PNGs below `dir` whose names end in a 16-digit hex hash (not the dumps).
+/// PNGs below `dir` whose names end in a 16-digit hex hash.
 fn scan(dir: &Path, files: &mut HashMap<u64, PathBuf>) {
     let Ok(d) = std::fs::read_dir(dir) else { return };
     for e in d.flatten() {
         let p = e.path();
         if p.is_dir() {
-            if !e.file_name().eq_ignore_ascii_case("dump") {
+            // the originals, and pictures (`crate::export`)
+            if !["dump", "pieces"].iter().any(|d| e.file_name().eq_ignore_ascii_case(d)) {
                 scan(&p, files);
             }
             continue;
@@ -104,15 +106,17 @@ pub fn hash(format: u32, w: u32, h: u32, texels: &[u8]) -> u64 {
     x
 }
 
-/// The replacement for a download, `w` x `h` texels of the original, at `scale()` times that.
-pub fn find(key: u64, w: u32, h: u32) -> Option<Arc<Image>> {
-    static CACHE: Mutex<VecDeque<(u64, Arc<Image>)>> = Mutex::new(VecDeque::new());
+/// The replacement for a download, `w` x `h` texels of the original (`original`: RGBA, alpha 0
+/// where keyed out), at `scale()` times that. One the same as the original (a page `fcop
+/// export` wrote and nobody changed) is none.
+pub fn find(key: u64, w: u32, h: u32, original: &[u8]) -> Option<Arc<Image>> {
+    static CACHE: Mutex<VecDeque<(u64, Option<Arc<Image>>)>> = Mutex::new(VecDeque::new());
     let path = index().files.get(&key)?;
     let mut cache = CACHE.lock().unwrap();
     if let Some(k) = cache.iter().position(|(h, _)| *h == key) {
         let e = cache.remove(k).unwrap();
         cache.push_back(e.clone());
-        return Some(e.1);
+        return e.1;
     }
     let img = match load(path) {
         Ok(img) => img,
@@ -121,17 +125,18 @@ pub fn find(key: u64, w: u32, h: u32) -> Option<Arc<Image>> {
             return None;
         }
     };
+    let same = (img.w, img.h) == (w, h) && img.rgba == original;
     let k = scale();
-    let img = Arc::new(resize(&img, w * k, h * k));
+    let img = (!same).then(|| Arc::new(resize(&img, w * k, h * k)));
     cache.push_back((key, img.clone()));
     if cache.len() > KEPT {
         cache.pop_front();
     }
-    Some(img)
+    img
 }
 
 /// A PNG as RGBA8.
-fn load(path: &Path) -> Result<Image, String> {
+pub fn load(path: &Path) -> Result<Image, String> {
     let f = std::io::BufReader::new(std::fs::File::open(path).map_err(|e| e.to_string())?);
     let mut d = png::Decoder::new(f);
     d.set_transformations(png::Transformations::normalize_to_color8());
@@ -152,7 +157,7 @@ fn load(path: &Path) -> Result<Image, String> {
 
 /// Scaled to `w` x `h` (bilinear, premultiplied so that transparent texels do not darken the
 /// edges; an image of that size stays as it is).
-fn resize(img: &Image, w: u32, h: u32) -> Image {
+pub fn resize(img: &Image, w: u32, h: u32) -> Image {
     if (img.w, img.h) == (w, h) {
         return Image { w, h, rgba: img.rgba.clone() };
     }
@@ -182,11 +187,16 @@ fn resize(img: &Image, w: u32, h: u32) -> Image {
     Image { w, h, rgba }
 }
 
+/// `FCOP_DUMP_TEXTURES=1`: originals are written.
+fn dumping() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FCOP_DUMP_TEXTURES").is_some_and(|v| v != "0"))
+}
+
 /// `FCOP_DUMP_TEXTURES=1`: a download (RGBA, straight) written to `Textures/dump` once.
 pub fn dump(key: u64, w: u32, h: u32, rgba: &[u8]) {
-    static ON: OnceLock<bool> = OnceLock::new();
     static DONE: Mutex<Option<HashSet<u64>>> = Mutex::new(None);
-    if !*ON.get_or_init(|| std::env::var_os("FCOP_DUMP_TEXTURES").is_some_and(|v| v != "0")) {
+    if !dumping() {
         return;
     }
     if !DONE.lock().unwrap().get_or_insert_with(HashSet::new).insert(key) {

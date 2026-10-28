@@ -4,10 +4,12 @@
 //! and compiled to host code; game pointers stay 32-bit in a 4 GB guest address space.
 
 pub mod discover;
+pub mod export;
 pub mod image;
 pub mod iso;
 pub mod jit;
 pub mod lift;
+pub mod mission;
 pub mod mpeg;
 pub mod platform;
 pub mod rt;

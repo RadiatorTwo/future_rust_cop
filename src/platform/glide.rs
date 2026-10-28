@@ -927,7 +927,9 @@ impl Glide {
             let n = ((r1 - r0 + 1) * w) as usize;
             let px = convert(format, data, n);
             let key = super::hd::hash(format, w, r1 - r0 + 1, mem().slice(data, n * bytes_per_texel(format) as usize));
-            super::hd::dump(key, w, r1 - r0 + 1, &px.chunks(4).flat_map(|p| [p[0], p[1], p[2], if p[..3] == [0, 0, 0] { 0 } else { 255 }]).collect::<Vec<u8>>());
+            // as a replacement has it: alpha 0 where keyed out
+            let original: Vec<u8> = px.chunks(4).flat_map(|p| [p[0], p[1], p[2], if p[..3] == [0, 0, 0] { 0 } else { 255 }]).collect();
+            super::hd::dump(key, w, r1 - r0 + 1, &original);
             // premultiplied by coverage: a black texel is keyed out
             let mut rgb = Vec::with_capacity(n * 4);
             let mut alpha = Vec::with_capacity(n * 2);
@@ -953,18 +955,18 @@ impl Glide {
                 );
             }
             self.stale = true;
-            self.replace(gl, addr, key, (r0, r1));
+            self.replace(gl, addr, key, (r0, r1), &original);
         }
     }
 
     /// After a download of rows `r0..=r1` (known by `key`) into the texture at `addr`: its
     /// replacement into the replacements' layer, or the original scaled up when other parts of
     /// the page are replaced. A whole page without a replacement gives its layer up.
-    fn replace(&mut self, gl: &glow::Context, addr: u32, key: u64, rows: (u32, u32)) {
+    fn replace(&mut self, gl: &glow::Context, addr: u32, key: u64, rows: (u32, u32), original: &[u8]) {
         let Some(hd) = &mut self.hd else { return };
         let t = &self.textures[&addr];
         let (layer, w, h) = (t.layer, t.w, t.h);
-        let img = super::hd::find(key, w, rows.1 - rows.0 + 1);
+        let img = super::hd::find(key, w, rows.1 - rows.0 + 1, original);
         let whole = rows == (0, h - 1);
         let hd_layer = match (t.hd, &img) {
             (Some(l), Some(_)) => l,

@@ -1,6 +1,8 @@
 //! Future Cop: L.A.P.D. recompiled: compiles the player's FCopLAPD.exe and runs it.
 //!
 //!     fcop [path to FCopLAPD.exe]
+//!     fcop export      the texture pages cut into their pictures (`export`)
+//!     fcop import      changed pictures back into pages: replacement textures
 //!
 //! Without a path: the game files in `game_files` next to fcop.exe (see `setup`).
 //!
@@ -51,6 +53,9 @@ fn main() {
         return splash::child();
     }
     output();
+    if let Some(cmd @ ("export" | "import")) = std::env::args().nth(1).as_deref() {
+        std::process::exit(textures(cmd == "import"));
+    }
     // guest calls nest on the host stack like the original's: run on a thread with a large one
     let code = std::thread::Builder::new().stack_size(256 << 20).spawn(run).unwrap().join().unwrap();
     std::process::exit(code as i32);
@@ -100,6 +105,35 @@ fn run() -> u32 {
     let code = fcop::platform::run_game(&img, dir);
     drop(compiled);
     code
+}
+
+/// `fcop export` and `fcop import`: in `game_files/Textures`.
+fn textures(import: bool) -> i32 {
+    let root = setup::root();
+    let exe = match setup::game_exe(&root) {
+        Ok(e) => e,
+        Err(text) => {
+            eprintln!("{text}");
+            return 2;
+        }
+    };
+    let game = exe.parent().unwrap_or(Path::new("."));
+    let missions = std::fs::read_dir(game)
+        .ok()
+        .and_then(|d| d.flatten().map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.eq_ignore_ascii_case("missions"))))
+        .unwrap_or_else(|| game.join("missions"));
+    let out = root.join("Textures");
+    let done = if import { fcop::export::import(&missions, &out) } else { fcop::export::export(&missions, &out) };
+    match done {
+        Ok(()) => {
+            eprintln!("written to {}", out.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
 }
 
 /// What the compiled code depends on: this program (any change to the recompiler) and the
