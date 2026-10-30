@@ -46,7 +46,8 @@ What is new compared to the original:
   texture filtering; all in the game's Preferences dialog
 - Frame rates up to unlimited, with the game's logic unchanged
 - Gamepads (up to two): choose the joystick profile in the Controller dialog. Left stick
-  moves, RT gun, LT heavy weapon, A jump, B special, X action, Y change target, LB/RB jink,
+  moves and turns proportionally in local games, RT gun, LT heavy weapon, A jump, B special,
+  X action, Y change target, LB/RB jink,
   Back map, R3 camera, Start pause; the D-pad is free to bind
 - Network play over TCP/IP (Host Game / Join Game; port 47624, type the host's address in
   the Join dialog)

@@ -628,6 +628,9 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (camera::ROBOT_CAMERA, camera::robot_camera),
     (camera::ROBOT_DRAW, camera::robot_draw),
     (camera::RENDER_HUD, camera::render_hud),
+    (dinput::ROBOT_PHYSICS, dinput::robot_physics),
+    (dinput::HOVER_MOVE_VECTOR, dinput::hover_move_vector),
+    (dinput::WALK_MOVE_VECTOR, dinput::walk_move_vector),
     (dinput::JOY_CAPTURE, dinput::joy_capture),
     (dsound::SET_VOLUME, dsound::set_volume),
 ];

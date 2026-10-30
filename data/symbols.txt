@@ -51,9 +51,11 @@
 0x43a8c0  actors_message          (msg, dt, 0): handler(msg, actor, dt, 0) for every actor; msg 6 update
 0x446800  robot_handler           player robot; msg 1 size (0xf4), 6 robot_update, 3 draw (nothing)
 0x446e00  robot_update            (actor, dt) physics in whole 8-tick steps (remainder at +0xb6)
-0x442120  robot_physics           (actor, dt, steps, out) mode [data+0xad]: 1 hover, else walk
+0x442120  robot_physics           (actor, dt, steps, out) mode [data+0xad]: 1 hover, else walk; hooked: analog stick magnitude for player movement/turn
 0x442510  robot_physics_hover     adds dt to the turn speed in every step
+0x443e80  robot_hover_move_vector (actor, speed, side, out, strafe): horizontal desired movement; hooked for analog speed
 0x444100  robot_physics_walk
+0x444f40  robot_walk_move_vector  (actor, speed, side, out, strafe): horizontal desired movement; hooked for analog speed
 0x4456a0  robot_camera            (actor, dt, dt / 2)
 0x434760  camera_set_angles       (yaw, pitch, roll) on the camera in [0x511f48]: matrices +0x58, +0x28 (transposed), angles +0x20 +0x1c +0x18
 0x4346d0  camera_set_position     (&pos) on the camera in [0x511f48]: +0, copy +0x7c, view translation +0x4c

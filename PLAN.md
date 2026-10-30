@@ -50,7 +50,9 @@ Next:
       heavy, A jump, B special, X action, Y target, LB/RB jink, Back map, R3 camera, Start
       pause), D-pad as buttons 11...14. Checked by the user with an Xbox controller. Fixed after
       that: rebinding needed long presses (presses are kept until read), L3 and higher could not
-      be bound (joy_capture hooked). Open: menus and dialogs by pad (now mouse/keyboard only)
+      be bound (joy_capture hooked). The left stick's travel now scales movement and turning
+      after its dead zone (single-player and split screen; network input has no magnitude field).
+      Open: menus and dialogs by pad (now mouse/keyboard only)
 - [x] First mission played 90 s by script (walking, turning, all weapons, jump, pause bar):
       no crash; the game keeps running when the window loses the focus
 - [x] Presentation through OpenGL (glutin + glow): 2D frames, the dialog overlay, 3D scenes

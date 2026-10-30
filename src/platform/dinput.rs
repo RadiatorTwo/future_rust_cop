@@ -8,7 +8,9 @@
 //! Each frame joy_poll 0x412b80 polls and reads the state; any error but DIERR_INPUTLOST makes
 //! it give the pad up, so we always answer DI_OK. The game reads only lX, lY (by their sign:
 //! inside the dead zone they must be exactly 0) and buttons 0...16 (joy_key 0x412d70); with
-//! two pads player i uses pad i, with one both share it.
+//! two pads player i uses pad i, with one both share it. The original code loses the axis
+//! magnitude there; hooks around player robot physics restore proportional translation and
+//! turning in local games while keeping its direction handling, collisions, and gravity.
 //!
 //! Our button order makes the game's own joystick profile 1 a modern layout: 0 RT gun, 1 LT
 //! heavy weapon, 2 B special, 3 A jump, 4 X action, 5 Y change target, 6 LB / 7 RB jink, 8 Back
@@ -23,7 +25,7 @@
 use super::{Import, alloc, arg, free, guest_call, log, mem, put_cstr};
 use crate::rt::{Cpu, EAX, ESP, call_original};
 use gilrs::{Axis, Button, Gilrs};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Mutex;
 
 const DI_OK: u32 = 0;
@@ -94,6 +96,12 @@ static PADS: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
 static START: Mutex<Option<bool>> = Mutex::new(None);
 /// The scripted pad, once FCOP_INPUT has a `pad@` item.
 static SCRIPTED: Mutex<Option<Pad>> = Mutex::new(None);
+
+// Analog movement in the current robot-physics call. The original game turns the stick
+// into four bits; the movement-vector hooks below put its magnitude back.
+thread_local! {
+    static ANALOG_MOVE: Cell<Option<[f32; 2]>> = const { Cell::new(None) };
+}
 
 fn scripted_pad() -> bool {
     static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -521,6 +529,124 @@ pub fn joy_capture(c: &mut Cpu) {
         m.wr32(binding, 1);
         m.wr32(binding + 4, b);
         c.r[EAX] = c.r[EAX] & !0xff | 1;
+    }
+}
+
+// ---- analog player movement ------------------------------------------------------------------
+
+/// Player robot physics and the helpers that build its desired horizontal movement vector.
+pub const ROBOT_PHYSICS: u32 = 0x442120;
+pub const HOVER_MOVE_VECTOR: u32 = 0x443e80;
+pub const WALK_MOVE_VECTOR: u32 = 0x444f40;
+
+const PLAYERS: u32 = 0x511fd0;
+const BINDINGS: u32 = 0x511c20;
+const BINDINGS_SIZE: u32 = 0x80;
+const JOY_COUNT: u32 = 0x49fe4c;
+const NET: u32 = 0x511fa0;
+const ROBOT_DATA: u32 = 0xac;
+const CONTROLS_BITS: u32 = 0x30;
+const HEADING: u32 = 0xb0;
+const MOVE_BITS: u32 = 0xf000_0000;
+const TURN_BITS: u32 = 0x3000_0000;
+
+/// DirectInput's per-axis dead zone, as configured by the game. The remaining travel is
+/// rescaled, so leaving the dead zone starts at zero speed.
+fn movement_axis(v: f32) -> f32 {
+    const DEAD_ZONE: f32 = 0.25;
+    let v = v.clamp(-1.0, 1.0);
+    if v.abs() <= DEAD_ZONE {
+        0.0
+    } else {
+        v.signum() * (v.abs() - DEAD_ZONE) / (1.0 - DEAD_ZONE)
+    }
+}
+
+/// Stick value for a player whose four movement actions are bound to joystick axes. Network
+/// input contains only direction bits, not magnitude; retaining digital movement there keeps
+/// both peers' simulations deterministic.
+fn analog_for(actor: u32) -> Option<[f32; 2]> {
+    let m = mem();
+    if m.rd32(NET) as i32 >= 0 {
+        return None;
+    }
+    let player = (0..2).find(|&p| m.rd32(PLAYERS + 4 * p) == actor)?;
+    let bindings = BINDINGS + BINDINGS_SIZE * player;
+    let axes_bound = (0..4).all(|k| {
+        let b = bindings + 8 * k;
+        m.rd32(b) == 1 && (0x12..=0x15).contains(&m.rd32(b + 4))
+    });
+    if !axes_bound {
+        return None;
+    }
+    let pad = if m.rd32(JOY_COUNT) > 1 { player } else { 0 };
+    let pads = PADS.lock().unwrap();
+    let stick = pads.get(pad as usize)?.pad.stick;
+    Some([movement_axis(stick[0]), movement_axis(stick[1])])
+}
+
+fn scale_move_speed(speed: i32, stick: [f32; 2]) -> i32 {
+    let amount = stick[0].hypot(stick[1]).min(1.0);
+    (speed as f32 * amount).round() as i32
+}
+
+fn move_vector(c: &mut Cpu, addr: u32) {
+    ANALOG_MOVE.with(|a| {
+        if let Some(stick) = a.get() {
+            let speed = mem().rd32(c.r[ESP] + 8) as i32;
+            mem().wr32(c.r[ESP] + 8, scale_move_speed(speed, stick) as u32);
+        }
+    });
+    call_original(c, addr);
+}
+
+pub fn hover_move_vector(c: &mut Cpu) {
+    move_vector(c, HOVER_MOVE_VECTOR);
+}
+
+pub fn walk_move_vector(c: &mut Cpu) {
+    move_vector(c, WALK_MOVE_VECTOR);
+}
+
+/// Run the original physics with proportional desired translation, then scale only the
+/// heading change requested by left/right. The heading is a 12-bit angle.
+pub fn robot_physics(c: &mut Cpu) {
+    let m = mem();
+    let actor = m.rd32(c.r[ESP] + 4);
+    let data = m.rd32(actor + ROBOT_DATA);
+    let controls = m.rd32(data + CONTROLS_BITS);
+    let analog = (controls & MOVE_BITS != 0).then(|| analog_for(actor)).flatten();
+    let before = m.rd16(actor + HEADING) as i32 & 0xfff;
+    let previous = ANALOG_MOVE.replace(analog);
+    call_original(c, ROBOT_PHYSICS);
+    ANALOG_MOVE.set(previous);
+
+    let Some(stick) = analog else { return };
+    if controls & TURN_BITS == 0 {
+        return;
+    }
+    let after = m.rd16(actor + HEADING) as i32 & 0xfff;
+    let delta = (after - before + 0x800).rem_euclid(0x1000) - 0x800;
+    let heading = before + (delta as f32 * stick[0].abs()).round() as i32;
+    m.wr16(actor + HEADING, heading.rem_euclid(0x1000) as u16);
+}
+
+#[cfg(test)]
+mod analog_tests {
+    use super::{movement_axis, scale_move_speed};
+
+    #[test]
+    fn dead_zone_is_removed_and_remaining_travel_is_rescaled() {
+        assert_eq!(movement_axis(0.25), 0.0);
+        assert!((movement_axis(0.50) - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(movement_axis(-1.0), -1.0);
+    }
+
+    #[test]
+    fn movement_speed_follows_radial_stick_travel() {
+        assert_eq!(scale_move_speed(12_000, [0.0, 0.25]), 3_000);
+        assert_eq!(scale_move_speed(12_000, [0.8, 0.8]), 12_000);
+        assert_eq!(scale_move_speed(-9_000, [0.0, 0.5]), -4_500);
     }
 }
 
