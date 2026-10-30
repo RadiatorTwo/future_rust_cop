@@ -5,6 +5,8 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use super::gl::Gl;
+use super::log;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread::ThreadId;
 use std::time::Duration;
@@ -14,7 +16,7 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::platform::pump_events::EventLoopExtPumpEvents;
-use winit::window::{Window, WindowId};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 /// Input for the game, in game terms: Windows virtual-key codes and frame pixels.
 #[derive(Clone, Copy, Debug)]
@@ -49,6 +51,9 @@ struct App {
     /// an Alt key is held (Alt+Enter toggles fullscreen)
     alt: bool,
     shift: bool,
+    focused: bool,
+    /// the cursor as last set on the window: hidden and kept inside it
+    cursor_caught: bool,
 }
 
 struct Host {
@@ -69,6 +74,16 @@ static PENDING: Mutex<Option<(Vec<u32>, u32, u32)>> = Mutex::new(None);
 /// main thread's next pump.
 type VideoFrame = Option<(Vec<u32>, u32, u32, [f32; 4])>;
 static VIDEO: Mutex<Option<VideoFrame>> = Mutex::new(None);
+
+/// The game hides the cursor (ShowCursor); applied at the next pump.
+static CURSOR_HIDDEN: AtomicBool = AtomicBool::new(false);
+
+/// Hide the cursor and keep it inside the window while the window has the focus (missions: the
+/// mouse's buttons can be bound, and a cursor outside the window would lose them), or show it
+/// again. Any thread.
+pub fn hide_cursor(hidden: bool) {
+    CURSOR_HIDDEN.store(hidden, Ordering::Relaxed);
+}
 
 fn on_main() -> bool {
     *MAIN.get_or_init(|| std::thread::current().id()) == std::thread::current().id()
@@ -96,6 +111,8 @@ fn with_host<R>(f: impl FnOnce(&mut Host) -> R) -> R {
                     cursor: PhysicalPosition::new(0.0, 0.0),
                     alt: false,
                     shift: false,
+                    focused: true,
+                    cursor_caught: false,
                 },
             }
         });
@@ -132,6 +149,7 @@ pub fn pump(wait: Duration) {
             }
         }
         let _ = h.event_loop.pump_app_events(Some(wait), &mut h.app);
+        h.app.catch_cursor();
         scripted(&mut h.app.input);
         // a pad's Start is the Escape key (pause)
         if let Some(down) = super::dinput::poll() {
@@ -527,6 +545,26 @@ impl App {
         }
     }
 
+    /// Hide the cursor and confine it to the window while the game hides it and the window has
+    /// the focus (Windows and X11 confine it; Wayland and macOS only lock it in place).
+    fn catch_cursor(&mut self) {
+        let Some(win) = &self.window else { return };
+        let catch = self.focused && CURSOR_HIDDEN.load(Ordering::Relaxed);
+        if catch == self.cursor_caught {
+            return;
+        }
+        self.cursor_caught = catch;
+        win.set_cursor_visible(!catch);
+        let grab = if catch {
+            win.set_cursor_grab(CursorGrabMode::Confined).or_else(|_| win.set_cursor_grab(CursorGrabMode::Locked))
+        } else {
+            win.set_cursor_grab(CursorGrabMode::None)
+        };
+        if let Err(e) = grab {
+            log!("warn: cursor grab: {e}");
+        }
+    }
+
     /// The cursor in frame pixels.
     fn frame_pos(&self) -> (i32, i32) {
         let Some(win) = &self.window else { return (0, 0) };
@@ -551,7 +589,16 @@ impl ApplicationHandler for App {
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, e: WindowEvent) {
         match e {
             WindowEvent::CloseRequested => self.input.push_back(Input::Close),
-            WindowEvent::Focused(f) => self.input.push_back(Input::Focus(f)),
+            WindowEvent::Focused(f) => {
+                self.focused = f;
+                // Windows drops a confinement when the focus goes: set it anew when it comes back
+                self.cursor_caught = false;
+                if let Some(w) = self.window.as_ref().filter(|_| !f) {
+                    w.set_cursor_visible(true);
+                    let _ = w.set_cursor_grab(CursorGrabMode::None);
+                }
+                self.input.push_back(Input::Focus(f));
+            }
             WindowEvent::Resized(size) => {
                 if let Some(gl) = &self.gl {
                     gl.resize(size.width, size.height);

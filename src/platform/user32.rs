@@ -814,8 +814,15 @@ fn unhook(c: &mut Cpu) -> u32 {
 fn load_resource_handle(_: &mut Cpu) -> u32 {
     0x5500
 }
+/// ShowCursor(show): Windows' display counter, the cursor shown while it is not negative. The
+/// game hides it for a mission (0x415e30) and shows it again for the menus (0x415e00); a hidden
+/// cursor is also kept inside the window (`window::hide_cursor`).
 fn show_cursor(c: &mut Cpu) -> u32 {
-    if arg(c, 0) != 0 { 1 } else { 0xffff_ffff }
+    static COUNT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    let step = if arg(c, 0) != 0 { 1 } else { -1 };
+    let n = COUNT.fetch_add(step, std::sync::atomic::Ordering::Relaxed) + step;
+    window::hide_cursor(n < 0);
+    n as u32
 }
 
 pub const IMPORTS: &[Import] = &[

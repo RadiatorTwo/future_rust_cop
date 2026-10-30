@@ -310,6 +310,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   bar stayed on the menu after a won level).
 - Focus: the game pauses itself on WM_ACTIVATEAPP 0; we never send it, so it keeps running
   in the background, and keys held when the focus goes are released (WM_KEYUP).
+- Cursor: ShowCursor keeps Windows' counter; the game hides the cursor for videos and
+  missions (0x415e30) and shows it for the menus (0x415e00). While hidden and focused, the
+  window hides it and grabs it (`window::catch_cursor`, Confined, else Locked; on Windows
+  winit clips a hidden grabbed cursor to 1x1 where it is), released when the focus goes.
 - Spin-waits: `rt::POLL` is nonzero while a guest thread waits for its turn; generated code
   loads it at every loop head (target of a backward branch) and calls `rt_yield`.
 - `resource(type, id)` finds resources in the loaded EXE (`image::list_resources` works on
