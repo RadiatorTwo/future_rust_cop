@@ -183,6 +183,15 @@ Next:
       fcop): folders | thumbnails | piece with UV grid, original beside it, place on the page,
       JSON; changed = differs from page.png as `fcop import` decides; files polled every second.
       Later perhaps: a 3D view of a model with its pieces, a button for `fcop import`
+- [x] Sound export (2026-10-30; `sounds.rs`, `mission::streams`): `fcop export-sounds` writes
+      the mission files' sounds to `game_files/Sounds/`, each different one once (1226 in all,
+      644 different: every mission carries its own copy, often under another number; named
+      `<first mission>_<name>.wav`, `sounds.txt` lists who uses each): effects (`Cwav`, already
+      WAV files, 16-bit mono 22050 Hz, `wav<n>.wav`), spoken messages (`snds` after a `SWVR`
+      naming the stream: u32 sample count, 8-bit mono 22050 Hz, `1_01_04.wav`) and the music
+      (`MSIC` chunks outside the SHOCs: u16 block count, u16 block, u32 frames, 8-bit stereo
+      interleaved, 14260 Hz: the game's buffer format, logged). LAX1, M4A1, OV, Un have no
+      voices or music. Existing files are kept. No import yet
 - [ ] Export: sprites, effects, the HUD (not in models or terrain), the other vertex lists of
       animated models
 - [ ] Replacement textures: a switch in Preferences

@@ -191,6 +191,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   terrain), `fcop import` puts changed ones back into replacement pages. `tools/texview`:
   a separate egui program (own crate and Cargo.lock) to browse those pieces (UV grid,
   original, place on the page, JSON; reloads what an editor saves).
+  `src/sounds.rs`: `fcop export-sounds` writes the mission files' sounds to `game_files/Sounds/`,
+  each different one once as `<first mission>_<name>.wav` (`sounds.txt`: who uses it, under
+  which number; most are in several missions) (`Cwav` effects as they are, `snds` voices 8-bit mono 22050 Hz
+  named by the `SWVR` chunk before them, music from `MSIC` chunks 8-bit stereo 14260 Hz; read
+  by `mission::streams`). No import yet.
   Registry `Group` = `3Dfx` (default) or `Software`.
   Frames are drawn as tall as the window (high resolution; the Glide screen, 1280x1024 for
   the game's 1280x960, only gives the coordinates), 4:3 or as wide as the window's aspect;

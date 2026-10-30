@@ -203,3 +203,60 @@ pub fn load(file: &[u8]) -> Mission {
     }
     m
 }
+
+/// What a mission file streams besides its resources: spoken messages and music.
+#[derive(Default)]
+pub struct Streams {
+    /// name ("1_01_04.stream") and samples (mono, 8-bit unsigned, 22050 Hz)
+    pub voices: Vec<(String, Vec<u8>)>,
+    /// tracks, frames interleaved (stereo, 8-bit unsigned, 14260 Hz)
+    pub music: Vec<Vec<u8>>,
+}
+
+/// The streams of a mission file. A voice is a `snds` resource (a u32 sample count, then the
+/// samples) named by the `SWVR` chunk before it (`FILE`, then the name). Music is in `MSIC`
+/// chunks of their own: 8 bytes, `MSIC`, u16 block count, u16 block number, u32 frames, then
+/// the frames; block 0 starts a track.
+pub fn streams(file: &[u8]) -> Streams {
+    let mut out = Streams::default();
+    let mut name = String::new();
+    let mut voice = false;
+    let mut i = 0;
+    while i + 8 <= file.len() {
+        let size = u32_at(file, i + 4) as usize;
+        if size < 8 || i + size > file.len() {
+            break;
+        }
+        let c = &file[i..i + size];
+        match tag(&c[..4]).as_str() {
+            "SWVR" if size > 20 => {
+                let n = &c[20..];
+                name = String::from_utf8_lossy(&n[..n.iter().position(|&b| b == 0).unwrap_or(n.len())]).into_owned();
+            }
+            "SHOC" if size >= 20 => match tag(&c[16..20]).as_str() {
+                "SHDR" => {
+                    voice = size >= 28 && tag(&c[24..28]) == "snds";
+                    if voice {
+                        out.voices.push((name.clone(), Vec::new()));
+                    }
+                }
+                "SDAT" if voice => out.voices.last_mut().unwrap().1.extend_from_slice(&c[20..]),
+                _ => {}
+            },
+            "MSIC" if size >= 28 => {
+                if u16_at(c, 22) == 0 || out.music.is_empty() {
+                    out.music.push(Vec::new());
+                }
+                let frames = &c[28..];
+                out.music.last_mut().unwrap().extend_from_slice(&frames[..(u32_at(c, 24) as usize * 2).min(frames.len())]);
+            }
+            _ => {}
+        }
+        i += size;
+    }
+    for (_, v) in &mut out.voices {
+        let n = if v.len() >= 4 { (u32_at(v, 0) as usize).min(v.len() - 4) } else { 0 };
+        *v = v.get(4..4 + n).unwrap_or_default().to_vec();
+    }
+    out
+}

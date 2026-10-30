@@ -3,6 +3,7 @@
 //!     fcop [path to FCopLAPD.exe]
 //!     fcop export      the texture pages cut into their pictures (`export`)
 //!     fcop import      changed pictures back into pages: replacement textures
+//!     fcop export-sounds   the missions' sounds as WAV files (`sounds`)
 //!
 //! Without a path: the game files in `game_files` next to fcop.exe (see `setup`).
 //!
@@ -53,8 +54,8 @@ fn main() {
         return splash::child();
     }
     output();
-    if let Some(cmd @ ("export" | "import")) = std::env::args().nth(1).as_deref() {
-        std::process::exit(textures(cmd == "import"));
+    if let Some(cmd @ ("export" | "import" | "export-sounds")) = std::env::args().nth(1).as_deref() {
+        std::process::exit(tool(cmd));
     }
     // guest calls nest on the host stack like the original's: run on a thread with a large one
     let code = std::thread::Builder::new().stack_size(256 << 20).spawn(run).unwrap().join().unwrap();
@@ -107,8 +108,9 @@ fn run() -> u32 {
     code
 }
 
-/// `fcop export` and `fcop import`: in `game_files/Textures`.
-fn textures(import: bool) -> i32 {
+/// `fcop export` and `fcop import`: in `game_files/Textures`; `fcop export-sounds`: in
+/// `game_files/Sounds`.
+fn tool(cmd: &str) -> i32 {
     let root = setup::root();
     let exe = match setup::game_exe(&root) {
         Ok(e) => e,
@@ -122,8 +124,12 @@ fn textures(import: bool) -> i32 {
         .ok()
         .and_then(|d| d.flatten().map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.eq_ignore_ascii_case("missions"))))
         .unwrap_or_else(|| game.join("missions"));
-    let out = root.join("Textures");
-    let done = if import { fcop::export::import(&missions, &out) } else { fcop::export::export(&missions, &out) };
+    let out = root.join(if cmd == "export-sounds" { "Sounds" } else { "Textures" });
+    let done = match cmd {
+        "import" => fcop::export::import(&missions, &out),
+        "export-sounds" => fcop::sounds::export(&missions, &out),
+        _ => fcop::export::export(&missions, &out),
+    };
     match done {
         Ok(()) => {
             eprintln!("written to {}", out.display());
