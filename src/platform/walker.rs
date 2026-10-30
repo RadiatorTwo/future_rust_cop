@@ -54,6 +54,7 @@ struct Record {
     next: u32,
     /// 0 the 3D picture; HUD: 1 left, 2 centre, 3 right
     pass: u8,
+    kind: u8,
     text: bool,
 }
 
@@ -83,7 +84,7 @@ pub fn draw_glide(c: &mut Cpu) {
         let t = m.rd8(r + 4);
         hud |= r == hud_node;
         if t & 7 != 0 {
-            recs.push(Record { at: r, next: m.rd32(r), pass: if hud { 2 } else { 0 }, text: t & 7 == 6 });
+            recs.push(Record { at: r, next: m.rd32(r), pass: if hud { 2 } else { 0 }, kind: t & 7, text: t & 7 == 6 });
         } else if t != 0 && !hud && ctls.len() < 4 {
             let x = m.rd16(r + 0x28) as i16;
             if t & 0x10 != 0 {
@@ -173,35 +174,69 @@ pub fn draw_glide(c: &mut Cpu) {
 }
 
 /// Single-player HUD records -> passes 1 left, 2 centre, 3 right, by the centre of their
-/// extent (centre band 1280 +- 160 units). Font glyphs in a row (texture page 0xd, type 6)
-/// count as one, so a word or number stays whole; records placed by `wide::to_screen` stay
-/// centred.
+/// extent (centre band 1280 +- 160 units). Spatially adjacent type-6 glyphs in a row count as
+/// one, regardless of their display-list order, so a word or number stays whole; records
+/// placed by `wide::to_screen` stay centred.
 fn hud_sides(recs: &mut [Record]) {
-    let m = mem();
-    let glyph = |r: &Record| r.text && m.rd8(r.at + 7) == 0xd;
+    let extents: Vec<_> = recs.iter().map(|r| wide::extent(r.at)).collect();
+    let glyphs: Vec<_> = recs
+        .iter()
+        .zip(&extents)
+        .map(|(r, e)| {
+            (r.kind == 5 || r.kind == 6)
+                && e.is_some_and(|e| e[2] > e[0] && e[3] > e[1] && e[2] - e[0] <= 160 && e[3] - e[1] <= 160)
+        })
+        .collect();
+    // Dense full-screen overlays (notably the score screen) are authored as one 4:3 layout.
+    // Splitting them across edge-anchored views tears labels apart, regardless of how their
+    // glyph records are grouped. Keep the complete overlay in the centred HUD view.
+    if glyphs.iter().filter(|&&glyph| glyph).count() >= 64 {
+        return;
+    }
+    let mut done = vec![false; recs.len()];
     let mut i = 0;
     while i < recs.len() {
-        let mut j = i + 1;
+        if done[i] {
+            i += 1;
+            continue;
+        }
+        done[i] = true;
+        let mut group = vec![i];
         let mut pass = 2;
-        if let Some(mut e) = wide::extent(recs[i].at) {
-            while glyph(&recs[i]) && j < recs.len() && glyph(&recs[j]) {
-                let Some(f) = wide::extent(recs[j].at) else { break };
-                let gap = if f[0] > e[2] { f[0] - e[2] } else { e[0] - f[2] };
-                if (f[1] - e[1]).abs() > 8 || gap > 48 {
-                    break;
+        if let Some(mut e) = extents[i] {
+            if glyphs[i] {
+                // Glyphs of one string are not necessarily adjacent in the depth-sorted list.
+                // Grow a spatial component until no more glyph on this row touches it.
+                loop {
+                    let mut changed = false;
+                    for j in 0..recs.len() {
+                        if done[j] || !glyphs[j] {
+                            continue;
+                        }
+                        let Some(f) = extents[j] else { continue };
+                        let gap = if f[0] > e[2] { f[0] - e[2] } else { e[0] - f[2] };
+                        let vgap = if f[1] > e[3] { f[1] - e[3] } else { e[1] - f[3] };
+                        if vgap <= 8 && gap <= 96 {
+                            done[j] = true;
+                            group.push(j);
+                            e = [e[0].min(f[0]), e[1].min(f[1]), e[2].max(f[2]), e[3].max(f[3])];
+                            changed = true;
+                        }
+                    }
+                    if !changed {
+                        break;
+                    }
                 }
-                e = [e[0].min(f[0]), e[1], e[2].max(f[2]), e[3]];
-                j += 1;
             }
             let cx = (e[0] + e[2]) / 2;
             pass = if cx < 1280 - 160 { 1 } else if cx > 1280 + 160 { 3 } else { 2 };
-            if recs[i..j].iter().any(|r| wide::placed(r.at)) {
+            if group.iter().any(|&j| wide::placed(recs[j].at)) {
                 pass = 2;
             }
         }
-        for r in &mut recs[i..j] {
-            r.pass = pass;
+        for j in group {
+            recs[j].pass = pass;
         }
-        i = j;
+        i += 1;
     }
 }
