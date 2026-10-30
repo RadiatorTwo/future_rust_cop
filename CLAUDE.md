@@ -110,9 +110,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   buttons 0...16. Our button order makes the
   game's own joystick profile 1 a modern layout: 0 RT gun, 1 LT heavy, 2 B special, 3 A jump,
   4 X action, 5 Y change target, 6/7 LB/RB jink, 8 Back map, 9 R3 camera, 10 L3, 11...14 D-pad
-  (free to bind); the left stick moves; Start is the Escape key (pause). The Controller dialog
-  reads every 250 ms and takes only buttons 0...9: presses are kept until the game reads the
-  pad (a short press counts), and joy_capture 0x412c10 is hooked for 10...16. gilrs starts
+  (free to bind); the left stick moves; Start is the Escape key (pause). Right-stick directions
+  are extended binding keys 0x16...0x19 (joy_key, joy_capture and controls.txt parse/format are
+  hooked). The Controller dialog reads every 250 ms and takes only buttons 0...9: presses are
+  kept until the game reads the pad (a short press counts), and joy_capture 0x412c10 is hooked
+  for 10...16. gilrs starts
   before compiling (Windows finds pads ~75 ms later, the game looks once at its start), is
   polled at every `window::pump` and when the game reads a pad on the main thread, never dropped. `FCOP_PAD_LOG=1` logs; `pad@A*500`, `pad@LX=-1*1000` in
   FCOP_INPUT drive a scripted pad (pad 0)), `dshow.rs`

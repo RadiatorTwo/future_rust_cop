@@ -52,6 +52,7 @@ Next:
       that: rebinding needed long presses (presses are kept until read), L3 and higher could not
       be bound (joy_capture hooked). The left stick's travel now scales movement and turning
       after its dead zone (single-player and split screen; network input has no magnitude field).
+      Right-stick directions can be assigned too and persist in controls.txt.
       Open: menus and dialogs by pad (now mouse/keyboard only)
 - [x] First mission played 90 s by script (walking, turning, all weapons, jump, pause bar):
       no crash; the game keeps running when the window loses the focus

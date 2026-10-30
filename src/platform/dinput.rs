@@ -15,14 +15,16 @@
 //! Our button order makes the game's own joystick profile 1 a modern layout: 0 RT gun, 1 LT
 //! heavy weapon, 2 B special, 3 A jump, 4 X action, 5 Y change target, 6 LB / 7 RB jink, 8 Back
 //! map, 9 R3 camera, 10 L3, 11...14 D-pad up, down, left, right (free to bind). The left stick
-//! gives lX/lY. Start is the Escape key (pause). The Controller dialog takes stick directions
-//! and buttons 0...9 only (joy_capture 0x412c10): hooked for 10...16.
+//! gives lX/lY. Start is the Escape key (pause). The Controller dialog takes left-stick
+//! directions and buttons 0...9 only (joy_capture 0x412c10): hooked for 10...16 and the right
+//! stick. Right-stick directions use our binding keys 0x16...0x19; joy_key and controls.txt
+//! parsing/formatting are hooked too, so those assignments work and persist.
 //!
 //! gilrs lives on the main thread and is polled at every `window::pump`; the game's threads
 //! read the last state. `FCOP_PAD_LOG=1` logs pads and the game's use of them. `pad@...` items
 //! in FCOP_INPUT drive a scripted pad (pad 0, before the real ones).
 
-use super::{Import, alloc, arg, free, guest_call, log, mem, put_cstr};
+use super::{Import, alloc, arg, cstr, free, guest_call, log, mem, put_cstr};
 use crate::rt::{Cpu, EAX, ESP, call_original};
 use gilrs::{Axis, Button, Gilrs};
 use std::cell::{Cell, RefCell};
@@ -71,11 +73,11 @@ macro_rules! pad_log {
 
 // ---- pad state --------------------------------------------------------------------------------
 
-/// One pad as the game sees it: left stick (-1...1, y down), our DirectInput buttons (bit n =
-/// button n), Start.
+/// One pad as the game sees it: left and right sticks (-1...1, y down), our DirectInput
+/// buttons (bit n = button n), Start.
 #[derive(Clone, Copy, Default, PartialEq)]
 pub struct Pad {
-    stick: [f32; 2],
+    stick: [f32; 4],
     buttons: u32,
     start: bool,
 }
@@ -149,7 +151,12 @@ fn read(g: &gilrs::Gamepad) -> Pad {
         buttons |= (g.is_pressed(b) as u32) << n;
     }
     Pad {
-        stick: [g.value(Axis::LeftStickX), -g.value(Axis::LeftStickY)],
+        stick: [
+            g.value(Axis::LeftStickX),
+            -g.value(Axis::LeftStickY),
+            g.value(Axis::RightStickX),
+            -g.value(Axis::RightStickY),
+        ],
         buttons,
         start: g.is_pressed(Button::Start),
     }
@@ -233,9 +240,11 @@ fn pad(n: u32) -> Pad {
 }
 
 /// The scripted pad's controls (FCOP_INPUT `pad@A*500`, `pad@LX=-1*1000`): our buttons in
-/// order (the D-pad's too), then Start and the stick's axes (y up, as gilrs has it).
-pub const CONTROLS: [&str; 18] =
-    ["RT", "LT", "B", "A", "X", "Y", "LB", "RB", "Back", "R3", "L3", "Up", "Down", "Left", "Right", "Start", "LX", "LY"];
+/// order (the D-pad's too), then Start and both sticks' axes (y up, as gilrs has it).
+pub const CONTROLS: [&str; 20] = [
+    "RT", "LT", "B", "A", "X", "Y", "LB", "RB", "Back", "R3", "L3", "Up", "Down", "Left", "Right", "Start", "LX", "LY",
+    "RX", "RY",
+];
 
 /// Set one control of the scripted pad (`CONTROLS[k]`): held when `v` is not 0, or the axis' value.
 pub fn script(k: usize, v: f32) {
@@ -246,7 +255,9 @@ pub fn script(k: usize, v: f32) {
         0..=14 => p.buttons = p.buttons & !(1 << k) | (on as u32) << k,
         15 => p.start = on,
         16 => p.stick[0] = v,
-        _ => p.stick[1] = -v,
+        17 => p.stick[1] = -v,
+        18 => p.stick[2] = v,
+        _ => p.stick[3] = -v,
     }
 }
 
@@ -510,10 +521,77 @@ static DEVICE: &[Import] = &[
     ("IDirectInputDevice2A::SendDeviceData", 5, not_impl),
 ];
 
-// ---- the Controller dialog ----------------------------------------------------------------------
+// ---- the Controller dialog and extended axes ---------------------------------------------------
+
+/// The original keys 0x12...0x15 are left, right, up, down on the left stick. These four
+/// continue that private key space for the right stick; they are handled by our hooks only.
+const RIGHT_LEFT: u32 = 0x16;
+const RIGHT_RIGHT: u32 = 0x17;
+const RIGHT_UP: u32 = 0x18;
+const RIGHT_DOWN: u32 = 0x19;
+const RIGHT_KEYS: [(&str, u32); 4] = [
+    // The Controller dialog reads at most 19 characters plus NUL from each field. With its
+    // "Joystick: " prefix these names make exactly 18 characters and survive OK/save.
+    ("RStick L", RIGHT_LEFT),
+    ("RStick R", RIGHT_RIGHT),
+    ("RStick U", RIGHT_UP),
+    ("RStick D", RIGHT_DOWN),
+];
+const AXIS_DEAD_ZONE: f32 = 0.25;
+
+fn right_key_from_text(text: &str) -> Option<u32> {
+    text.split_once(':').and_then(|(device, name)| {
+        device.trim().eq_ignore_ascii_case("Joystick").then(|| name.trim()).and_then(|name| {
+            RIGHT_KEYS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|e| e.1)
+        })
+    })
+}
+
+fn right_stick_key(p: &Pad) -> Option<u32> {
+    let [x, y] = [p.stick[2], p.stick[3]];
+    if x < -AXIS_DEAD_ZONE {
+        Some(RIGHT_LEFT)
+    } else if x > AXIS_DEAD_ZONE {
+        Some(RIGHT_RIGHT)
+    } else if y < -AXIS_DEAD_ZONE {
+        Some(RIGHT_UP)
+    } else if y > AXIS_DEAD_ZONE {
+        Some(RIGHT_DOWN)
+    } else {
+        None
+    }
+}
+
+fn right_stick_down(p: &Pad, key: u32) -> bool {
+    match key {
+        RIGHT_LEFT => p.stick[2] < -AXIS_DEAD_ZONE,
+        RIGHT_RIGHT => p.stick[2] > AXIS_DEAD_ZONE,
+        RIGHT_UP => p.stick[3] < -AXIS_DEAD_ZONE,
+        RIGHT_DOWN => p.stick[3] > AXIS_DEAD_ZONE,
+        _ => false,
+    }
+}
+
+fn current_pad(n: u32) -> Pad {
+    PADS.lock().unwrap().get(n as usize).map_or(Pad::default(), |e| e.pad)
+}
+
+/// joy_key(pad, key): extend the game's four axis keys with the right stick directions.
+pub const JOY_KEY: u32 = 0x412d70;
+
+pub fn joy_key(c: &mut Cpu) {
+    let (pad, key) = (mem().rd32(c.r[ESP] + 4), mem().rd32(c.r[ESP] + 8));
+    if (RIGHT_LEFT..=RIGHT_DOWN).contains(&key) {
+        c.r[EAX] = right_stick_down(&current_pad(pad), key) as u32;
+        // The original is not called on this path, so emulate its ret.
+        c.r[ESP] += 4;
+    } else {
+        call_original(c, JOY_KEY);
+    }
+}
 
 /// joy_capture(pad, &binding): the stick direction or button pressed, as a binding (device 1,
-/// key); al = 1 when one was. The game's looks at buttons 0...9 only: hooked for 10...16 (L3).
+/// key); al = 1 when one was. The game looks at buttons 0...9 only: hooked for 10...16 (L3).
 pub const JOY_CAPTURE: u32 = 0x412c10;
 const JOY_STATES: u32 = 0x49fd98;
 
@@ -524,11 +602,61 @@ pub fn joy_capture(c: &mut Cpu) {
     if c.r[EAX] & 0xff != 0 || pad >= 2 {
         return;
     }
+    if let Some(key) = right_stick_key(&current_pad(pad)) {
+        m.wr32(binding, 1);
+        m.wr32(binding + 4, key);
+        c.r[EAX] = c.r[EAX] & !0xff | 1;
+        return;
+    }
     let buttons = JOY_STATES + 0x50 * pad + 0x30;
     if let Some(b) = (10..=16).find(|&b| m.rd8(buttons + b) & 0x80 != 0) {
         m.wr32(binding, 1);
         m.wr32(binding + 4, b);
         c.r[EAX] = c.r[EAX] & !0xff | 1;
+    }
+}
+
+/// controls.txt parsing and display. The game's fixed name table ends at the left stick and
+/// button 16, so the new right-stick keys need names in both directions to survive a restart.
+pub const BINDING_PARSE: u32 = 0x417870;
+pub const BINDING_NAME: u32 = 0x4179e0;
+const BINDING_NAME_BUF: u32 = 0x4a0410;
+
+pub fn binding_parse(c: &mut Cpu) {
+    let m = mem();
+    let (text, binding) = (m.rd32(c.r[ESP] + 4), m.rd32(c.r[ESP] + 8));
+    let text = cstr(text);
+    let custom = right_key_from_text(&text);
+    if let Some(key) = custom {
+        m.wr32(binding, 1);
+        m.wr32(binding + 4, key);
+        c.r[EAX] = 1;
+        // The original is not called on this path, so emulate its ret.
+        c.r[ESP] += 4;
+    } else {
+        // The original parser writes the device before it knows whether the name is valid.
+        // Keep an invalid/truncated dialog field from leaving a half-updated live binding.
+        let old = [m.rd32(binding), m.rd32(binding + 4)];
+        call_original(c, BINDING_PARSE);
+        if c.r[EAX] & 0xff == 0 {
+            m.wr32(binding, old[0]);
+            m.wr32(binding + 4, old[1]);
+        }
+    }
+}
+
+pub fn binding_name(c: &mut Cpu) {
+    let binding = mem().rd32(c.r[ESP] + 4);
+    let custom = (mem().rd32(binding) == 1)
+        .then(|| mem().rd32(binding + 4))
+        .and_then(|key| RIGHT_KEYS.iter().find(|e| e.1 == key));
+    if let Some((name, _)) = custom {
+        put_cstr(BINDING_NAME_BUF, &format!("Joystick: {name}"), 64);
+        c.r[EAX] = BINDING_NAME_BUF;
+        // The original is not called on this path, so emulate its ret.
+        c.r[ESP] += 4;
+    } else {
+        call_original(c, BINDING_NAME);
     }
 }
 
@@ -633,7 +761,10 @@ pub fn robot_physics(c: &mut Cpu) {
 
 #[cfg(test)]
 mod analog_tests {
-    use super::{movement_axis, scale_move_speed};
+    use super::{
+        Pad, RIGHT_DOWN, RIGHT_KEYS, RIGHT_LEFT, RIGHT_RIGHT, RIGHT_UP, movement_axis, right_key_from_text, right_stick_down,
+        right_stick_key, scale_move_speed,
+    };
 
     #[test]
     fn dead_zone_is_removed_and_remaining_travel_is_rescaled() {
@@ -647,6 +778,24 @@ mod analog_tests {
         assert_eq!(scale_move_speed(12_000, [0.0, 0.25]), 3_000);
         assert_eq!(scale_move_speed(12_000, [0.8, 0.8]), 12_000);
         assert_eq!(scale_move_speed(-9_000, [0.0, 0.5]), -4_500);
+    }
+
+    #[test]
+    fn right_stick_directions_use_extended_binding_keys() {
+        let pad = |x, y| Pad { stick: [0.0, 0.0, x, y], ..Pad::default() };
+        assert_eq!(right_stick_key(&pad(-1.0, 0.0)), Some(RIGHT_LEFT));
+        assert_eq!(right_stick_key(&pad(1.0, 0.0)), Some(RIGHT_RIGHT));
+        assert_eq!(right_stick_key(&pad(0.0, -1.0)), Some(RIGHT_UP));
+        assert_eq!(right_stick_key(&pad(0.0, 1.0)), Some(RIGHT_DOWN));
+        assert_eq!(right_stick_key(&pad(0.2, -0.2)), None);
+        let diagonal = pad(0.8, -0.8);
+        assert!(right_stick_down(&diagonal, RIGHT_RIGHT));
+        assert!(right_stick_down(&diagonal, RIGHT_UP));
+        for (name, key) in RIGHT_KEYS {
+            let text = format!("Joystick: {name}");
+            assert!(text.len() < 20);
+            assert_eq!(right_key_from_text(&text), Some(key));
+        }
     }
 }
 

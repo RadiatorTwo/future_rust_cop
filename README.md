@@ -48,7 +48,7 @@ What is new compared to the original:
 - Gamepads (up to two): choose the joystick profile in the Controller dialog. Left stick
   moves and turns proportionally in local games, RT gun, LT heavy weapon, A jump, B special,
   X action, Y change target, LB/RB jink,
-  Back map, R3 camera, Start pause; the D-pad is free to bind
+  Back map, R3 camera, Start pause; right-stick directions and the D-pad are free to bind
 - Network play over TCP/IP (Host Game / Join Game; port 47624, type the host's address in
   the Join dialog)
 - The arrow keys for player 1, and a camera close behind the robot

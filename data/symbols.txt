@@ -100,6 +100,8 @@
 0x415f30  file_reader_thread      async file reader (one-slot mailbox with file_read_done)
 0x416bf0  file_read_done
 0x417aa0  controls_default        copies profile [0x4a01b0] of the default key tables
+0x417870  binding_parse           parses "Keyboard/Joystick: name" from controls.txt; hooked for right-stick names
+0x4179e0  binding_name            formats a binding for controls.txt and the Controller dialog; hooked for right-stick names
 0x416330  input_init              joy_init with hinst [0x4a005c], hwnd [0x4a0054]; sets 0x4a01ac whatever it returns
 0x412590  joy_init                (hinst, hwnd) cleanup first, DirectInputCreateA(0x500), EnumDevices(joystick, 0x412800), per pad: CreateDevice, IDirectInputDevice2A, c_dfDIJoystick, joy_setup, joy_read, GetCapabilities
 0x412740  joy_cleanup             Unacquire and Release every pad and effect, Release DirectInput
@@ -107,8 +109,8 @@
 0x412e20  joy_setup               (pad) Unacquire, range -1000...1000 and dead zone 2500 on X and Y, Acquire
 0x412550  joy_read                (pad) Poll, GetDeviceState
 0x412b80  joy_poll                (pad) Poll, GetDeviceState into 0x49fd98 + 0x50 * pad; DIERR_INPUTLOST: Acquire; other errors: pad given up
-0x412d70  joy_key                 (pad, key) 0x12 lX < 0, 0x13 lX > 0, 0x14 lY < 0, 0x15 lY > 0, 0...0x10 button
-0x412c10  joy_capture             (pad, &key) first stick direction or button 0...9 pressed (Controller dialog, its WM_TIMER); hooked: dinput.rs adds buttons 10...16
+0x412d70  joy_key                 (pad, key) 0x12 lX < 0, 0x13 lX > 0, 0x14 lY < 0, 0x15 lY > 0, 0...0x10 button; hooked for right stick 0x16...0x19
+0x412c10  joy_capture             (pad, &key) first left-stick direction or button 0...9 pressed (Controller dialog, its WM_TIMER); hooked: dinput.rs adds buttons 10...16 and right stick 0x16...0x19
 0x416120  read_controls           (player) joy_poll, then the 14 bindings (0x511c20 / 0x511ca0) and Escape into control bits
 0x4162a0  binding_down            (player, binding) device 0: GetAsyncKeyState; 1: joy_key, pad = player (pad 0 if only one)
 0x402bb0  controller_dialog       keyboard hook 0x4032c0, timer 1 (250 ms) captures pad input
