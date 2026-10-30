@@ -22,7 +22,7 @@ pub enum Input {
     Key { vk: u8, scan: u8, down: bool, repeat: bool },
     Char(u8),
     Move(i32, i32),
-    /// 0 left, 1 right, 2 middle
+    /// 0 left, 1 right, 2 middle, 3 back/X1, 4 forward/X2
     Button(u8, bool),
     /// mouse wheel: lines, positive away from the user
     Wheel(i32),
@@ -198,6 +198,8 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
             let b = match b {
                 "click" => 0,
                 "rclick" => 1,
+                "x1click" => 3,
+                "x2click" => 4,
                 _ => continue,
             };
             ev.push((t + 30, Input::Button(b, true)));
@@ -576,6 +578,8 @@ impl ApplicationHandler for App {
                     MouseButton::Left => 0,
                     MouseButton::Right => 1,
                     MouseButton::Middle => 2,
+                    MouseButton::Back | MouseButton::Other(4) => 3,
+                    MouseButton::Forward | MouseButton::Other(5) => 4,
                     _ => return,
                 };
                 self.input.push_back(Input::Button(b, state == ElementState::Pressed));

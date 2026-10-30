@@ -112,7 +112,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   4 X action, 5 Y change target, 6/7 LB/RB jink, 8 Back map, 9 R3 camera, 10 L3, 11...14 D-pad
   (free to bind); the left stick moves; Start is the Escape key (pause). Right-stick directions
   are extended binding keys 0x16...0x19 (joy_key, joy_capture and controls.txt parse/format are
-  hooked). The Controller dialog reads every 250 ms and takes only buttons 0...9: presses are
+  hooked). Mouse left/right/middle and Back/Forward (X1/X2) are keyboard-device bindings using
+  their Windows virtual-key codes; the controller keyboard hook captures right/middle/side buttons
+  directly and left on a repeated click of the selected action, and the parse/format hooks persist
+  their compact names. The Controller
+  dialog reads every 250 ms and takes only buttons 0...9: presses are
   kept until the game reads the pad (a short press counts), and joy_capture 0x412c10 is hooked
   for 10...16. gilrs starts
   before compiling (Windows finds pads ~75 ms later, the game looks once at its start), is

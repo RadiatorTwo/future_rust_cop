@@ -356,10 +356,7 @@ impl Dialog {
         if matches!(m.msg, 0x100 | 0x102 | 0x201) {
             draw::caret_reset();
         }
-        let (fw, fh) = super::window::frame_size();
-        let (sx, sw) = super::window::overlay_span(fw, fh);
-        let x = ((m.lp & 0xffff) as i16 as i32 - sx as i32) * OV_W / sw.max(1) as i32;
-        let y = (m.lp >> 16) as i16 as i32 * OV_H / fh.max(1) as i32;
+        let (x, y) = input_point(m.lp);
         match m.msg {
             0x200 => {
                 self.hot = self.hit(x, y);
@@ -514,6 +511,22 @@ impl Dialog {
             _ => {}
         }
     }
+}
+
+fn input_point(lp: u32) -> (i32, i32) {
+    let (fw, fh) = super::window::frame_size();
+    let (sx, sw) = super::window::overlay_span(fw, fh);
+    let x = ((lp & 0xffff) as i16 as i32 - sx as i32) * OV_W / sw.max(1) as i32;
+    let y = (lp >> 16) as i16 as i32 * OV_H / fh.max(1) as i32;
+    (x, y)
+}
+
+/// The interactive control under a mouse message, in the topmost dialog.
+pub fn control_at(lp: u32) -> Option<u32> {
+    let (x, y) = input_point(lp);
+    let s = stack();
+    let d = s.dialogs.last()?;
+    d.hit(x, y).map(|k| d.controls[k].id)
 }
 
 /// What the game's messages do to a control; returns the result.

@@ -167,12 +167,13 @@ fn poll(wait: Duration) {
                 s.queue.push_back(m(WM_MOUSEMOVE, buttons(&s.keys), (x as u32 & 0xffff) | (y as u32) << 16));
             }
             Input::Button(b, down) => {
-                let vk = [1u8, 2, 4][b as usize];
+                let vk = [1u8, 2, 4, 5, 6][b as usize];
                 let k = &mut s.keys[vk as usize];
                 *k = if down { 0x81 } else { *k & !0x80 };
-                let msg = [0x201, 0x204, 0x207][b as usize] + if down { 0 } else { 1 };
+                let msg = if b < 3 { [0x201, 0x204, 0x207][b as usize] } else { 0x20b } + if down { 0 } else { 1 };
                 let (x, y) = s.mouse;
-                s.queue.push_back(m(msg, buttons(&s.keys), (x as u32 & 0xffff) | (y as u32) << 16));
+                let which = if b < 3 { 0 } else { (b as u32 - 2) << 16 };
+                s.queue.push_back(m(msg, buttons(&s.keys) | which, (x as u32 & 0xffff) | (y as u32) << 16));
             }
             Input::Wheel(n) => {
                 let (x, y) = s.mouse;
@@ -215,7 +216,13 @@ fn key_alt(keys: &[u8; 256]) -> bool {
 
 /// MK_* flags for mouse messages
 fn buttons(keys: &[u8; 256]) -> u32 {
-    (keys[1] >> 7) as u32 | ((keys[2] >> 7) as u32) << 1 | ((keys[0x10] >> 7) as u32) << 2 | ((keys[0x11] >> 7) as u32) << 3 | ((keys[4] >> 7) as u32) << 4
+    (keys[1] >> 7) as u32
+        | ((keys[2] >> 7) as u32) << 1
+        | ((keys[0x10] >> 7) as u32) << 2
+        | ((keys[0x11] >> 7) as u32) << 3
+        | ((keys[4] >> 7) as u32) << 4
+        | ((keys[5] >> 7) as u32) << 5
+        | ((keys[6] >> 7) as u32) << 6
 }
 
 /// The next message for this thread, waiting up to `wait` for one (modal loops).
@@ -232,15 +239,50 @@ pub fn next_message(c: &mut Cpu, wait: Duration) -> Option<Msg> {
 fn take_hooked(c: &mut Cpu, min: u32, max: u32, remove: bool) -> Option<Msg> {
     loop {
         let m = take_msg(min, max, remove)?;
-        if !remove || !(WM_KEYDOWN..=WM_SYSKEYUP).contains(&m.msg) {
+        if !remove {
             return Some(m);
         }
         let hooks: Vec<u32> = st().hooks.iter().filter(|h| h.1 == WH_KEYBOARD).map(|h| h.2).collect();
+        let mouse = controller_mouse_button(&m, &hooks);
+        if !is_keyboard_hook_message(m.msg) && mouse.is_none() {
+            return Some(m);
+        }
         // a keyboard hook gets the key, the repeat count and flags as in the message
-        let swallowed = hooks.into_iter().any(|p| guest_call(c, p, &[0, m.wp, m.lp]) != 0);
+        let key = mouse.unwrap_or(m.wp);
+        let flags = if mouse.is_some() { 0 } else { m.lp };
+        let swallowed = hooks
+            .into_iter()
+            .filter(|&p| mouse.is_none() || p == CONTROLLER_KEY_HOOK)
+            .any(|p| guest_call(c, p, &[0, key, flags]) != 0);
         if !swallowed {
             return Some(m);
         }
+    }
+}
+
+fn is_keyboard_hook_message(msg: u32) -> bool {
+    // WM_CHAR and WM_DEADCHAR numerically sit between KEYDOWN and SYSKEYUP, but a
+    // WH_KEYBOARD hook must receive only the four actual key messages.
+    matches!(msg, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP)
+}
+
+const CONTROLLER_KEY_HOOK: u32 = 0x4032c0;
+const CONTROLLER_FIELD: u32 = 0x498cf8;
+
+/// Mouse buttons use their Windows virtual-key codes as ordinary keyboard-device bindings.
+/// Right, middle and side clicks are not used by our dialogs. A left click is captured only when
+/// it repeats the click on the already selected binding field, so the first click can select it.
+fn controller_mouse_button(m: &Msg, hooks: &[u32]) -> Option<u32> {
+    if !hooks.contains(&CONTROLLER_KEY_HOOK) {
+        return None;
+    }
+    match m.msg {
+        0x204 => Some(0x02), // WM_RBUTTONDOWN / VK_RBUTTON
+        0x207 => Some(0x04), // WM_MBUTTONDOWN / VK_MBUTTON
+        0x20b if m.wp >> 16 == 1 => Some(0x05), // WM_XBUTTONDOWN / VK_XBUTTON1
+        0x20b if m.wp >> 16 == 2 => Some(0x06), // WM_XBUTTONDOWN / VK_XBUTTON2
+        0x201 if dialog::control_at(m.lp) == Some(mem().rd32(CONTROLLER_FIELD)) => Some(0x01), // VK_LBUTTON
+        _ => None,
     }
 }
 
@@ -847,5 +889,19 @@ pub fn single_player_keys() {
     for (i, k) in KEYS.into_iter().enumerate() {
         m.wr32(PROFILE + 8 * i as u32, 0);
         m.wr32(PROFILE + 8 * i as u32 + 4, k);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WM_CHAR, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP, is_keyboard_hook_message};
+
+    #[test]
+    fn keyboard_hooks_do_not_receive_character_messages() {
+        for msg in [WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP] {
+            assert!(is_keyboard_hook_message(msg));
+        }
+        assert!(!is_keyboard_hook_message(WM_CHAR));
+        assert!(!is_keyboard_hook_message(0x103)); // WM_DEADCHAR
     }
 }

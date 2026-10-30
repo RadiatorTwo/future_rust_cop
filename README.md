@@ -49,6 +49,9 @@ What is new compared to the original:
   moves and turns proportionally in local games, RT gun, LT heavy weapon, A jump, B special,
   X action, Y change target, LB/RB jink,
   Back map, R3 camera, Start pause; right-stick directions and the D-pad are free to bind
+- Mouse buttons, including Back/X1 and Forward/X2, can be assigned in the Controller dialog:
+  right, middle and side buttons after selecting an action; assign left by clicking the already
+  selected action a second time
 - Network play over TCP/IP (Host Game / Join Game; port 47624, type the host's address in
   the Join dialog)
 - The arrow keys for player 1, and a camera close behind the robot

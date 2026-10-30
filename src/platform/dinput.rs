@@ -537,14 +537,26 @@ const RIGHT_KEYS: [(&str, u32); 4] = [
     ("RStick U", RIGHT_UP),
     ("RStick D", RIGHT_DOWN),
 ];
+const MOUSE_KEYS: [(&str, u32); 5] =
+    [("Mouse L", 0x01), ("Mouse R", 0x02), ("Mouse M", 0x04), ("Mouse X1", 0x05), ("Mouse X2", 0x06)];
 const AXIS_DEAD_ZONE: f32 = 0.25;
 
-fn right_key_from_text(text: &str) -> Option<u32> {
+fn named_key_from_text(text: &str, wanted_device: &str, keys: &[(&str, u32)]) -> Option<u32> {
     text.split_once(':').and_then(|(device, name)| {
-        device.trim().eq_ignore_ascii_case("Joystick").then(|| name.trim()).and_then(|name| {
-            RIGHT_KEYS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|e| e.1)
-        })
+        device
+            .trim()
+            .eq_ignore_ascii_case(wanted_device)
+            .then(|| name.trim())
+            .and_then(|name| keys.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|e| e.1))
     })
+}
+
+fn right_key_from_text(text: &str) -> Option<u32> {
+    named_key_from_text(text, "Joystick", &RIGHT_KEYS)
+}
+
+fn mouse_key_from_text(text: &str) -> Option<u32> {
+    named_key_from_text(text, "Keyboard", &MOUSE_KEYS)
 }
 
 fn right_stick_key(p: &Pad) -> Option<u32> {
@@ -616,8 +628,8 @@ pub fn joy_capture(c: &mut Cpu) {
     }
 }
 
-/// controls.txt parsing and display. The game's fixed name table ends at the left stick and
-/// button 16, so the new right-stick keys need names in both directions to survive a restart.
+/// controls.txt parsing and display. The game's fixed name tables do not contain mouse buttons
+/// or our right-stick keys, so both need names in both directions to survive a restart.
 pub const BINDING_PARSE: u32 = 0x417870;
 pub const BINDING_NAME: u32 = 0x4179e0;
 const BINDING_NAME_BUF: u32 = 0x4a0410;
@@ -626,9 +638,9 @@ pub fn binding_parse(c: &mut Cpu) {
     let m = mem();
     let (text, binding) = (m.rd32(c.r[ESP] + 4), m.rd32(c.r[ESP] + 8));
     let text = cstr(text);
-    let custom = right_key_from_text(&text);
-    if let Some(key) = custom {
-        m.wr32(binding, 1);
+    let custom = mouse_key_from_text(&text).map(|key| (0, key)).or_else(|| right_key_from_text(&text).map(|key| (1, key)));
+    if let Some((device, key)) = custom {
+        m.wr32(binding, device);
         m.wr32(binding + 4, key);
         c.r[EAX] = 1;
         // The original is not called on this path, so emulate its ret.
@@ -647,11 +659,15 @@ pub fn binding_parse(c: &mut Cpu) {
 
 pub fn binding_name(c: &mut Cpu) {
     let binding = mem().rd32(c.r[ESP] + 4);
-    let custom = (mem().rd32(binding) == 1)
-        .then(|| mem().rd32(binding + 4))
-        .and_then(|key| RIGHT_KEYS.iter().find(|e| e.1 == key));
-    if let Some((name, _)) = custom {
-        put_cstr(BINDING_NAME_BUF, &format!("Joystick: {name}"), 64);
+    let device = mem().rd32(binding);
+    let key = mem().rd32(binding + 4);
+    let custom = match device {
+        0 => MOUSE_KEYS.iter().find(|e| e.1 == key).map(|e| ("Keyboard", e.0)),
+        1 => RIGHT_KEYS.iter().find(|e| e.1 == key).map(|e| ("Joystick", e.0)),
+        _ => None,
+    };
+    if let Some((device, name)) = custom {
+        put_cstr(BINDING_NAME_BUF, &format!("{device}: {name}"), 64);
         c.r[EAX] = BINDING_NAME_BUF;
         // The original is not called on this path, so emulate its ret.
         c.r[ESP] += 4;
@@ -762,8 +778,8 @@ pub fn robot_physics(c: &mut Cpu) {
 #[cfg(test)]
 mod analog_tests {
     use super::{
-        Pad, RIGHT_DOWN, RIGHT_KEYS, RIGHT_LEFT, RIGHT_RIGHT, RIGHT_UP, movement_axis, right_key_from_text, right_stick_down,
-        right_stick_key, scale_move_speed,
+        MOUSE_KEYS, Pad, RIGHT_DOWN, RIGHT_KEYS, RIGHT_LEFT, RIGHT_RIGHT, RIGHT_UP, mouse_key_from_text, movement_axis,
+        right_key_from_text, right_stick_down, right_stick_key, scale_move_speed,
     };
 
     #[test]
@@ -795,6 +811,11 @@ mod analog_tests {
             let text = format!("Joystick: {name}");
             assert!(text.len() < 20);
             assert_eq!(right_key_from_text(&text), Some(key));
+        }
+        for (name, key) in MOUSE_KEYS {
+            let text = format!("Keyboard: {name}");
+            assert!(text.len() < 20);
+            assert_eq!(mouse_key_from_text(&text), Some(key));
         }
     }
 }
