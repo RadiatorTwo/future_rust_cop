@@ -45,8 +45,8 @@ What is new compared to the original:
 - High resolution and widescreen (Hor+), fullscreen (Alt+Enter), anti-aliasing,
   texture filtering; all in the game's Preferences dialog
 - Frame rates up to unlimited, with the game's logic unchanged
-- Gamepads (up to two): choose the joystick profile in the Controller dialog. Left stick
-  moves and turns proportionally in local games, RT gun, LT heavy weapon, A jump, B special,
+- Gamepads (up to two): choose the joystick profile in the Controller dialog. Assigned stick
+  directions move, turn, and sidestep proportionally in local games, RT gun, LT heavy weapon, A jump, B special,
   X action, Y change target, LB/RB jink,
   Back map, R3 camera, Start pause; right-stick directions and the D-pad are free to bind
 - Mouse buttons, including Back/X1 and Forward/X2, can be assigned in the Controller dialog:

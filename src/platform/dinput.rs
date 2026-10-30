@@ -9,8 +9,9 @@
 //! it give the pad up, so we always answer DI_OK. The game reads only lX, lY (by their sign:
 //! inside the dead zone they must be exactly 0) and buttons 0...16 (joy_key 0x412d70); with
 //! two pads player i uses pad i, with one both share it. The original code loses the axis
-//! magnitude there; hooks around player robot physics restore proportional translation and
-//! turning in local games while keeping its direction handling, collisions, and gravity.
+//! magnitude there; hooks around player robot physics restore each assigned axis independently
+//! for proportional translation, turning, and sidestepping in local games while keeping its
+//! direction handling, collisions, and gravity.
 //!
 //! Our button order makes the game's own joystick profile 1 a modern layout: 0 RT gun, 1 LT
 //! heavy weapon, 2 B special, 3 A jump, 4 X action, 5 Y change target, 6 LB / 7 RB jink, 8 Back
@@ -102,7 +103,7 @@ static SCRIPTED: Mutex<Option<Pad>> = Mutex::new(None);
 // Analog movement in the current robot-physics call. The original game turns the stick
 // into four bits; the movement-vector hooks below put its magnitude back.
 thread_local! {
-    static ANALOG_MOVE: Cell<Option<[f32; 2]>> = const { Cell::new(None) };
+    static ANALOG_MOVE: Cell<Option<AnalogMove>> = const { Cell::new(None) };
 }
 
 fn scripted_pad() -> bool {
@@ -691,8 +692,15 @@ const NET: u32 = 0x511fa0;
 const ROBOT_DATA: u32 = 0xac;
 const CONTROLS_BITS: u32 = 0x30;
 const HEADING: u32 = 0xb0;
-const MOVE_BITS: u32 = 0xf000_0000;
+const MOVE_BITS: u32 = 0xf030_0000;
 const TURN_BITS: u32 = 0x3000_0000;
+
+#[derive(Clone, Copy)]
+struct AnalogMove {
+    /// Forward/back and sidestep magnitudes when either active action is analog.
+    vector: Option<[f32; 2]>,
+    turn: Option<f32>,
+}
 
 /// DirectInput's per-axis dead zone, as configured by the game. The remaining travel is
 /// rescaled, so leaving the dead zone starts at zero speed.
@@ -706,42 +714,121 @@ fn movement_axis(v: f32) -> f32 {
     }
 }
 
-/// Stick value for a player whose four movement actions are bound to joystick axes. Network
-/// input contains only direction bits, not magnitude; retaining digital movement there keeps
-/// both peers' simulations deterministic.
-fn analog_for(actor: u32) -> Option<[f32; 2]> {
+/// Magnitude of one active action's assigned stick direction. A non-axis binding is digital.
+fn binding_amount(stick: [f32; 4], binding: (u32, u32)) -> Option<f32> {
+    if binding.0 != 1 {
+        return None;
+    }
+    let amount = match binding.1 {
+        0x12 => -stick[0],
+        0x13 => stick[0],
+        0x14 => -stick[1],
+        0x15 => stick[1],
+        RIGHT_LEFT => -stick[2],
+        RIGHT_RIGHT => stick[2],
+        RIGHT_UP => -stick[3],
+        RIGHT_DOWN => stick[3],
+        _ => return None,
+    };
+    Some(movement_axis(amount).max(0.0))
+}
+
+/// Scale each active action independently. If an active action is digital, that dimension
+/// remains digital; it does not disable analog handling of the other actions.
+fn analog_amounts(stick: [f32; 4], bindings: [(u32, u32); 14], controls: u32) -> AnalogMove {
+    let amount = |actions: &[(usize, u32, f32)]| {
+        let mut analog = false;
+        let mut amount = 0.0;
+        for &(action, bit, direction) in actions {
+            if controls & bit == 0 {
+                continue;
+            }
+            if let Some(a) = binding_amount(stick, bindings[action]) {
+                analog = true;
+                amount += direction * a;
+            } else {
+                amount += direction;
+            }
+        }
+        (analog, amount.clamp(-1.0, 1.0))
+    };
+    let translation = amount(&[(0, 0x4000_0000, 1.0), (1, 0x8000_0000, -1.0)]);
+    let turn = amount(&[(2, 0x2000_0000, 1.0), (3, 0x1000_0000, -1.0)]);
+    let sidestep = amount(&[(10, 0x0010_0000, -1.0), (11, 0x0020_0000, 1.0)]);
+    let vector = (translation.0 || sidestep.0).then_some([translation.1, sidestep.1]);
+    AnalogMove {
+        vector,
+        turn: turn.0.then_some(turn.1.abs()),
+    }
+}
+
+/// Analog amounts for the active local-player actions. Network input contains only direction
+/// bits, not magnitude; retaining digital movement there keeps both peers deterministic.
+fn analog_for(actor: u32, controls: u32) -> Option<AnalogMove> {
     let m = mem();
     if m.rd32(NET) as i32 >= 0 {
         return None;
     }
     let player = (0..2).find(|&p| m.rd32(PLAYERS + 4 * p) == actor)?;
     let bindings = BINDINGS + BINDINGS_SIZE * player;
-    let axes_bound = (0..4).all(|k| {
-        let b = bindings + 8 * k;
-        m.rd32(b) == 1 && (0x12..=0x15).contains(&m.rd32(b + 4))
+    let bindings = std::array::from_fn(|k| {
+        let b = bindings + 8 * k as u32;
+        (m.rd32(b), m.rd32(b + 4))
     });
-    if !axes_bound {
-        return None;
-    }
     let pad = if m.rd32(JOY_COUNT) > 1 { player } else { 0 };
     let pads = PADS.lock().unwrap();
     let stick = pads.get(pad as usize)?.pad.stick;
-    Some([movement_axis(stick[0]), movement_axis(stick[1])])
+    let analog = analog_amounts(stick, bindings, controls);
+    (analog.vector.is_some() || analog.turn.is_some()).then_some(analog)
 }
 
-fn scale_move_speed(speed: i32, stick: [f32; 2]) -> i32 {
-    let amount = stick[0].hypot(stick[1]).min(1.0);
+fn scale_move_speed(speed: i32, amount: f32) -> i32 {
     (speed as f32 * amount).round() as i32
 }
 
 fn move_vector(c: &mut Cpu, addr: u32) {
+    let m = mem();
+    let sp = c.r[ESP];
+    let mut restore = None;
     ANALOG_MOVE.with(|a| {
-        if let Some(stick) = a.get() {
-            let speed = mem().rd32(c.r[ESP] + 8) as i32;
-            mem().wr32(c.r[ESP] + 8, scale_move_speed(speed, stick) as u32);
+        if let Some([forward, side]) = a.get().and_then(|a| a.vector) {
+            let actor = m.rd32(sp + 4);
+            let speed = m.rd32(sp + 8) as i32;
+            let side_mode = m.rd32(sp + 12);
+            let strafe = m.rd32(sp + 20);
+            if strafe == 0 && side_mode == 0 {
+                m.wr32(sp + 8, scale_move_speed(speed, forward.abs()) as u32);
+                restore = Some((actor, None, speed, side_mode, strafe));
+                return;
+            }
+
+            let x = m.rd32(actor + 0xa0) as i32;
+            let z = m.rd32(actor + 0xa8) as i32;
+            let length = forward.hypot(side);
+            if length == 0.0 {
+                m.wr32(sp + 8, 0);
+            } else {
+                let nx = (x as f32 * forward + z as f32 * side) / length;
+                let nz = (z as f32 * forward - x as f32 * side) / length;
+                m.wr32(actor + 0xa0, nx.round() as i32 as u32);
+                m.wr32(actor + 0xa8, nz.round() as i32 as u32);
+                m.wr32(sp + 8, scale_move_speed(speed.abs(), length.min(1.0)) as u32);
+            }
+            m.wr32(sp + 12, 0);
+            m.wr32(sp + 20, 0);
+            restore = Some((actor, Some((x, z)), speed, side_mode, strafe));
         }
     });
     call_original(c, addr);
+    if let Some((actor, direction, speed, side_mode, strafe)) = restore {
+        if let Some((x, z)) = direction {
+            m.wr32(actor + 0xa0, x as u32);
+            m.wr32(actor + 0xa8, z as u32);
+        }
+        m.wr32(sp + 8, speed as u32);
+        m.wr32(sp + 12, side_mode);
+        m.wr32(sp + 20, strafe);
+    }
 }
 
 pub fn hover_move_vector(c: &mut Cpu) {
@@ -759,27 +846,25 @@ pub fn robot_physics(c: &mut Cpu) {
     let actor = m.rd32(c.r[ESP] + 4);
     let data = m.rd32(actor + ROBOT_DATA);
     let controls = m.rd32(data + CONTROLS_BITS);
-    let analog = (controls & MOVE_BITS != 0).then(|| analog_for(actor)).flatten();
+    let analog = (controls & MOVE_BITS != 0).then(|| analog_for(actor, controls)).flatten();
     let before = m.rd16(actor + HEADING) as i32 & 0xfff;
     let previous = ANALOG_MOVE.replace(analog);
     call_original(c, ROBOT_PHYSICS);
     ANALOG_MOVE.set(previous);
 
-    let Some(stick) = analog else { return };
-    if controls & TURN_BITS == 0 {
-        return;
-    }
+    let Some(amount) = analog.and_then(|a| a.turn) else { return };
+    debug_assert!(controls & TURN_BITS != 0);
     let after = m.rd16(actor + HEADING) as i32 & 0xfff;
     let delta = (after - before + 0x800).rem_euclid(0x1000) - 0x800;
-    let heading = before + (delta as f32 * stick[0].abs()).round() as i32;
+    let heading = before + (delta as f32 * amount).round() as i32;
     m.wr16(actor + HEADING, heading.rem_euclid(0x1000) as u16);
 }
 
 #[cfg(test)]
 mod analog_tests {
     use super::{
-        MOUSE_KEYS, Pad, RIGHT_DOWN, RIGHT_KEYS, RIGHT_LEFT, RIGHT_RIGHT, RIGHT_UP, mouse_key_from_text, movement_axis,
-        right_key_from_text, right_stick_down, right_stick_key, scale_move_speed,
+        MOUSE_KEYS, MOVE_BITS, Pad, RIGHT_DOWN, RIGHT_KEYS, RIGHT_LEFT, RIGHT_RIGHT, RIGHT_UP, analog_amounts,
+        mouse_key_from_text, movement_axis, right_key_from_text, right_stick_down, right_stick_key, scale_move_speed,
     };
 
     #[test]
@@ -791,9 +876,50 @@ mod analog_tests {
 
     #[test]
     fn movement_speed_follows_radial_stick_travel() {
-        assert_eq!(scale_move_speed(12_000, [0.0, 0.25]), 3_000);
-        assert_eq!(scale_move_speed(12_000, [0.8, 0.8]), 12_000);
-        assert_eq!(scale_move_speed(-9_000, [0.0, 0.5]), -4_500);
+        assert_eq!(scale_move_speed(12_000, 0.25), 3_000);
+        assert_eq!(scale_move_speed(12_000, 1.0), 12_000);
+        assert_eq!(scale_move_speed(-9_000, 0.5), -4_500);
+    }
+
+    #[test]
+    fn each_active_analog_binding_is_independent() {
+        let stick = [0.0, 0.7, 0.8, 0.0];
+        let mut bindings = [(0, 0); 14];
+        bindings[..4].copy_from_slice(&[(0, 0x26), (1, 0x15), (1, RIGHT_RIGHT), (0, 0x25)]);
+        let backwards = analog_amounts(stick, bindings, 0x8000_0000);
+        assert!((backwards.vector.unwrap()[0] + (0.7 - 0.25) / 0.75).abs() < 1e-6);
+        assert!(backwards.turn.is_none());
+
+        let right = analog_amounts(stick, bindings, 0x2000_0000);
+        assert!(right.vector.is_none());
+        assert!((right.turn.unwrap() - (0.8 - 0.25) / 0.75).abs() < 1e-6);
+
+        let digital_forward_and_analog_right = analog_amounts(stick, bindings, 0x6000_0000);
+        assert!(digital_forward_and_analog_right.vector.is_none());
+        assert!(digital_forward_and_analog_right.turn.is_some());
+    }
+
+    #[test]
+    fn analog_sidestep_blends_with_other_movement() {
+        let stick = [0.8, -0.7, 0.0, 0.0];
+        let mut bindings = [(0, 0); 14];
+        bindings[0] = (0, 0x26); // digital forward
+        bindings[10] = (1, 0x13); // analog sidestep
+        let movement = analog_amounts(stick, bindings, 0x4010_0000).vector.unwrap();
+        assert_eq!(movement[0], 1.0);
+        assert!((movement[1] + (0.8 - 0.25) / 0.75).abs() < 1e-6);
+        assert_ne!(MOVE_BITS & 0x0010_0000, 0);
+        assert_ne!(MOVE_BITS & 0x0020_0000, 0);
+    }
+
+    #[test]
+    fn analog_sidestep_from_rest_has_its_own_vector() {
+        let stick = [0.8, 0.0, 0.0, 0.0];
+        let mut bindings = [(0, 0); 14];
+        bindings[10] = (1, 0x13);
+        let movement = analog_amounts(stick, bindings, 0x0010_0000).vector.unwrap();
+        assert_eq!(movement[0], 0.0);
+        assert!((movement[1] + (0.8 - 0.25) / 0.75).abs() < 1e-6);
     }
 
     #[test]

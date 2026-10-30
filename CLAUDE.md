@@ -105,8 +105,8 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `dinput.rs` (DirectInput 5, only for joysticks: gamepads through gilrs, at most 2 reported
   (the game has room for 2); player i uses pad i, one pad is shared. The game reads lX/lY by
   their sign (0 inside its 25% dead zone), but hooks on robot physics and its hover/walk movement
-  vector helpers restore proportional movement and turning for players whose four directions
-  are bound to joystick axes (not in network games: their packets have no magnitude), and
+  vector helpers restore each assigned axis independently for proportional movement, turning,
+  and jinking (not in network games: their packets have no magnitude), and
   buttons 0...16. Our button order makes the
   game's own joystick profile 1 a modern layout: 0 RT gun, 1 LT heavy, 2 B special, 3 A jump,
   4 X action, 5 Y change target, 6/7 LB/RB jink, 8 Back map, 9 R3 camera, 10 L3, 11...14 D-pad
