@@ -43,7 +43,8 @@ PulseAudio through it) and gamepads (libudev) are needed; every desktop distribu
 
 What is new compared to the original:
 - High resolution and widescreen (Hor+), fullscreen (Alt+Enter), anti-aliasing,
-  texture filtering; all in the game's Preferences dialog
+  texture filtering; all in the game's Preferences dialog, which "Display" in the pause bar
+  opens during a mission too (everything there applies at once, brightness included)
 - Frame rates up to unlimited, with the game's logic unchanged
 - Gamepads (up to two): choose the joystick profile in the Controller dialog. Assigned stick
   directions move, turn, and sidestep proportionally in local games, RT gun, LT heavy weapon, A jump, B special,
@@ -56,6 +57,10 @@ What is new compared to the original:
   the Join dialog)
 - The arrow keys for player 1, and a camera close behind the robot
 - Replacement textures (HD textures), see below
+- Videos as large as the window allows, centred, with their own aspect
+- `fcop export-sounds` (in a terminal, in fcop's folder) writes the missions' sound effects,
+  voices and music to `game_files/Sounds` as WAV files, each different one once
+  (`sounds.txt` lists which missions use it)
 
 ### Replacement textures
 
