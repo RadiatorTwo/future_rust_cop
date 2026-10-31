@@ -124,8 +124,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   FCOP_INPUT drive a scripted pad (pad 0)), `dshow.rs`
   (DirectShow for the videos, 0x408800: CoCreateInstance gives the filter graph with
   IMediaControl/IMediaEventEx/IVideoWindow/IBasicAudio; RenderFile demuxes the MPEG file, Run
-  plays it on a thread: frames to `window::set_video` (a layer over the frame, in the video
-  window's place in the 4:3 picture), sound to the mixer's stream (`dsound::stream_*`), which
+  plays it on a thread: frames to `window::set_video` (a layer over the frame, as large as
+  the window allows with the video's aspect, centred; the game's SetWindowPosition only
+  says whether it is shown: briefings were 512x288 high up in 640x480), sound to the mixer's stream (`dsound::stream_*`), which
   is also the clock; at the end EC_COMPLETE and the notify message WM_USER. The game skips with
   Space or a click itself (0x408ab0 calls Stop). It never releases IBasicAudio, so the graph
   is replaced at the next CoCreateInstance),

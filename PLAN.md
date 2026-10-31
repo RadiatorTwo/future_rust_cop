@@ -84,7 +84,9 @@ Next:
 - [ ] Later: a native Glide backend (a 64-bit glide2x.dll such as dgVoodoo2's), behind the
       same Glide layer
 - [x] Videos (`dshow.rs`, `src/mpeg/`): EA logo, intro, briefing play with sound, Space skips;
-      all 27 files decode like ffmpeg; all videos checked by the user (2026-10-27)
+      all 27 files decode like ffmpeg; all videos checked by the user (2026-10-27); shown
+      centred and as large as the window allows with their aspect, not where the game placed
+      them (briefings 512x288 high up in 640x480) (2026-10-31)
 - [x] Performance at high frame rates: Glide batches across combine/constant/texture
       changes (texture array), the frame wait sleeps; 300 fps hold in the first mission
 - [x] High frame rates by interpolated pictures (`fps.rs`): logic at 8 ticks, the render

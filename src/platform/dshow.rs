@@ -497,17 +497,10 @@ static BASIC_AUDIO: &[Import] = &[
 
 // ---- playback -----------------------------------------------------------------------------------
 
-/// Where the video window is, as parts of the owner's client area (None: not shown).
-fn placement() -> Option<[f32; 4]> {
-    let g = graph();
-    let g = g.as_ref()?;
-    let [x, y, w, h] = g.rect;
-    if !g.visible || w <= 0 || h <= 0 {
-        return None;
-    }
-    let r = super::user32::main_rect();
-    let (cw, ch) = ((r[2] - r[0]).max(1) as f32, (r[3] - r[1]).max(1) as f32);
-    Some([x as f32 / cw, y as f32 / ch, w as f32 / cw, h as f32 / ch])
+/// Whether the video window is shown (placed and visible). Where the game placed it does not
+/// matter: the picture fills the window (`gl::Gl::draw`).
+fn on_screen() -> bool {
+    graph().as_ref().is_some_and(|g| g.visible && g.rect[2] > 0 && g.rect[3] > 0)
 }
 
 /// Play a movie until its end or `stop`; at its end, queue EC_COMPLETE and post the notify
@@ -576,8 +569,7 @@ fn play(movie: &mpeg::Streams, stop: &AtomicBool, paused: &AtomicBool, volume: i
                 // a frame more than one behind is skipped
                 if clock - due < 1.0 / fps {
                     f.to_rgb(&mut rgb);
-                    let place = placement();
-                    window::set_video(place.map(|r| (rgb.clone(), (f.width & !1) as u32, (f.height & !1) as u32, r)));
+                    window::set_video(on_screen().then(|| (rgb.clone(), (f.width & !1) as u32, (f.height & !1) as u32)));
                 }
                 shown += 1;
             }

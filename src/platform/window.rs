@@ -70,9 +70,8 @@ thread_local! {
 static MAIN: OnceLock<ThreadId> = OnceLock::new();
 static PENDING: Mutex<Option<(Vec<u32>, u32, u32)>> = Mutex::new(None);
 
-/// A video frame to show (0RGB pixels, w x h, where: see `set_video`) or None, shown at the
-/// main thread's next pump.
-type VideoFrame = Option<(Vec<u32>, u32, u32, [f32; 4])>;
+/// A video frame to show (0RGB pixels, w x h) or None, shown at the main thread's next pump.
+type VideoFrame = Option<(Vec<u32>, u32, u32)>;
 static VIDEO: Mutex<Option<VideoFrame>> = Mutex::new(None);
 
 /// The game hides the cursor (ShowCursor); applied at the next pump.
@@ -144,7 +143,7 @@ pub fn pump(wait: Duration) {
         }
         if let Some(v) = VIDEO.lock().unwrap().take() {
             if let Some(gl) = &mut h.app.gl {
-                gl.video(v.as_ref().map(|(px, w, hh, r)| (&px[..], *w, *hh, *r)));
+                gl.video(v.as_ref().map(|(px, w, hh)| (&px[..], *w, *hh)));
                 h.app.draw();
             }
         }
@@ -413,8 +412,8 @@ pub fn set_overlay(overlay: Option<(Vec<u32>, u32, u32)>) {
     });
 }
 
-/// Show a video frame (0RGB, w x h) over the game's frames, in `rect`: x, y, width and height
-/// as parts of the 4:3 picture; `None` removes it. Any thread; shown at the next pump.
+/// Show a video frame (0RGB, w x h) over the game's frames, as large as fits the window and
+/// centred; `None` removes it. Any thread; shown at the next pump.
 pub fn set_video(frame: VideoFrame) {
     *VIDEO.lock().unwrap() = Some(frame);
 }
