@@ -111,6 +111,9 @@ Next:
       fullscreen scales it to the display
 - [x] "Fullscreen" box in Preferences (Glide; the game hides its own): REG_DWORD
       `Fullscreen`, applies at OK and at start; Alt+Enter saves it too
+- [x] Graphics settings during a mission (2026-10-31): "Display" in the pause bar opens
+      Preferences without what needs a restart (Renderer) or belongs to the pause bar
+      already; all of it applies at once, gamma too (the game set it only at Glide's start)
 - [x] High resolution: lines (the laser sight) grow with the resolution (Glide: quads, a
       pixel per 720 lines, 2026-10-27)
 - [ ] The software renderer stays at the game's resolution

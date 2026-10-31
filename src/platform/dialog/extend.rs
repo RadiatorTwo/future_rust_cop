@@ -2,17 +2,19 @@
 //! - `adjust` changes the template before the dialog is built: add our controls (ids from
 //!   `FIRST_OURS`), move the game's, make the dialog larger;
 //! - `init` runs after the game's WM_INITDIALOG: fill our controls, hide game controls;
-//! - `command` handles clicks on our controls (the game's procedure never sees them);
+//! - `command` handles clicks on our controls (the game's procedure never sees them), and
+//!   may name a dialog to open on top;
 //! - `ok` runs when the dialog's OK button is pressed: save our settings.
 //!
 //! Settings are REG_DWORD/REG_SZ values under the game's own key (`advapi32::FCOP_KEY`).
 
 use super::template::{Class, Item, Template};
 use super::{Dialog, FIRST_OURS, Kind};
-use crate::platform::advapi32;
+use crate::platform::{advapi32, mem};
 
-/// The Preferences dialog.
+/// The Preferences dialog and the game's procedure for it.
 const PREFERENCES: u32 = 101;
+const PREFERENCES_PROC: u32 = 0x402030;
 /// Its "Processor Select" label and combo box (the game hides them): our renderer choice goes there.
 const PROCESSOR_LABEL: u32 = 1111;
 const PROCESSOR_COMBO: u32 = 1023;
@@ -29,6 +31,17 @@ const OPTIONS_GROUP: u32 = 1125;
 /// Its OK and Cancel buttons: they move down a row for ours.
 const OK: u32 = 1001;
 const CANCEL: u32 = 1002;
+/// Its "Display Mode" label, "* Only supported in a window" note, Controller Configuration and
+/// Audio buttons: hidden when it is opened from the pause bar (which has Audio and Controls).
+const DISPLAY_MODE_LABEL: u32 = 1155;
+const WINDOW_NOTE: u32 = 1110;
+const CONTROLLER_BUTTON: u32 = 1099;
+const AUDIO_BUTTON: u32 = 1100;
+/// Its gamma slider (shown with Glide); the game reads it only when Glide starts.
+const GAMMA: u32 = 1118;
+/// The game's gamma: slider position * [GAMMA_SCALE] - [GAMMA_BASE] (doubles, as 0x43a540).
+const GAMMA_SCALE: u32 = 0x484678;
+const GAMMA_BASE: u32 = 0x484680;
 
 const RENDERER_LABEL: u32 = FIRST_OURS;
 const RENDERER: u32 = FIRST_OURS + 1;
@@ -50,6 +63,12 @@ const JOIN_BUTTON: u32 = 1139;
 const JOIN_CANCEL: u32 = 1140;
 const ADDRESS_GROUP: u32 = FIRST_OURS + 11;
 const ADDRESS: u32 = FIRST_OURS + 12;
+
+/// The pause bar (Abort, Resume, Audio, Controls in a row): our Display button opens
+/// Preferences from it, the buttons get narrower to make room.
+const PAUSE: u32 = 166;
+const PAUSE_BUTTONS: [u32; 4] = [1138, 1137, 1139, 1140];
+const DISPLAY: u32 = FIRST_OURS + 13;
 
 const VISIBLE: u32 = 0x1000_0000;
 const TABSTOP: u32 = 0x0001_0000;
@@ -76,7 +95,26 @@ pub fn adjust(template: u32, t: &mut Template) {
         }
         t.rect[3] += down;
     }
+    if template == PAUSE {
+        // Resume, Abort, Audio, Controls, Display: 68 units wide, 2 apart, as wide as before
+        let Some(r) = t.items.iter().find(|i| i.id == PAUSE_BUTTONS[0]).map(|i| i.rect) else { return };
+        let x = |k: i32| r[0] + k * 70;
+        for (k, id) in PAUSE_BUTTONS.iter().enumerate() {
+            if let Some(i) = t.items.iter_mut().find(|i| i.id == *id) {
+                i.rect = [x(k as i32), r[1], 68, r[3]];
+            }
+        }
+        // a default push button like the game's four (they are drawn so)
+        t.items.push(Item { class: Class::Button, id: DISPLAY, text: "Display".into(), style: VISIBLE | TABSTOP | 1, ex_style: 0, rect: [x(4), r[1], 68, r[3]] });
+    }
     if template == PREFERENCES {
+        // from the pause bar: only what can change while a mission runs
+        let paused = super::is_open(PAUSE);
+        if paused {
+            for i in t.items.iter_mut().filter(|i| [DISPLAY_MODE, DISPLAY_MODE_LABEL, WINDOW_NOTE, GAME_FULLSCREEN, CONTROLLER_BUTTON, AUDIO_BUTTON].contains(&i.id)) {
+                i.style &= !VISIBLE;
+            }
+        }
         let place = |id: u32| t.items.iter().find(|i| i.id == id).map(|i| i.rect);
         let (Some(label), Some(combo)) = (place(PROCESSOR_LABEL), place(PROCESSOR_COMBO)) else { return };
         let filtering = place(FILTERING);
@@ -84,8 +122,10 @@ pub fn adjust(template: u32, t: &mut Template) {
         let game_fullscreen = place(GAME_FULLSCREEN);
         let group = place(OPTIONS_GROUP);
         // wider than the game's label: up to the 3DFX Options group (x 132)
-        t.items.push(Item { class: Class::Static, id: RENDERER_LABEL, text: "Renderer (needs restart)".into(), style: VISIBLE, ex_style: 0, rect: [label[0], label[1], 122, label[3]] });
-        t.items.push(Item { class: Class::ComboBox, id: RENDERER, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: combo });
+        if !paused {
+            t.items.push(Item { class: Class::Static, id: RENDERER_LABEL, text: "Renderer (needs restart)".into(), style: VISIBLE, ex_style: 0, rect: [label[0], label[1], 122, label[3]] });
+            t.items.push(Item { class: Class::ComboBox, id: RENDERER, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: combo });
+        }
         if let Some(r) = display_mode {
             t.items.push(Item { class: Class::ComboBox, id: RESOLUTION, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: r });
         }
@@ -102,25 +142,29 @@ pub fn adjust(template: u32, t: &mut Template) {
             t.items.push(Item { class: Class::Button, id: WIDESCREEN, text: "Widescreen".into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect });
         }
         if let Some(g) = group {
-            // between the group and the OK button's row, the combo up to the group's right edge
-            let y = g[1] + g[3] + 5;
-            t.items.push(Item { class: Class::Static, id: FRAME_RATE_LABEL, text: "Frame Rate".into(), style: VISIBLE, ex_style: 0, rect: [g[0], y + 2, 52, 8] });
-            t.items.push(Item { class: Class::ComboBox, id: FRAME_RATE, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: [g[0] + 54, y, g[2] - 54, 100] });
-            // one more row: OK and Cancel move down, the dialog grows
-            let y = y + 15;
-            for i in t.items.iter_mut().filter(|i| i.id == OK || i.id == CANCEL) {
-                i.rect[1] += 15;
+            // between the group and the OK button's row, the combos up to the group's right
+            // edge, each row moving OK and Cancel down; from the pause bar in the left column,
+            // emptied there, from the Processor Select label on, each label above its combo
+            let rows = [(FRAME_RATE_LABEL, FRAME_RATE, "Frame Rate"), (TEXTURES_LABEL, TEXTURES, "Textures"), (MSAA_LABEL, MSAA, "Anti-alias")];
+            for (k, (label_id, id, text)) in rows.into_iter().enumerate() {
+                let k = k as i32;
+                let (l, c) = if paused {
+                    let w = display_mode.map_or(115, |m| m[2]);
+                    let y = label[1] + 24 * k;
+                    ([combo[0], y, w, 8], [combo[0], y + 10, w, 100])
+                } else {
+                    if k > 0 {
+                        for i in t.items.iter_mut().filter(|i| i.id == OK || i.id == CANCEL) {
+                            i.rect[1] += 15;
+                        }
+                        t.rect[3] += 15;
+                    }
+                    let y = g[1] + g[3] + 5 + 15 * k;
+                    ([g[0], y + 2, 52, 8], [g[0] + 54, y, g[2] - 54, 100])
+                };
+                t.items.push(Item { class: Class::Static, id: label_id, text: text.into(), style: VISIBLE, ex_style: 0, rect: l });
+                t.items.push(Item { class: Class::ComboBox, id, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: c });
             }
-            t.rect[3] += 15;
-            t.items.push(Item { class: Class::Static, id: TEXTURES_LABEL, text: "Textures".into(), style: VISIBLE, ex_style: 0, rect: [g[0], y + 2, 52, 8] });
-            t.items.push(Item { class: Class::ComboBox, id: TEXTURES, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: [g[0] + 54, y, g[2] - 54, 100] });
-            let y = y + 15;
-            for i in t.items.iter_mut().filter(|i| i.id == OK || i.id == CANCEL) {
-                i.rect[1] += 15;
-            }
-            t.rect[3] += 15;
-            t.items.push(Item { class: Class::Static, id: MSAA_LABEL, text: "Anti-alias".into(), style: VISIBLE, ex_style: 0, rect: [g[0], y + 2, 52, 8] });
-            t.items.push(Item { class: Class::ComboBox, id: MSAA, text: String::new(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect: [g[0] + 54, y, g[2] - 54, 100] });
         }
     }
 }
@@ -231,7 +275,10 @@ pub fn init(d: &mut Dialog) {
     }
 }
 
-pub fn command(_d: &mut Dialog, _id: u32) {}
+/// A click on one of our controls; returns a dialog to open on top (template, procedure).
+pub fn command(_d: &mut Dialog, id: u32) -> Option<(u32, u32)> {
+    (id == DISPLAY).then_some((PREFERENCES, PREFERENCES_PROC))
+}
 
 fn saved_address() -> String {
     advapi32::value("", "JoinAddress").map(|(_, d)| d.iter().take_while(|&&b| b != 0).map(|&b| b as char).collect()).unwrap_or_default()
@@ -293,6 +340,15 @@ pub fn ok(d: &mut Dialog) {
         }
         if let Some(on) = d.control(WIDESCREEN).map(|c| c.check != 0) {
             crate::platform::wide::set_enabled(on);
+        }
+        // the game's gamma takes effect at once (the game sets it only when Glide starts)
+        let gamma = d.control(GAMMA).filter(|c| c.visible).and_then(|c| match c.kind {
+            Kind::Track { pos, .. } => Some(pos),
+            _ => None,
+        });
+        if let Some(pos) = gamma {
+            let at = |a: u32| f64::from_bits(mem().rd32(a) as u64 | (mem().rd32(a + 4) as u64) << 32);
+            crate::platform::glide::set_gamma((pos as f64 * at(GAMMA_SCALE) - at(GAMMA_BASE)) as f32);
         }
     }
 }

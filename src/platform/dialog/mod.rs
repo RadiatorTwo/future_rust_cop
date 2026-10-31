@@ -93,6 +93,8 @@ pub struct Dialog {
     pub pressed: Option<usize>,
     pub hot: Option<usize>,
     drag: Option<usize>,
+    /// a dialog to open on top (template, procedure), asked for by one of our controls
+    open: Option<(u32, u32)>,
 }
 
 /// The open dialogs, the topmost last.
@@ -252,6 +254,7 @@ impl Dialog {
             pressed: None,
             hot: None,
             drag: None,
+            open: None,
         }
     }
 
@@ -309,7 +312,8 @@ impl Dialog {
             // a message box: any button ends it
             self.result = Some(c.id);
         } else if c.ours {
-            extend::command(self, c.id);
+            let id = c.id;
+            self.open = extend::command(self, id);
         } else {
             if matches!(c.kind, Kind::Push { .. }) && c.text.trim().eq_ignore_ascii_case("ok") {
                 extend::ok(self);
@@ -775,6 +779,10 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
             redraw();
             return r;
         }
+        let child = stack().dialogs.iter_mut().find(|d| d.hwnd == hwnd).and_then(|d| d.open.take());
+        if let Some((template, p)) = child {
+            open(c, ResId::Id(template), p, 0);
+        }
         if let Some(m) = user32::next_message(c, Duration::from_millis(10)) {
             if is_input(m.msg) {
                 let mut out = Vec::new();
@@ -852,6 +860,11 @@ pub fn with<R>(hwnd: u32, f: impl FnOnce(&mut Dialog, Option<usize>) -> R) -> Op
     Some(f(&mut s.dialogs[di], k))
 }
 
+/// Whether a dialog made from template `template` is open.
+pub fn is_open(template: u32) -> bool {
+    stack().dialogs.iter().any(|d| d.template == template)
+}
+
 /// The text of control `id` in the open dialog made from template `template`.
 pub fn text_in(template: u32, id: u32) -> Option<String> {
     let mut s = stack();
@@ -868,7 +881,11 @@ pub fn rect(hwnd: u32) -> Option<[i32; 4]> {
 
 fn dialog_box_param(c: &mut Cpu) -> u32 {
     let (tmpl, proc_, param) = (arg(c, 1), arg(c, 3), arg(c, 4));
-    let id = ResId::from_guest(tmpl);
+    open(c, ResId::from_guest(tmpl), proc_, param)
+}
+
+/// Build dialog `id` and run it with procedure `proc_` until it ends.
+fn open(c: &mut Cpu, id: ResId, proc_: u32, param: u32) -> u32 {
     let Some((at, size)) = resource(ResId::Id(5), id) else {
         log!("warn: DialogBoxParamA: dialog {id:?} not found");
         return ERR;

@@ -332,8 +332,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   draws them into a 640x480 ARGB overlay (`window::set_overlay`, stretched over the frame) with
   `font.rs` (public-domain 8x8 font, set proportionally). `extend.rs` is where our own
   settings go: change a template before it is built (`adjust`), fill our controls after the
-  game's WM_INITDIALOG (`init`), handle them (`command`), save them on OK (`ok`); our
-  controls have ids from 0x7E00 and the game's procedure never sees them. Keyboard hooks
+  game's WM_INITDIALOG (`init`), handle them (`command`, which may name a dialog to open
+  on top: the modal loop runs it), save them on OK (`ok`); our
+  controls have ids from 0x7E00 and the game's procedure never sees them. The pause bar
+  (166) gets a "Display" button: Preferences (101) with the game's procedure 0x402030 (not
+  its caller 0x402000, which resets the game state), without Renderer, Display Mode,
+  FullScreen, Controller and Audio, our rows in the left column. Every setting there applies
+  at once (seen after Resume: a paused game draws no frames); the gamma slider is read by
+  the game only when Glide starts (0x43a540), so OK sets it too (`glide::set_gamma`,
+  position * [0x484678] - [0x484680]). Keyboard hooks
   (SetWindowsHookExA WH_KEYBOARD) get key messages as they are taken from the queue: the
   controller dialog reads rebound keys that way, and marks the waiting box with InvertRect.
   Combo boxes with CBS_DROPDOWN can be typed into (click on the text; a selection puts the

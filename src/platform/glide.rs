@@ -1212,9 +1212,13 @@ fn tex_clamp_mode(c: &mut Cpu) -> u32 {
 }
 
 fn gamma_value(c: &mut Cpu) -> u32 {
-    let v = f32_arg(c, 0);
-    with(|g, _| g.gamma = if v > 0.0 { v } else { 1.0 });
+    set_gamma(f32_arg(c, 0));
     0
+}
+
+/// grGammaCorrectionValue; Preferences' OK too (the game sets it only when Glide starts).
+pub fn set_gamma(v: f32) {
+    with(|g, _| g.gamma = if v > 0.0 { v } else { 1.0 });
 }
 
 fn tex_min_address(_: &mut Cpu) -> u32 {

@@ -114,6 +114,11 @@
 0x416120  read_controls           (player) joy_poll, then the 14 bindings (0x511c20 / 0x511ca0) and Escape into control bits
 0x4162a0  binding_down            (player, binding) device 0: GetAsyncKeyState; 1: joy_key, pad = player (pad 0 if only one)
 0x402bb0  controller_dialog       keyboard hook 0x4032c0, timer 1 (250 ms) captures pad input
+0x402000  preferences_open        DialogBoxParamA(101, preferences_dialog), then game_state = [0x4995f8]
+0x402030  preferences_dialog      dialog 101; OK: Filtering 0x3f5 -> [0x48c154], gamma slider 0x45e -> [0x511fc8], processor 0x3ff -> [0x48ce0e], display mode 0x3fd -> [0x511e58], FullScreen 0x3f4 -> [0x512064], Texture Coloring 0x3f6 -> [0x511f78]; a changed mode/FullScreen sets [0x498cf0]
+0x4040b0  pause_bar_open          DialogBoxParamA(166, pause_bar), returns [0x49960c] (1 Abort)
+0x4040e0  pause_bar               dialog 166: 0x471 Abort, 0x472 Resume, 0x473 Audio (dialog 152), 0x474 Controls (dialog 113)
+0x43a540  glide_setup             Glide state after grSstWinOpen: grTexFilterMode by [0x48c154], grGammaCorrectionValue([0x511fc8] * [0x484678] - [0x484680])
 0x408800  video_play              DirectShow
 0x403f10  save_game               (dialog): slot = CB_GETCURSEL of 0x45b (or the default), its name from the combo's text (24 bytes, "-EMPTY-" refused), the progress (0x11 dwords from [0x498d00]) into the slot, then save.cfg ("wb", 0x8d8 bytes from 0x498d18: slots of 0x70 bytes from +0x28, name first)
 0x408ab0  video_stop              Space or a click; the caller then redraws the menu (0x40b250)
