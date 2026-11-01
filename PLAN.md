@@ -214,6 +214,11 @@ Next:
 - [x] Bug (user, 2026-10-27): saves had no name and showed as -EMPTY-: the slot combo box
       (CBS_DROPDOWN) is where the name is typed, and ours could not be typed into. Fixed
       2026-10-27; saving and loading checked by script (progress comes back)
+- [x] Bug (issue #6, 2026-11-01): Precinct Assault's score screen in split screen with
+      widescreen was cut to player 1's half. It is drawn in game state 0xd by 0x4080a0 and one
+      0x40ca10(1) after the views; `walker.rs` gave its HUD the left half's view. In state 0xd
+      the HUD now gets the centred 4:3 view. Reproduced with `poke@511fb8=d` in a 2-player
+      Precinct Assault (menu: 5000 click 506,47 / 7000 click 506,77 / 9000 click 484,303)
 - [x] Network play (user, 2026-10-27): Host Game and Join Game. `dplay.rs`: IDirectPlay4A
       from CoCreateInstance, sessions found by UDP (broadcast, this computer, or the address
       typed into our field in the Join dialog), messages over TCP through the host. Checked

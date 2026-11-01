@@ -43,6 +43,9 @@ const HUD_NODE: u32 = 0x499ad0;
 const RES_INDEX: u32 = 0x511e58;
 /// Nonzero in split screen.
 const SPLIT: u32 = 0x511f54;
+/// The game state, and its value at the end of a mission (score screen, mission_loop 0x406820).
+const GAME_STATE: u32 = 0x511fb8;
+const ENDING: u32 = 0xd;
 
 pub fn precise() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
@@ -97,7 +100,9 @@ pub fn draw_glide(c: &mut Cpu) {
         }
         r = m.rd32(r);
     }
-    if m.rd8(SPLIT) == 0 {
+    // The end of a match (Precinct Assault's score screen, 0x4080a0) is one 4:3 layout over
+    // both halves, drawn in one call after the views: not one player's half.
+    if m.rd8(SPLIT) == 0 || m.rd32(GAME_STATE) == ENDING {
         split = None;
     }
     let wide = wide::k() != 1.0;
