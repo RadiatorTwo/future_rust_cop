@@ -110,8 +110,8 @@ fn get_environment_strings(_: &mut Cpu) -> u32 {
 
 fn exit_process(c: &mut Cpu) -> u32 {
     let code = arg(c, 0);
-    super::advapi32::save();
     log!("ExitProcess({code})");
+    super::advapi32::save();
     terminate(code)
 }
 
@@ -119,11 +119,17 @@ fn exit_process(c: &mut Cpu) -> u32 {
 /// and OpenGL threads killed mid-way, a driver's clean-up could wait forever for a lock one of
 /// them held (issue #7: "not responding" after the credits). Everything worth keeping is
 /// written before.
+/// The log tells where a hang was: after "ending the process" it is inside Windows (a thread
+/// stuck in a driver keeps the process alive), before it in our saving.
 pub fn terminate(code: u32) -> ! {
+    log!("ending the process");
     #[cfg(windows)]
     unsafe {
+        use windows_sys::Win32::Foundation::GetLastError;
         use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
-        TerminateProcess(GetCurrentProcess(), code);
+        if TerminateProcess(GetCurrentProcess(), code) == 0 {
+            log!("TerminateProcess failed (error {}), exiting normally", GetLastError());
+        }
     }
     #[cfg(unix)]
     unsafe {
@@ -1063,7 +1069,7 @@ pub const IMPORTS: &[Import] = &[
 
 fn exit_process_from_terminate(c: &mut Cpu) -> u32 {
     let code = arg(c, 1);
-    super::advapi32::save();
     log!("TerminateProcess({code})");
+    super::advapi32::save();
     terminate(code)
 }
