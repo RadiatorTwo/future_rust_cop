@@ -46,11 +46,13 @@ What is new compared to the original:
   texture filtering; all in the game's Preferences dialog, which "Display" in the pause bar
   opens during a mission too (everything there applies at once, brightness included)
 - Frame rates up to unlimited, with the game's logic unchanged
-- Gamepads (up to two): choose the joystick profile in the Controller dialog. Assigned stick
-  directions move, turn, and sidestep proportionally in local games, RT gun, LT heavy weapon, A jump, B special,
-  X action, Y change target, LB/RB jink,
-  Back map, R3 camera, Start pause; right-stick directions and the D-pad are free to bind
-- Mouse buttons, including Back/X1 and Forward/X2, can be assigned in the Controller dialog:
+- Gamepads (up to two, also plugged in while the game runs): they work alongside the keyboard,
+  with their own bindings ("Gamepad" in Preferences and the pause bar, saved in gamepad.txt).
+  Default Xbox layout: left stick moves, right stick turns, RT gun, LT heavy weapon, A jump,
+  B special, X action, Y change target, LB/RB jink, Back map, R3 camera, Start pause; stick
+  directions work proportionally in local games, the D-pad is free to bind
+- Menus and dialogs by gamepad: D-pad or left stick moves, A selects, B goes back
+- Mouse buttons, including Back/X1 and Forward/X2, can be assigned in the Keyboard dialog:
   right, middle and side buttons after selecting an action; assign left by clicking the already
   selected action a second time
 - Network play over TCP/IP (Host Game / Join Game; port 47624, type the host's address in
