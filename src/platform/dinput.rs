@@ -629,6 +629,47 @@ pub fn joy_capture(c: &mut Cpu) {
     }
 }
 
+/// The Choose Controller Profile dialog (165): its buttons Keyboard, Sidewinder Gamepad and
+/// Gravis Gamepad show a profile's bindings (`PROFILE_SHOW`(dialog, table, 14)) and set
+/// [`PROFILE_CHOICE`] to 0...2; after OK the Controller dialog applies the table at 0x48afb8
+/// (player 2: 0x48b120) + choice * 0x78 with `PROFILE_APPLY`(dialog, player, table, 14). Our
+/// "Xbox Controller" button (`extend.rs`) is choice 3, whose table is ours (issue #9).
+pub const PROFILE_CHOICE: u32 = 0x486290;
+pub const PROFILE_SHOW: u32 = 0x4037d0;
+pub const PROFILE_APPLY: u32 = 0x403380;
+pub const XBOX_CHOICE: u32 = 3;
+const PROFILES: [u32; 2] = [0x48afb8, 0x48b120];
+const PROFILE_SIZE: u32 = 0x78;
+
+/// The Xbox profile in guest memory: the Sidewinder profile (1) with turning on the right
+/// stick and jinking on the left stick's left and right.
+pub fn xbox_profile() -> u32 {
+    static T: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    *T.get_or_init(|| {
+        let m = mem();
+        let t = alloc(PROFILE_SIZE);
+        for i in 0..PROFILE_SIZE / 4 {
+            m.wr32(t + 4 * i, m.rd32(PROFILES[0] + PROFILE_SIZE + 4 * i));
+        }
+        // turn right, turn left, jink left, jink right (the order of controls.txt)
+        for (action, key) in [(2, RIGHT_RIGHT), (3, RIGHT_LEFT), (10, 0x12), (11, 0x13)] {
+            m.wr32(t + 8 * action, 1);
+            m.wr32(t + 8 * action + 4, key);
+        }
+        t
+    })
+}
+
+/// `PROFILE_APPLY` hook: choice 3 points past the game's tables; apply ours instead.
+pub fn profile_apply(c: &mut Cpu) {
+    let m = mem();
+    let (player, table) = (m.rd32(c.r[ESP] + 8), c.r[ESP] + 12);
+    if m.rd32(PROFILE_CHOICE) == XBOX_CHOICE && player < 2 && m.rd32(table) == PROFILES[player as usize] + XBOX_CHOICE * PROFILE_SIZE {
+        m.wr32(table, xbox_profile());
+    }
+    call_original(c, PROFILE_APPLY);
+}
+
 /// controls.txt parsing and display. The game's fixed name tables do not contain mouse buttons
 /// or our right-stick keys, so both need names in both directions to survive a restart.
 pub const BINDING_PARSE: u32 = 0x417870;

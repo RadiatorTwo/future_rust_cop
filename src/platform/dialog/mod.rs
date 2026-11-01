@@ -93,8 +93,8 @@ pub struct Dialog {
     pub pressed: Option<usize>,
     pub hot: Option<usize>,
     drag: Option<usize>,
-    /// a dialog to open on top (template, procedure), asked for by one of our controls
-    open: Option<(u32, u32)>,
+    /// what one of our controls asked for, done by the modal loop (outside the lock)
+    then: Option<extend::After>,
 }
 
 /// The open dialogs, the topmost last.
@@ -254,7 +254,7 @@ impl Dialog {
             pressed: None,
             hot: None,
             drag: None,
-            open: None,
+            then: None,
         }
     }
 
@@ -313,7 +313,7 @@ impl Dialog {
             self.result = Some(c.id);
         } else if c.ours {
             let id = c.id;
-            self.open = extend::command(self, id);
+            self.then = extend::command(self, id);
         } else {
             if matches!(c.kind, Kind::Push { .. }) && c.text.trim().eq_ignore_ascii_case("ok") {
                 extend::ok(self);
@@ -779,9 +779,16 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
             redraw();
             return r;
         }
-        let child = stack().dialogs.iter_mut().find(|d| d.hwnd == hwnd).and_then(|d| d.open.take());
-        if let Some((template, p)) = child {
-            open(c, ResId::Id(template), p, 0);
+        let then = stack().dialogs.iter_mut().find(|d| d.hwnd == hwnd).and_then(|d| d.then.take());
+        match then {
+            Some(extend::After::Open(template, p)) => {
+                open(c, ResId::Id(template), p, 0);
+            }
+            Some(extend::After::Call(f, args)) => {
+                guest_call(c, f, &args);
+                stack().dirty = true;
+            }
+            None => {}
         }
         if let Some(m) = user32::next_message(c, Duration::from_millis(10)) {
             if is_input(m.msg) {

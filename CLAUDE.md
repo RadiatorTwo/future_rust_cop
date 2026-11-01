@@ -121,7 +121,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   for 10...16. gilrs starts
   before compiling (Windows finds pads ~75 ms later, the game looks once at its start), is
   polled at every `window::pump` and when the game reads a pad on the main thread, never dropped. `FCOP_PAD_LOG=1` logs; `pad@A*500`, `pad@LX=-1*1000` in
-  FCOP_INPUT drive a scripted pad (pad 0)), `dshow.rs`
+  FCOP_INPUT drive a scripted pad (pad 0). Choose Controller Profile (165) gets our "Xbox
+  Controller" button (choice 3 in [0x486290]: Sidewinder with turning on the right stick, jinking
+  on the left stick; `extend::After::Call` runs 0x4037d0 to list it, the hook of 0x403380 applies
+  our table instead of the address past the game's), `dshow.rs`
   (DirectShow for the videos, 0x408800: CoCreateInstance gives the filter graph with
   IMediaControl/IMediaEventEx/IVideoWindow/IBasicAudio; RenderFile demuxes the MPEG file, Run
   plays it on a thread: frames to `window::set_video` (a layer over the frame, as large as

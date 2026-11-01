@@ -635,6 +635,7 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (dinput::JOY_CAPTURE, dinput::joy_capture),
     (dinput::BINDING_PARSE, dinput::binding_parse),
     (dinput::BINDING_NAME, dinput::binding_name),
+    (dinput::PROFILE_APPLY, dinput::profile_apply),
     (dsound::SET_VOLUME, dsound::set_volume),
 ];
 

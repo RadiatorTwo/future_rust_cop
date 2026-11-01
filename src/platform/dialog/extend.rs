@@ -70,6 +70,21 @@ const PAUSE: u32 = 166;
 const PAUSE_BUTTONS: [u32; 4] = [1138, 1137, 1139, 1140];
 const DISPLAY: u32 = FIRST_OURS + 13;
 
+/// The Choose Controller Profile dialog: our "Xbox Controller" button below its Gravis
+/// Gamepad button (`dinput::xbox_profile`).
+const PROFILE: u32 = 165;
+const GRAVIS: u32 = 1132;
+const XBOX: u32 = FIRST_OURS + 14;
+
+/// What one of our controls asks the modal loop to do once the dialogs are unlocked.
+#[derive(Clone, Debug)]
+pub enum After {
+    /// open a dialog on top (template, procedure)
+    Open(u32, u32),
+    /// call a game function (address, arguments)
+    Call(u32, Vec<u32>),
+}
+
 const VISIBLE: u32 = 0x1000_0000;
 const TABSTOP: u32 = 0x0001_0000;
 
@@ -83,6 +98,12 @@ fn renderer() -> String {
 }
 
 pub fn adjust(template: u32, t: &mut Template) {
+    if template == PROFILE {
+        // as far below Gravis as Gravis is below Sidewinder (30 units), same size and style
+        let Some(g) = t.items.iter().find(|i| i.id == GRAVIS) else { return };
+        let item = Item { class: Class::Button, id: XBOX, text: "Xbox Controller".into(), style: g.style, ex_style: 0, rect: [g.rect[0], g.rect[1] + 30, g.rect[2], g.rect[3]] };
+        t.items.push(item);
+    }
     if template == JOIN {
         let Some(g) = t.items.iter().find(|i| i.id == JOIN_STATUS).map(|i| i.rect) else { return };
         let y = g[1] + g[3] + 4;
@@ -275,9 +296,18 @@ pub fn init(d: &mut Dialog) {
     }
 }
 
-/// A click on one of our controls; returns a dialog to open on top (template, procedure).
-pub fn command(_d: &mut Dialog, id: u32) -> Option<(u32, u32)> {
-    (id == DISPLAY).then_some((PREFERENCES, PREFERENCES_PROC))
+/// A click on one of our controls; returns what the modal loop is to do then.
+pub fn command(d: &mut Dialog, id: u32) -> Option<After> {
+    use crate::platform::dinput;
+    match id {
+        DISPLAY => Some(After::Open(PREFERENCES, PREFERENCES_PROC)),
+        XBOX => {
+            // as the game's profile buttons: show its bindings, remember the choice
+            mem().wr32(dinput::PROFILE_CHOICE, dinput::XBOX_CHOICE);
+            Some(After::Call(dinput::PROFILE_SHOW, vec![d.hwnd, dinput::xbox_profile(), 14]))
+        }
+        _ => None,
+    }
 }
 
 fn saved_address() -> String {

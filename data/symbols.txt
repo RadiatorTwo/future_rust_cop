@@ -115,6 +115,9 @@
 0x416120  read_controls           (player) joy_poll, then the 14 bindings (0x511c20 / 0x511ca0) and Escape into control bits
 0x4162a0  binding_down            (player, binding) device 0: GetAsyncKeyState; 1: joy_key, pad = player (pad 0 if only one)
 0x402bb0  controller_dialog       keyboard hook 0x4032c0, timer 1 (250 ms) captures pad input
+0x403380  profile_apply           (dialog, player, table, 14) puts a default profile's bindings into the Controller dialog; hooked: choice 3 = our Xbox profile
+0x403670  profile_dialog_proc     Choose Controller Profile (165): 1130...1132 show a profile and set [0x486290] = 0...2
+0x4037d0  profile_show            (dialog, table, 14) lists a profile's bindings in list 1136
 0x402000  preferences_open        DialogBoxParamA(101, preferences_dialog), then game_state = [0x4995f8]
 0x402030  preferences_dialog      dialog 101; OK: Filtering 0x3f5 -> [0x48c154], gamma slider 0x45e -> [0x511fc8], processor 0x3ff -> [0x48ce0e], display mode 0x3fd -> [0x511e58], FullScreen 0x3f4 -> [0x512064], Texture Coloring 0x3f6 -> [0x511f78]; a changed mode/FullScreen sets [0x498cf0]
 0x4040b0  pause_bar_open          DialogBoxParamA(166, pause_bar), returns [0x49960c] (1 Abort)
@@ -165,6 +168,7 @@
 0x48ea20  sw_patch_table
 0x48ce04  fpu_cw_24bit            control word 0xc7f the renderer loads
 0x4a01b0  controls_profile
+0x486290  profile_choice          profile chosen in dialog 165 (-1 none; 3 ours: Xbox)
 0x48afb8  default_keys_player1    3 profiles of 0x78 bytes
 0x48b120  default_keys_player2
 0x48b498  joystick_key_names      {name, key}: "Left", "Button3" ... ("Joystick: %s" in controls.txt)
