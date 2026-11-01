@@ -61,7 +61,14 @@ Next:
       save to an unused slot is named "Save <slot>". Checked by the user (menu and dialogs;
       fixed after the first test: OK/Cancel reachable, combo boxes no longer keep left/right,
       the waiting box no longer takes the first move).
-      Open: switching to the pad's bindings by itself when a pad is used (issue #8, part 2)
+      Part 2 (2026-11-01, `gamepad.rs`): pads plugged in while the game runs work (the game
+      always sees two pads, the real ones are chosen at every read); the pad has its own
+      bindings besides controls.txt (gamepad.txt, default Xbox profile; pad 1 player 1, pad 2
+      player 2, a single pad only player 1), set with our "Gamepad" buttons in Preferences and
+      the pause bar (the Controller dialog on them, keys not taken). Checked by script (pad
+      forward analog and A jump with keyboard bindings; gamepad.txt saved, controls.txt kept).
+      Checked by the user. After that the Controller dialog is called "Keyboard": no pad
+      input and only the Keyboard profile there (the pad profiles in Gamepad).
 - [x] First mission played 90 s by script (walking, turning, all weapons, jump, pause bar):
       no crash; the game keeps running when the window loses the focus
 - [x] Presentation through OpenGL (glutin + glow): 2D frames, the dialog overlay, 3D scenes

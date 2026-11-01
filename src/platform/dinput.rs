@@ -8,7 +8,9 @@
 //! Each frame joy_poll 0x412b80 polls and reads the state; any error but DIERR_INPUTLOST makes
 //! it give the pad up, so we always answer DI_OK. The game reads only lX, lY (by their sign:
 //! inside the dead zone they must be exactly 0) and buttons 0...16 (joy_key 0x412d70); with
-//! two pads player i uses pad i, with one both share it. The original code loses the axis
+//! two pads player i uses pad i, with one both share it. It looks for pads only at its start, so
+//! it always finds two: the real pads behind them are chosen at every read (`connected`), and
+//! pads plugged in later work. The original code loses the axis
 //! magnitude there; hooks around player robot physics restore each assigned axis independently
 //! for proportional translation, turning, and sidestepping in local games while keeping its
 //! direction handling, collisions, and gravity.
@@ -78,7 +80,7 @@ macro_rules! pad_log {
 /// buttons (bit n = button n), Start.
 #[derive(Clone, Copy, Default, PartialEq)]
 pub struct Pad {
-    stick: [f32; 4],
+    pub stick: [f32; 4],
     buttons: u32,
     start: bool,
 }
@@ -247,6 +249,17 @@ pub fn forget_presses() {
     }
 }
 
+/// The connected pad behind the game's pad n. The game always sees two pads (`enum_devices`),
+/// so pads plugged in later work: with two connected pad i is pad i, one serves both (as the
+/// game shares a single pad), none reads as centred and released.
+fn connected(pads: &[Entry], n: u32) -> Option<usize> {
+    match pads.len() {
+        0 => None,
+        1 => Some(0),
+        _ => Some(n.min(1) as usize),
+    }
+}
+
 /// Pad n as the game reads it: its buttons held or pressed since the last read.
 fn pad(n: u32) -> Pad {
     // fresh on the main thread (the Controller dialog reads from there)
@@ -254,7 +267,8 @@ fn pad(n: u32) -> Pad {
         update();
     }
     let mut pads = PADS.lock().unwrap();
-    let Some(e) = pads.get_mut(n as usize) else { return Pad::default() };
+    let Some(k) = connected(&pads, n) else { return Pad::default() };
+    let e = &mut pads[k];
     let mut p = e.pad;
     p.buttons |= std::mem::take(&mut e.pressed);
     p
@@ -352,14 +366,18 @@ fn create_device(c: &mut Cpu) -> u32 {
     DI_OK
 }
 
-/// EnumDevices(type, callback, ref, flags): the pads (at most two), DIDEVICEINSTANCEA (DX5).
+/// EnumDevices(type, callback, ref, flags): always two pads, DIDEVICEINSTANCEA (DX5). The game
+/// looks for pads only at its start; `connected` finds the real one behind each when it reads.
 fn enum_devices(c: &mut Cpu) -> u32 {
     let (kind, cb, user) = (arg(c, 1) & 0xff, arg(c, 2), arg(c, 3));
     if kind != 0 && kind != DIDEVTYPE_JOYSTICK {
         return DI_OK;
     }
     ensure_polled();
-    let names: Vec<String> = PADS.lock().unwrap().iter().take(2).map(|e| e.name.clone()).collect();
+    let names: Vec<String> = {
+        let pads = PADS.lock().unwrap();
+        (0..2).map(|n| pads.get(n).map_or_else(|| format!("Gamepad {}", n + 1), |e| e.name.clone())).collect()
+    };
     let ddi = alloc(0x244);
     let m = mem();
     for (n, name) in names.iter().enumerate() {
@@ -605,8 +623,26 @@ fn right_stick_down(p: &Pad, key: u32) -> bool {
     }
 }
 
-fn current_pad(n: u32) -> Pad {
-    PADS.lock().unwrap().get(n as usize).map_or(Pad::default(), |e| e.pad)
+/// The game's pad n as it is now.
+pub fn current_pad(n: u32) -> Pad {
+    let pads = PADS.lock().unwrap();
+    connected(&pads, n).map_or(Pad::default(), |k| pads[k].pad)
+}
+
+/// Player p's own pad for the gamepad bindings (`gamepad.rs`): pad p only (with one pad,
+/// player 2 has none).
+pub fn player_pad(p: u32) -> Option<Pad> {
+    PADS.lock().unwrap().get(p as usize).map(|e| e.pad)
+}
+
+/// Whether a joystick binding's key (`joy_key`'s numbers) is down on `p`: buttons 0...16, the
+/// left stick 0x12...0x15 and the right stick 0x16...0x19 outside the dead zone.
+pub fn key_down(p: &Pad, key: u32) -> bool {
+    match key {
+        0..=16 => p.buttons >> key & 1 != 0,
+        0x12..=0x15 | RIGHT_LEFT..=RIGHT_DOWN => binding_amount(p.stick, (1, key)).is_some_and(|a| a > 0.0),
+        _ => false,
+    }
 }
 
 /// joy_key(pad, key): extend the game's four axis keys with the right stick directions.
@@ -632,8 +668,9 @@ pub fn joy_capture(c: &mut Cpu) {
     let m = mem();
     let (pad, binding) = (m.rd32(c.r[ESP] + 4), m.rd32(c.r[ESP] + 8));
     call_original(c, JOY_CAPTURE);
-    // a pad choosing in the dialog does not bind (`dialog::pad_capture`)
-    if !super::dialog::pad_capture() {
+    // a pad choosing in the dialog does not bind (`dialog::pad_capture`); the pad's bindings
+    // are made in its own dialog (`gamepad.rs`), the game's binds the keyboard
+    if !super::dialog::pad_capture() || !super::gamepad::editing() {
         c.r[EAX] &= !0xff;
         return;
     }
@@ -753,9 +790,6 @@ pub const HOVER_MOVE_VECTOR: u32 = 0x443e80;
 pub const WALK_MOVE_VECTOR: u32 = 0x444f40;
 
 const PLAYERS: u32 = 0x511fd0;
-const BINDINGS: u32 = 0x511c20;
-const BINDINGS_SIZE: u32 = 0x80;
-const JOY_COUNT: u32 = 0x49fe4c;
 const NET: u32 = 0x511fa0;
 const ROBOT_DATA: u32 = 0xac;
 const CONTROLS_BITS: u32 = 0x30;
@@ -783,7 +817,7 @@ fn movement_axis(v: f32) -> f32 {
 }
 
 /// Magnitude of one active action's assigned stick direction. A non-axis binding is digital.
-fn binding_amount(stick: [f32; 4], binding: (u32, u32)) -> Option<f32> {
+pub fn binding_amount(stick: [f32; 4], binding: (u32, u32)) -> Option<f32> {
     if binding.0 != 1 {
         return None;
     }
@@ -801,9 +835,10 @@ fn binding_amount(stick: [f32; 4], binding: (u32, u32)) -> Option<f32> {
     Some(movement_axis(amount).max(0.0))
 }
 
-/// Scale each active action independently. If an active action is digital, that dimension
-/// remains digital; it does not disable analog handling of the other actions.
-fn analog_amounts(stick: [f32; 4], bindings: [(u32, u32); 14], controls: u32) -> AnalogMove {
+/// Scale each active action independently by its amount (None: held by a digital binding, see
+/// `gamepad::binding_down`). If an active action is digital, that dimension remains digital; it
+/// does not disable analog handling of the other actions.
+fn analog_amounts(amounts: [Option<f32>; 14], controls: u32) -> AnalogMove {
     let amount = |actions: &[(usize, u32, f32)]| {
         let mut analog = false;
         let mut amount = 0.0;
@@ -811,7 +846,7 @@ fn analog_amounts(stick: [f32; 4], bindings: [(u32, u32); 14], controls: u32) ->
             if controls & bit == 0 {
                 continue;
             }
-            if let Some(a) = binding_amount(stick, bindings[action]) {
+            if let Some(a) = amounts[action] {
                 analog = true;
                 amount += direction * a;
             } else {
@@ -838,15 +873,7 @@ fn analog_for(actor: u32, controls: u32) -> Option<AnalogMove> {
         return None;
     }
     let player = (0..2).find(|&p| m.rd32(PLAYERS + 4 * p) == actor)?;
-    let bindings = BINDINGS + BINDINGS_SIZE * player;
-    let bindings = std::array::from_fn(|k| {
-        let b = bindings + 8 * k as u32;
-        (m.rd32(b), m.rd32(b + 4))
-    });
-    let pad = if m.rd32(JOY_COUNT) > 1 { player } else { 0 };
-    let pads = PADS.lock().unwrap();
-    let stick = pads.get(pad as usize)?.pad.stick;
-    let analog = analog_amounts(stick, bindings, controls);
+    let analog = analog_amounts(super::gamepad::amounts(player), controls);
     (analog.vector.is_some() || analog.turn.is_some()).then_some(analog)
 }
 
@@ -931,9 +958,22 @@ pub fn robot_physics(c: &mut Cpu) {
 #[cfg(test)]
 mod analog_tests {
     use super::{
-        MOUSE_KEYS, MOVE_BITS, Pad, RIGHT_DOWN, RIGHT_KEYS, RIGHT_LEFT, RIGHT_RIGHT, RIGHT_UP, analog_amounts,
-        mouse_key_from_text, movement_axis, right_key_from_text, right_stick_down, right_stick_key, scale_move_speed,
+        AnalogMove, MOUSE_KEYS, MOVE_BITS, Pad, RIGHT_DOWN, RIGHT_KEYS, RIGHT_LEFT, RIGHT_RIGHT, RIGHT_UP, binding_amount,
+        key_down, mouse_key_from_text, movement_axis, right_key_from_text, right_stick_down, right_stick_key,
+        scale_move_speed,
     };
+
+    fn analog_amounts(stick: [f32; 4], bindings: [(u32, u32); 14], controls: u32) -> AnalogMove {
+        super::analog_amounts(bindings.map(|b| binding_amount(stick, b)), controls)
+    }
+
+    #[test]
+    fn gamepad_binding_keys() {
+        let pad = Pad { stick: [-0.8, 0.1, 0.0, 0.9], buttons: 1 << 3 | 1 << 14, start: false };
+        assert!(key_down(&pad, 3) && key_down(&pad, 14) && !key_down(&pad, 0));
+        assert!(key_down(&pad, 0x12) && !key_down(&pad, 0x13) && !key_down(&pad, 0x14) && !key_down(&pad, 0x15));
+        assert!(key_down(&pad, RIGHT_DOWN) && !key_down(&pad, RIGHT_UP));
+    }
 
     #[test]
     fn dead_zone_is_removed_and_remaining_travel_is_rescaled() {

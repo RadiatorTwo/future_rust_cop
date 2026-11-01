@@ -102,8 +102,17 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   the effects' volume 0x4318e0 is hooked: amplitude in proportion, 0 silent (the game's own
   curve ended at -16.7 dB)),
   `misc.rs` (winmm timers, ole32, comctl32),
-  `dinput.rs` (DirectInput 5, only for joysticks: gamepads through gilrs, at most 2 reported
-  (the game has room for 2); player i uses pad i, one pad is shared. The game reads lX/lY by
+  `dinput.rs` (DirectInput 5, only for joysticks: gamepads through gilrs, always 2 reported
+  (the game has room for 2 and looks only at its start; `connected` picks the real pad at every
+  read, so pads plugged in later work); player i uses pad i, one pad is shared. `gamepad.rs`:
+  the pad's own bindings besides controls.txt (`gamepad.txt`, 14 per player, controls.txt's
+  format, default our Xbox profile; pad i for player i only): binding_down 0x4162a0 is hooked
+  (game's binding or ours; it notes each action's stick amount for the analog movement hooks),
+  our "Gamepad" buttons (Preferences beside "Controller", pause bar) open the Controller dialog
+  113 with ours swapped into 0x511c20 (`begin`/`end`), keys not passed to its keyboard hook,
+  its save 0x417bc0 writing gamepad.txt. The game's own way in is called "Keyboard" there: it
+  binds no pad input (joy_capture) and offers only the Keyboard profile (the pad profiles,
+  Xbox too, only in the Gamepad one). The game reads lX/lY by
   their sign (0 inside its 25% dead zone), but hooks on robot physics and its hover/walk movement
   vector helpers restore each assigned axis independently for proportional movement, turning,
   and jinking (not in network games: their packets have no magnitude), and

@@ -17,6 +17,7 @@ pub mod dplay;
 pub mod dshow;
 pub mod dsound;
 pub mod fps;
+pub mod gamepad;
 pub mod gdi32;
 pub mod gl;
 pub mod glide;
@@ -637,6 +638,8 @@ pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
     (dinput::BINDING_PARSE, dinput::binding_parse),
     (dinput::BINDING_NAME, dinput::binding_name),
     (dinput::PROFILE_APPLY, dinput::profile_apply),
+    (gamepad::BINDING_DOWN, gamepad::binding_down),
+    (gamepad::SAVE_CONTROLS, gamepad::save_controls),
     (dsound::SET_VOLUME, dsound::set_volume),
 ];
 

@@ -957,6 +957,12 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
                 guest_call(c, f, &args);
                 stack().dirty = true;
             }
+            Some(extend::After::Gamepad) => {
+                use crate::platform::gamepad;
+                gamepad::begin(c);
+                open(c, ResId::Id(gamepad::CONTROLLER), gamepad::CONTROLLER_PROC, 0);
+                gamepad::end();
+            }
             None => {}
         }
         if let Some(m) = user32::next_message(c, Duration::from_millis(10)) {

@@ -242,7 +242,14 @@ fn take_hooked(c: &mut Cpu, min: u32, max: u32, remove: bool) -> Option<Msg> {
         if !remove {
             return Some(m);
         }
-        let hooks: Vec<u32> = st().hooks.iter().filter(|h| h.1 == WH_KEYBOARD).map(|h| h.2).collect();
+        // the Controller dialog binding the gamepad (`gamepad.rs`) takes no keys or mouse buttons
+        let pad_only = super::gamepad::editing();
+        let hooks: Vec<u32> = st()
+            .hooks
+            .iter()
+            .filter(|h| h.1 == WH_KEYBOARD && !(pad_only && h.2 == CONTROLLER_KEY_HOOK))
+            .map(|h| h.2)
+            .collect();
         let mouse = controller_mouse_button(&m, &hooks);
         if !is_keyboard_hook_message(m.msg) && mouse.is_none() {
             return Some(m);

@@ -75,6 +75,16 @@ const DISPLAY: u32 = FIRST_OURS + 13;
 const PROFILE: u32 = 165;
 const GRAVIS: u32 = 1132;
 const XBOX: u32 = FIRST_OURS + 14;
+/// Its Keyboard button (hidden while the Controller dialog binds the gamepad).
+const KEYBOARD_PROFILE: u32 = 1130;
+/// Its Sidewinder and Gravis buttons (hidden while the Controller dialog binds keys).
+const PAD_PROFILES: [u32; 2] = [1131, GRAVIS];
+
+/// Our "Gamepad" buttons (Preferences, beside Controller Configuration; the pause bar, beside
+/// Controls): the Controller dialog on the gamepad's own bindings (`gamepad.rs`).
+const GAMEPAD: u32 = FIRST_OURS + 15;
+/// The Controller dialog's "Player1" / "Player2 " titles.
+const PLAYER_TITLES: [u32; 2] = [1025, 1154];
 
 /// The Load / Save Game dialog: its combo box holds the slots, its text the save's name.
 const LOAD_SAVE: u32 = 163;
@@ -108,6 +118,8 @@ pub enum After {
     Open(u32, u32),
     /// call a game function (address, arguments)
     Call(u32, Vec<u32>),
+    /// open the Controller dialog on the gamepad's bindings
+    Gamepad,
 }
 
 const VISIBLE: u32 = 0x1000_0000;
@@ -123,7 +135,15 @@ fn renderer() -> String {
 }
 
 pub fn adjust(template: u32, t: &mut Template) {
+    let pad = crate::platform::gamepad::editing();
     if template == PROFILE {
+        // the keyboard's profile for the keyboard's bindings, the pads' for the pad's
+        let hidden = if pad { [KEYBOARD_PROFILE].as_slice() } else { PAD_PROFILES.as_slice() };
+        for i in t.items.iter_mut().filter(|i| hidden.contains(&i.id)) {
+            i.style &= !VISIBLE;
+        }
+    }
+    if template == PROFILE && pad {
         // as far below Gravis as Gravis is below Sidewinder (30 units), same size and style
         let Some(g) = t.items.iter().find(|i| i.id == GRAVIS) else { return };
         let item = Item { class: Class::Button, id: XBOX, text: "Xbox Controller".into(), style: g.style, ex_style: 0, rect: [g.rect[0], g.rect[1] + 30, g.rect[2], g.rect[3]] };
@@ -142,16 +162,19 @@ pub fn adjust(template: u32, t: &mut Template) {
         t.rect[3] += down;
     }
     if template == PAUSE {
-        // Resume, Abort, Audio, Controls, Display: 68 units wide, 2 apart, as wide as before
+        // Resume, Abort, Audio, Controls, Gamepad, Display: 56 units wide, 2 apart, about as
+        // wide as before
         let Some(r) = t.items.iter().find(|i| i.id == PAUSE_BUTTONS[0]).map(|i| i.rect) else { return };
-        let x = |k: i32| r[0] + k * 70;
+        let x = |k: i32| r[0] + k * 58;
         for (k, id) in PAUSE_BUTTONS.iter().enumerate() {
             if let Some(i) = t.items.iter_mut().find(|i| i.id == *id) {
-                i.rect = [x(k as i32), r[1], 68, r[3]];
+                i.rect = [x(k as i32), r[1], 56, r[3]];
             }
         }
-        // a default push button like the game's four (they are drawn so)
-        t.items.push(Item { class: Class::Button, id: DISPLAY, text: "Display".into(), style: VISIBLE | TABSTOP | 1, ex_style: 0, rect: [x(4), r[1], 68, r[3]] });
+        // default push buttons like the game's four (they are drawn so)
+        for (k, id, text) in [(4, GAMEPAD, "Gamepad"), (5, DISPLAY, "Display")] {
+            t.items.push(Item { class: Class::Button, id, text: text.into(), style: VISIBLE | TABSTOP | 1, ex_style: 0, rect: [x(k), r[1], 56, r[3]] });
+        }
     }
     if template == PREFERENCES {
         // from the pause bar: only what can change while a mission runs
@@ -159,6 +182,16 @@ pub fn adjust(template: u32, t: &mut Template) {
         if paused {
             for i in t.items.iter_mut().filter(|i| [DISPLAY_MODE, DISPLAY_MODE_LABEL, WINDOW_NOTE, GAME_FULLSCREEN, CONTROLLER_BUTTON, AUDIO_BUTTON].contains(&i.id)) {
                 i.style &= !VISIBLE;
+            }
+        }
+        if !paused {
+            // Keyboard (Controller Configuration) and Gamepad share its row
+            if let Some(i) = t.items.iter_mut().find(|i| i.id == CONTROLLER_BUTTON) {
+                let r = i.rect;
+                let w = (r[2] - 3) / 2;
+                i.rect = [r[0], r[1], w, r[3]];
+                let item = Item { class: Class::Button, id: GAMEPAD, text: "Gamepad".into(), style: i.style, ex_style: 0, rect: [r[0] + r[2] - w, r[1], w, r[3]] };
+                t.items.push(item);
             }
         }
         let place = |id: u32| t.items.iter().find(|i| i.id == id).map(|i| i.rect);
@@ -216,12 +249,32 @@ pub fn adjust(template: u32, t: &mut Template) {
 }
 
 pub fn init(d: &mut Dialog) {
+    // the Controller dialog binds the keyboard now, Gamepad the pad
+    if d.template == PAUSE {
+        if let Some(c) = d.control(PAUSE_BUTTONS[3]) {
+            c.text = "Keyboard".into();
+        }
+    }
+    // the game names the columns at WM_INITDIALOG
+    if d.template == crate::platform::gamepad::CONTROLLER && crate::platform::gamepad::editing() {
+        for (id, text) in PLAYER_TITLES.into_iter().zip(["Gamepad 1", "Gamepad 2"]) {
+            if let Some(c) = d.control(id) {
+                c.text = text.into();
+            }
+        }
+    }
     if d.template == JOIN {
         if let Some(c) = d.control(ADDRESS) {
             c.text = saved_address();
         }
     }
     if d.template == PREFERENCES {
+        // the game names it at WM_INITDIALOG; it shares its row with Gamepad now
+        if d.control(GAMEPAD).is_some() {
+            if let Some(c) = d.control(CONTROLLER_BUTTON) {
+                c.text = "Keyboard".into();
+            }
+        }
         for id in [PROCESSOR_LABEL, PROCESSOR_COMBO] {
             if let Some(c) = d.control(id) {
                 c.visible = false;
@@ -326,6 +379,7 @@ pub fn command(d: &mut Dialog, id: u32) -> Option<After> {
     use crate::platform::dinput;
     match id {
         DISPLAY => Some(After::Open(PREFERENCES, PREFERENCES_PROC)),
+        GAMEPAD => Some(After::Gamepad),
         XBOX => {
             // as the game's profile buttons: show its bindings, remember the choice
             mem().wr32(dinput::PROFILE_CHOICE, dinput::XBOX_CHOICE);
