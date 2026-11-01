@@ -210,6 +210,22 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
 - Hooks: `platform::HOOKS` lists game functions replaced by Rust functions; `jit.rs` compiles
   the original as `G_x` and makes `F_x` call `rt_hook`; the hook runs the original with
   `rt::call_original` (return address on the guest stack, its `ret` pops it).
+- `menupad.rs`: menus by gamepad (issue #8). The main menu knows only the mouse: the window
+  procedure passes WM_MOUSEMOVE to 0x40bb40 and buttons to 0x40bbe0, which test the items of
+  the menu [0x511e44] (4 panels: items +0xc, count +0x10; item 0x2c bytes: x +8, y +0xc,
+  pictures +0x10, state +0x16, flags +0x18 (4|8 not there); size = its picture's, image table
+  [0x499aa4] as 0x414450 reads it). At every pump (`window::pump`, after `dinput::poll`) the
+  D-pad / left stick moves the mouse to the nearest item that way (`nearest`: same row/column
+  first, else wholly ahead; the opposite way leads back), A is the left
+  button, a gold frame in the overlay shows the item and the window system's cursor is hidden
+  until the real mouse moves (`mouse_moved`); while a video plays ([0x499740], [0x499750] & 1)
+  A is Space. With a dialog open the pad's input goes to `dialog_events`, which the modal loop
+  hands to `Dialog::pad_input` (gold frame `Dialog::pad`; left/right move sliders, A opens
+  combo boxes and acts when it goes up; B is Esc; a dialog opened by pad starts framed). The
+  Controller dialog takes a pad button (`dinput::joy_capture`) only for the box the mouse or
+  A clicked last, once (`dialog::pad_capture`): its first box waits from the start and took
+  the pad's first move. `extend::pad_click`: a pad save to an unused slot gets the name
+  "Save <slot>" (the game refuses "-EMPTY-").
 - `walker.rs`: hook of the Glide display list walker 0x4393e0 (display list layout in its
   header). Precise mode points the resolution's jump table entry (0x43a168) at the plain
   path 0x4397cd, so vertices arrive in 2560x1920 units; text (type 6, game pixels) is drawn in

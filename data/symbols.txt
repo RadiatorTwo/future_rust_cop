@@ -128,6 +128,12 @@
 0x408ab0  video_stop              Space or a click; the caller then redraws the menu (0x40b250)
 0x4086c0  video_events            at the notify message: EC_COMPLETE stops and releases the graph (no menu redraw: WM_PAINT does it)
 0x40b250  menu_redraw             blits the whole menu again
+0x40bb40  menu_mouse_move         (x, y) the menu's hover; mouse at [0x499a90]
+0x40bbe0  menu_mouse_button       (button bits, down) clicks on the items of the menu [0x511e44]
+0x40b7c0  menu_panel_input        (menu, panel) every item of a panel (0x40b820)
+0x40b990  menu_item_size          (item, &w, &h) its picture's size (first of three found)
+0x414450  image_lookup            (table, id) image of a table (+0x18 w, +0x1c h); [0x499aa4] the menu's
+0x408af0  video_playing           [0x499740] != 0 and [0x499750] & 1
 0x45a340  window_proc             main window; WM_PAINT: ValidateRect, menu_redraw when no video plays and the menu is up ([0x499a9c])
 0x44ec90  script_command?         mission script commands by hash; 0x1adcfed mission won (progress = goal, or the end timer)
 0x406630  mission_result          by game_state: game record +0x10 = result (0xb/0xc: 0 if progress +0x40 = goal +0x44, else 1)

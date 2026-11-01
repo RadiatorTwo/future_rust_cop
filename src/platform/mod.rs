@@ -22,6 +22,7 @@ pub mod gl;
 pub mod glide;
 pub mod hd;
 pub mod kernel32;
+pub mod menupad;
 pub mod misc;
 pub mod user32;
 pub mod walker;

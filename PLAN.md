@@ -54,7 +54,14 @@ Next:
       and jinking after its dead zone and blends with simultaneous movement (single-player and
       split screen; network input has no magnitude field).
       Right-stick directions can be assigned too and persist in controls.txt.
-      Open: menus and dialogs by pad (now mouse/keyboard only)
+      Menus and dialogs by pad (issue #8, 2026-11-01, `menupad.rs`): D-pad / left stick go
+      from item to item with a gold frame (the cursor hides until the mouse moves), A clicks,
+      skips videos; in dialogs left/right move sliders, A opens combo boxes, B is Esc, a
+      Controller dialog box takes a pad button only after a click on it (mouse or A), a pad
+      save to an unused slot is named "Save <slot>". Checked by the user (menu and dialogs;
+      fixed after the first test: OK/Cancel reachable, combo boxes no longer keep left/right,
+      the waiting box no longer takes the first move).
+      Open: switching to the pad's bindings by itself when a pad is used (issue #8, part 2)
 - [x] First mission played 90 s by script (walking, turning, all weapons, jump, pause bar):
       no crash; the game keeps running when the window loses the focus
 - [x] Presentation through OpenGL (glutin + glow): 2D frames, the dialog overlay, 3D scenes

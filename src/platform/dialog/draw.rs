@@ -16,6 +16,9 @@ const TEXT: u32 = 0xffe8_f0ff;
 const TEXT_OFF: u32 = 0xff5a_6a9a;
 const MARK: u32 = 0xff7f_d0ff;
 const SELECT: u32 = 0xff2e_58c8;
+/// the gamepad's focus frame
+const PAD: u32 = 0xffff_d040;
+const PAD_SOFT: u32 = 0x60ff_d040;
 
 struct Canvas {
     px: Vec<u32>,
@@ -292,6 +295,13 @@ fn dialog(cv: &mut Canvas, d: &Dialog, above: bool) {
     }
     for k in 0..d.controls.len() {
         control(cv, d, k);
+    }
+    // the control chosen by gamepad: a gold frame, as in the menu (`menupad`)
+    if let Some(c) = d.pad.and_then(|k| d.controls.get(k)) {
+        let f = c.face();
+        cv.frame(inset(f, -3), PAD_SOFT);
+        cv.frame(inset(f, -2), PAD);
+        cv.frame(inset(f, -1), PAD);
     }
     // open combo lists go over everything
     for c in &d.controls {

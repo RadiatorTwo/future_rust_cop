@@ -76,6 +76,31 @@ const PROFILE: u32 = 165;
 const GRAVIS: u32 = 1132;
 const XBOX: u32 = FIRST_OURS + 14;
 
+/// The Load / Save Game dialog: its combo box holds the slots, its text the save's name.
+const LOAD_SAVE: u32 = 163;
+/// the name of an unused slot (the game refuses it as a save's name)
+const EMPTY_SLOT: &str = "-EMPTY-";
+
+/// A gamepad clicks control k (before the click): saving to an unused slot, which needs a
+/// name the pad cannot type, gets "Save <slot>".
+pub fn pad_click(d: &mut Dialog, k: usize) {
+    let ok = matches!(d.controls[k].kind, Kind::Push { .. }) && d.controls[k].text.trim().eq_ignore_ascii_case("ok");
+    // the game writes "Save Game" or "Load Game" into a static text at the top
+    let saving = d.controls.iter().any(|c| matches!(c.kind, Kind::Static) && c.text.to_ascii_lowercase().contains("save"));
+    if d.template != LOAD_SAVE || !ok || !saving {
+        return;
+    }
+    for c in &mut d.controls {
+        if let Kind::Combo { edit: true, sel, whole, .. } = &mut c.kind {
+            let name = c.text.trim();
+            if name.is_empty() || name == EMPTY_SLOT {
+                c.text = format!("Save {}", *sel + 1);
+                *whole = false;
+            }
+        }
+    }
+}
+
 /// What one of our controls asks the modal loop to do once the dialogs are unlocked.
 #[derive(Clone, Debug)]
 pub enum After {

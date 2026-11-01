@@ -54,6 +54,10 @@ struct App {
     focused: bool,
     /// the cursor as last set on the window: hidden and kept inside it
     cursor_caught: bool,
+    /// the cursor as last set on the window: hidden
+    cursor_hidden: bool,
+    /// a gamepad chooses in the menu (its frame shows the item; the cursor is hidden)
+    pad_focus: bool,
 }
 
 struct Host {
@@ -112,6 +116,8 @@ fn with_host<R>(f: impl FnOnce(&mut Host) -> R) -> R {
                     shift: false,
                     focused: true,
                     cursor_caught: false,
+                    cursor_hidden: false,
+                    pad_focus: false,
                 },
             }
         });
@@ -155,6 +161,15 @@ pub fn pump(wait: Duration) {
             let (vk, scan) = vk_of(KeyCode::Escape).unwrap();
             h.app.input.push_back(Input::Key { vk, scan, down, repeat: false });
         }
+        let step = super::menupad::step(&mut h.app.input);
+        h.app.pad_focus = step.focus;
+        if let (Some(o), Some(gl)) = (step.overlay, &mut h.app.gl) {
+            let (w, hh) = (super::dialog::OV_W as u32, super::dialog::OV_H as u32);
+            gl.overlay(o.as_ref().map(|px| (&px[..], w, hh)));
+            h.app.overlay_changed = true;
+            h.app.draw();
+        }
+        h.app.catch_cursor();
     });
 }
 
@@ -549,11 +564,16 @@ impl App {
     fn catch_cursor(&mut self) {
         let Some(win) = &self.window else { return };
         let catch = self.focused && CURSOR_HIDDEN.load(Ordering::Relaxed);
+        // hidden while a gamepad chooses in the menu too (`menupad`)
+        let hide = catch || self.focused && self.pad_focus;
+        if hide != self.cursor_hidden {
+            self.cursor_hidden = hide;
+            win.set_cursor_visible(!hide);
+        }
         if catch == self.cursor_caught {
             return;
         }
         self.cursor_caught = catch;
-        win.set_cursor_visible(!catch);
         let grab = if catch {
             win.set_cursor_grab(CursorGrabMode::Confined).or_else(|_| win.set_cursor_grab(CursorGrabMode::Locked))
         } else {
@@ -592,6 +612,7 @@ impl ApplicationHandler for App {
                 self.focused = f;
                 // Windows drops a confinement when the focus goes: set it anew when it comes back
                 self.cursor_caught = false;
+                self.cursor_hidden = false;
                 if let Some(w) = self.window.as_ref().filter(|_| !f) {
                     w.set_cursor_visible(true);
                     let _ = w.set_cursor_grab(CursorGrabMode::None);
@@ -606,6 +627,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => self.draw(),
             WindowEvent::CursorMoved { position, .. } => {
+                // only a real move (Windows repeats WM_MOUSEMOVE when the cursor is hidden...)
+                if position != self.cursor {
+                    super::menupad::mouse_moved();
+                }
                 self.cursor = position;
                 let (x, y) = self.frame_pos();
                 self.input.push_back(Input::Move(x, y));

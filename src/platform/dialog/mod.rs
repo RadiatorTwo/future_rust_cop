@@ -10,6 +10,7 @@ pub mod extend;
 pub mod font;
 pub mod template;
 
+use super::menupad::PadEvent;
 use super::user32::{self, Msg};
 use super::{Import, ResId, arg, cstr, guest_call, log, mem, put_cstr, resource};
 use crate::rt::Cpu;
@@ -92,6 +93,15 @@ pub struct Dialog {
     pub focus: Option<usize>,
     pub pressed: Option<usize>,
     pub hot: Option<usize>,
+    /// the control chosen by gamepad (`pad_input`), framed; None once the mouse moves
+    pub pad: Option<usize>,
+    /// A went down on `pad` (it acts when A goes up)
+    pad_down: bool,
+    /// The control clicked last (mouse or A): when it is a box of the Controller dialog that
+    /// now waits for a key (shown inverted), the next pad button is its binding (`pad_capture`)
+    pad_binds: Option<usize>,
+    /// the control the pad came from to `pad`, and the direction (back the opposite way)
+    pad_came: Option<(usize, (i32, i32))>,
     drag: Option<usize>,
     /// what one of our controls asked for, done by the modal loop (outside the lock)
     then: Option<extend::After>,
@@ -251,6 +261,10 @@ impl Dialog {
             controls,
             result: None,
             focus: None,
+            pad: None,
+            pad_down: false,
+            pad_binds: None,
+            pad_came: None,
             pressed: None,
             hot: None,
             drag: None,
@@ -363,6 +377,8 @@ impl Dialog {
         let (x, y) = input_point(m.lp);
         match m.msg {
             0x200 => {
+                self.pad = None;
+                self.pad_came = None;
                 self.hot = self.hit(x, y);
                 if let Some(k) = self.drag {
                     self.set_track(k, x);
@@ -426,6 +442,7 @@ impl Dialog {
                     out.push(self.track_notify(k, 8)); // TB_ENDTRACK
                 } else if let Some(k) = self.pressed.take() {
                     if self.hit(x, y) == Some(k) {
+                        self.pad_binds = Some(k);
                         self.click(k, out);
                     }
                 }
@@ -513,6 +530,152 @@ impl Dialog {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+impl Dialog {
+    /// The pad starts at the focus, else at the default button.
+    fn pad_start(&mut self) {
+        self.pad = self
+            .focus
+            .filter(|&k| self.controls[k].interactive())
+            .or_else(|| self.button(true))
+            .or_else(|| self.controls.iter().position(|c| c.interactive()));
+        self.hot = self.pad;
+    }
+
+    /// A waits for the pad button to bind to the box it clicked.
+    fn pad_binding(&self) -> bool {
+        self.pad_binds.is_some_and(|k| self.controls.get(k).is_some_and(|c| c.inverted))
+    }
+
+    /// Gamepad input (issue #8): the D-pad or left stick goes from control to control (left
+    /// and right move a slider or choose in a combo box, up and down in a list or an open
+    /// combo list), A acts when it goes up (as a click; the Controller dialog would take a
+    /// held A as the key to bind), B is Esc. While a box waits for a key to bind (shown
+    /// inverted) the pad belongs to it.
+    fn pad_input(&mut self, e: PadEvent, out: &mut Vec<Notify>) {
+        if trace() {
+            log!("dialog {:#x}: pad {e:?} at {:?} binding {:?}", self.hwnd, self.pad, self.pad_binds);
+        }
+        if self.pad_binding() {
+            self.pad_down = false;
+            return;
+        }
+        self.pad_binds = None;
+        // an open combo list
+        if let Some(k) = self.controls.iter().position(|c| c.drop_rect().is_some()) {
+            match e {
+                PadEvent::Dir((0, dy)) => {
+                    if let Kind::Combo { items, sel, top, drop, .. } = &mut self.controls[k].kind {
+                        let rows = ((*drop - 4) / ROW).max(1);
+                        *sel = (*sel + dy).clamp(0, (items.len() as i32 - 1).max(0));
+                        *top = (*top).clamp(*sel - rows + 1, *sel).max(0);
+                    }
+                }
+                PadEvent::A(true) => self.pad_down = true,
+                PadEvent::A(false) if self.pad_down => {
+                    self.pad_down = false;
+                    if let Kind::Combo { open, .. } = &mut self.controls[k].kind {
+                        *open = false;
+                    }
+                    self.controls[k].sync_combo();
+                    out.push(self.command(k, 1)); // CBN_SELCHANGE
+                    out.push(self.command(k, 8)); // CBN_CLOSEUP
+                }
+                PadEvent::B => {
+                    if let Kind::Combo { open, .. } = &mut self.controls[k].kind {
+                        *open = false;
+                    }
+                    out.push(self.command(k, 8));
+                }
+                _ => {}
+            }
+            return;
+        }
+        let Some(k) = self.pad.filter(|&k| self.controls[k].interactive()) else {
+            match e {
+                // the first input only shows where the pad is: the focus, else the default button
+                PadEvent::Dir(_) | PadEvent::A(true) => self.pad_start(),
+                PadEvent::B => self.input(&Msg { hwnd: self.hwnd, msg: 0x100, wp: 0x1b, lp: 0 }, out),
+                PadEvent::A(false) => {}
+            }
+            self.pad_down = false;
+            return;
+        };
+        match e {
+            PadEvent::Dir(d) => {
+                let c = &mut self.controls[k];
+                let rect = c.rect;
+                match &mut c.kind {
+                    Kind::Track { lo, hi, pos } if d.0 != 0 => {
+                        let step = ((*hi - *lo) / 20).max(1);
+                        *pos = (*pos + d.0 * step).clamp(*lo, *hi);
+                        out.push(self.track_notify(k, 4)); // TB_THUMBPOSITION
+                        out.push(self.track_notify(k, 8)); // TB_ENDTRACK
+                        return;
+                    }
+                    Kind::List { items, sel, top } if d.1 != 0 && (0..items.len() as i32).contains(&(*sel + d.1)) => {
+                        let rows = ((rect[3] - rect[1] - 4) / ROW).max(1);
+                        *sel += d.1;
+                        *top = (*top).clamp(*sel - rows + 1, *sel).max(0);
+                        out.push(self.command(k, 1)); // LBN_SELCHANGE
+                        return;
+                    }
+                    _ => {}
+                }
+                let usable: Vec<usize> = (0..self.controls.len()).filter(|&i| self.controls[i].interactive()).collect();
+                let rects: Vec<_> = usable
+                    .iter()
+                    .map(|&i| {
+                        let f = self.controls[i].face();
+                        (f[0], f[1], f[2] - f[0], f[3] - f[1])
+                    })
+                    .collect();
+                let cur = usable.iter().position(|&i| i == k);
+                let came = self.pad_came.and_then(|(i, way)| Some((usable.iter().position(|&u| u == i)?, way)));
+                if let Some(n) = super::menupad::nearest(&rects, cur, came, (0, 0), d) {
+                    self.pad_came = Some((k, d));
+                    self.pad = Some(usable[n]);
+                    self.hot = self.pad;
+                }
+                self.pad_down = false;
+                self.pressed = None;
+            }
+            PadEvent::A(true) => {
+                self.pad_down = true;
+                self.pressed = Some(k);
+            }
+            PadEvent::A(false) => {
+                if !std::mem::take(&mut self.pad_down) {
+                    return;
+                }
+                self.pressed = None;
+                // the presses the game has not read yet (A, the way here) are used up; a box
+                // that waits for a key after this click takes the next pad button
+                super::dinput::forget_presses();
+                self.pad_binds = Some(k);
+                match &mut self.controls[k].kind {
+                    Kind::Combo { open, top, sel, items, drop, .. } => {
+                        *open = true;
+                        let rows = (*drop - 4) / ROW;
+                        *top = (*sel - 2).clamp(0, (items.len() as i32 - rows).max(0));
+                        out.push(self.command(k, 7)); // CBN_DROPDOWN
+                    }
+                    Kind::List { .. } | Kind::Edit { .. } => self.focus = Some(k),
+                    Kind::Track { .. } => {}
+                    _ => {
+                        extend::pad_click(self, k);
+                        self.click(k, out);
+                    }
+                }
+            }
+            PadEvent::B => {
+                self.pad_down = false;
+                self.pressed = None;
+                self.input(&Msg { hwnd: self.hwnd, msg: 0x100, wp: 0x1b, lp: 0 }, out);
+            }
         }
     }
 }
@@ -767,8 +930,14 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
     if proc_ != 0 {
         guest_call(c, proc_, &[hwnd, WM_INITDIALOG, first, param]);
     }
+    // opened by gamepad: it chooses here at once (and the Controller dialog does not take its
+    // first button as a binding)
+    let by_pad = super::menupad::pad_last();
     if let Some(d) = stack().dialogs.iter_mut().find(|d| d.hwnd == hwnd) {
         extend::init(d);
+        if by_pad {
+            d.pad_start();
+        }
     }
     redraw();
     let mut phase = draw::caret_phase();
@@ -808,6 +977,17 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
             } else {
                 user32::dispatch(c, &m);
             }
+        }
+        let pad = super::menupad::dialog_events();
+        if !pad.is_empty() {
+            let mut out = Vec::new();
+            if let Some(top) = stack().dialogs.last_mut() {
+                for e in pad {
+                    top.pad_input(e, &mut out);
+                }
+            }
+            stack().dirty = true;
+            deliver(c, out);
         }
         // the caret blinks in a focused text
         if draw::caret_phase() != phase {
@@ -865,6 +1045,30 @@ pub fn with<R>(hwnd: u32, f: impl FnOnce(&mut Dialog, Option<usize>) -> R) -> Op
     let (di, k) = locate(&s, hwnd)?;
     s.dirty = true;
     Some(f(&mut s.dialogs[di], k))
+}
+
+/// Whether the Controller dialog may take a pad button as a binding: only for the box the mouse
+/// or A clicked last, once (else the box waiting when the dialog opens took the pad's first
+/// move as its binding).
+pub fn pad_capture() -> bool {
+    stack().dialogs.last().is_none_or(|d| d.pad_binding())
+}
+
+/// A pad button was bound: the pad chooses again.
+pub fn pad_captured() {
+    if let Some(d) = stack().dialogs.last_mut() {
+        d.pad_binds = None;
+    }
+}
+
+/// Whether the topmost dialog shows a control chosen by gamepad.
+pub fn pad_shown() -> bool {
+    stack().dialogs.last().is_some_and(|d| d.pad.is_some())
+}
+
+/// Whether any dialog is open.
+pub fn any_open() -> bool {
+    !stack().dialogs.is_empty()
 }
 
 /// Whether a dialog made from template `template` is open.

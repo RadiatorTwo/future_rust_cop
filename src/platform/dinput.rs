@@ -227,6 +227,26 @@ fn update() {
     }
 }
 
+/// All pads together, as menus read them (`menupad`): buttons held on any pad (our numbers),
+/// the left stick of the first pad that has it out of its dead zone (y down).
+pub fn menu_state() -> (u32, [f32; 2]) {
+    let pads = PADS.lock().unwrap();
+    let buttons = pads.iter().fold(0, |a, e| a | e.pad.buttons);
+    let stick = pads
+        .iter()
+        .map(|e| [e.pad.stick[0], e.pad.stick[1]])
+        .find(|s| s[0].abs() > AXIS_DEAD_ZONE || s[1].abs() > AXIS_DEAD_ZONE)
+        .unwrap_or_default();
+    (buttons, stick)
+}
+
+/// Forget the presses the game has not read yet (a dialog used them).
+pub fn forget_presses() {
+    for e in PADS.lock().unwrap().iter_mut() {
+        e.pressed = 0;
+    }
+}
+
 /// Pad n as the game reads it: its buttons held or pressed since the last read.
 fn pad(n: u32) -> Pad {
     // fresh on the main thread (the Controller dialog reads from there)
@@ -612,20 +632,27 @@ pub fn joy_capture(c: &mut Cpu) {
     let m = mem();
     let (pad, binding) = (m.rd32(c.r[ESP] + 4), m.rd32(c.r[ESP] + 8));
     call_original(c, JOY_CAPTURE);
-    if c.r[EAX] & 0xff != 0 || pad >= 2 {
+    // a pad choosing in the dialog does not bind (`dialog::pad_capture`)
+    if !super::dialog::pad_capture() {
+        c.r[EAX] &= !0xff;
         return;
     }
-    if let Some(key) = right_stick_key(&current_pad(pad)) {
-        m.wr32(binding, 1);
-        m.wr32(binding + 4, key);
-        c.r[EAX] = c.r[EAX] & !0xff | 1;
-        return;
+    if c.r[EAX] & 0xff == 0 && pad < 2 {
+        if let Some(key) = right_stick_key(&current_pad(pad)) {
+            m.wr32(binding, 1);
+            m.wr32(binding + 4, key);
+            c.r[EAX] = c.r[EAX] & !0xff | 1;
+        } else {
+            let buttons = JOY_STATES + 0x50 * pad + 0x30;
+            if let Some(b) = (10..=16).find(|&b| m.rd8(buttons + b) & 0x80 != 0) {
+                m.wr32(binding, 1);
+                m.wr32(binding + 4, b);
+                c.r[EAX] = c.r[EAX] & !0xff | 1;
+            }
+        }
     }
-    let buttons = JOY_STATES + 0x50 * pad + 0x30;
-    if let Some(b) = (10..=16).find(|&b| m.rd8(buttons + b) & 0x80 != 0) {
-        m.wr32(binding, 1);
-        m.wr32(binding + 4, b);
-        c.r[EAX] = c.r[EAX] & !0xff | 1;
+    if c.r[EAX] & 0xff != 0 {
+        super::dialog::pad_captured();
     }
 }
 
