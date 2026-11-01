@@ -314,6 +314,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   the whole menu (0x40b250) at WM_PAINT; that is how the menu comes back after a video that
   played to its end (a skipped one redraws it itself; without WM_PAINT the mission's loading
   bar stayed on the menu after a won level).
+- Exit: ExitProcess/TerminateProcess save the registry, then `kernel32::terminate` ends the
+  process with TerminateProcess (`_exit` on Linux), skipping the DLLs' clean-up: with our audio,
+  gamepad and GL threads killed mid-way a driver could hang there (issue #7).
 - Focus: the game pauses itself on WM_ACTIVATEAPP 0; we never send it, so it keeps running
   in the background, and keys held when the focus goes are released (WM_KEYUP).
 - Cursor: ShowCursor keeps Windows' counter; the game hides the cursor for videos and

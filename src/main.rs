@@ -59,7 +59,7 @@ fn main() {
     }
     // guest calls nest on the host stack like the original's: run on a thread with a large one
     let code = std::thread::Builder::new().stack_size(256 << 20).spawn(run).unwrap().join().unwrap();
-    std::process::exit(code as i32);
+    fcop::platform::kernel32::terminate(code);
 }
 
 fn run() -> u32 {

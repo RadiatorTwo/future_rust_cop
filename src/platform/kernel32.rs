@@ -112,6 +112,24 @@ fn exit_process(c: &mut Cpu) -> u32 {
     let code = arg(c, 0);
     super::advapi32::save();
     log!("ExitProcess({code})");
+    terminate(code)
+}
+
+/// Ends the process at once, without the libraries' clean-up: with our audio, gamepad, video
+/// and OpenGL threads killed mid-way, a driver's clean-up could wait forever for a lock one of
+/// them held (issue #7: "not responding" after the credits). Everything worth keeping is
+/// written before.
+pub fn terminate(code: u32) -> ! {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+        TerminateProcess(GetCurrentProcess(), code);
+    }
+    #[cfg(unix)]
+    unsafe {
+        libc::_exit(code as i32);
+    }
+    #[allow(unreachable_code)]
     std::process::exit(code as i32)
 }
 
@@ -1047,5 +1065,5 @@ fn exit_process_from_terminate(c: &mut Cpu) -> u32 {
     let code = arg(c, 1);
     super::advapi32::save();
     log!("TerminateProcess({code})");
-    std::process::exit(code as i32)
+    terminate(code)
 }
