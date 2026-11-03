@@ -42,7 +42,7 @@
 use crate::ver::Us;
 use super::{advapi32, mem};
 use crate::rt::{Cpu, EAX, ESP, call_original};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -290,10 +290,13 @@ impl Places {
     }
 
     /// Put everything a fraction `f` of the way from `self` to `to`; what moved too far for
-    /// one frame (a jump) is put where it is in `to`.
-    fn between(&self, to: &Places, f: f64) {
+    /// one frame (a jump) is put where it is in `to`. Only places in `live` (the actors now).
+    fn between(&self, to: &Places, f: f64, live: &HashSet<u32>) {
         let lerp = |a: i32, b: i32| a + ((b as f64 - a as f64) * f).round() as i32;
         for (k, (a, p)) in to.actors.iter().enumerate() {
+            if !live.contains(a) {
+                continue;
+            }
             // the list keeps its order; an actor that was not there is left as it is
             let from = match self.actors.get(k) {
                 Some(x) if x.0 == *a => &x.1,
@@ -411,13 +414,17 @@ pub fn render_start(c: &mut Cpu) {
             // the two frames around that time; before the oldest: the oldest
             let k = history.iter().position(|&(t, _)| t > shown).unwrap_or(history.len());
             if k < history.len() {
-                *REAL.lock().unwrap() = Some(Places::now());
+                // only what is an actor now is moved (and put back at the end): an actor
+                // destroyed since a kept frame left memory that may be another thing's by now
+                let real = Places::now();
+                let live: HashSet<u32> = real.actors.iter().map(|x| x.0).collect();
                 if k == 0 {
-                    history[0].1.between(&history[0].1, 0.0);
+                    history[0].1.between(&history[0].1, 0.0, &live);
                 } else {
                     let ((t0, from), (t1, to)) = (&history[k - 1], &history[k]);
-                    from.between(to, ((shown - t0) / (t1 - t0)).clamp(0.0, 1.0));
+                    from.between(to, ((shown - t0) / (t1 - t0)).clamp(0.0, 1.0), &live);
                 }
+                *REAL.lock().unwrap() = Some(real);
                 // the two-view frame ran the visibility pass before, with the real camera: the
                 // terrain and walls it chose did not fit the camera drawn with (they shook)
                 if !showing && (network() || split()) {
