@@ -282,7 +282,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   frame, last 4 kept; only a frame 8 ticks after the last kept, as a pair of the network
   game's frames moves things evenly, its single frames do not) 10 ticks behind the newest frame, as far as the clock went on since (the
   clock's lead over the game time averaged): by game time, so uneven frames do not matter;
-  the frame's own render too. 0x44fd20
+  the frame's own render too. Only actors in the list now are moved (and put back): one
+  destroyed since a kept frame left memory that may be another thing's (writing old places
+  there left geometry hanging in the air, a respawned Precinct Assault tower without its
+  base). 0x44fd20
   in the render block is logic (the actor grid 0x4a31b0 for hits, per-frame lists): it runs
   only in the game's frame, with the real places (in pictures it multiplied enemy damage
   and made temporary things flicker). Otherwise drawing only changes the random generators
