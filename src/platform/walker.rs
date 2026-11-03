@@ -102,7 +102,8 @@ pub fn draw_glide(c: &mut Cpu) {
     }
     // The end of a match (Precinct Assault's score screen, 0x4080a0) is one 4:3 layout over
     // both halves, drawn in one call after the views: not one player's half.
-    if m.rd8(SPLIT) == 0 || m.rd32(GAME_STATE) == ENDING {
+    let ending = m.rd32(GAME_STATE) == ENDING;
+    if m.rd8(SPLIT) == 0 || ending {
         split = None;
     }
     let wide = wide::k() != 1.0;
@@ -113,7 +114,10 @@ pub fn draw_glide(c: &mut Cpu) {
                 wide::to_screen(r.at);
             }
         }
-        if split.is_none() {
+        // The score screen at the end (state 0xd) is one 4:3 layout: split across the edges'
+        // views it tore apart, so it keeps the centred view (pass 2). Not decided by how much
+        // text there is: a busy HUD in play has as much and must keep its sides.
+        if split.is_none() && !ending {
             hud_sides(&mut recs[first_hud..]);
         }
     }
@@ -192,12 +196,6 @@ fn hud_sides(recs: &mut [Record]) {
                 && e.is_some_and(|e| e[2] > e[0] && e[3] > e[1] && e[2] - e[0] <= 160 && e[3] - e[1] <= 160)
         })
         .collect();
-    // Dense full-screen overlays (notably the score screen) are authored as one 4:3 layout.
-    // Splitting them across edge-anchored views tears labels apart, regardless of how their
-    // glyph records are grouped. Keep the complete overlay in the centred HUD view.
-    if glyphs.iter().filter(|&&glyph| glyph).count() >= 64 {
-        return;
-    }
     let mut done = vec![false; recs.len()];
     let mut i = 0;
     while i < recs.len() {

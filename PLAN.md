@@ -233,6 +233,9 @@ Next:
       0x40ca10(1) after the views; `walker.rs` gave its HUD the left half's view. In state 0xd
       the HUD now gets the centred 4:3 view. Reproduced with `poke@511fb8=d` in a 2-player
       Precinct Assault (menu: 5000 click 506,47 / 7000 click 506,77 / 9000 click 484,303)
+- [x] Bug (user, 2026-11-03): with much text on screen in play the widescreen HUD went 4:3
+      (centred): `hud_sides` kept everything centred from 64 glyphs on, meant for the score
+      screen. Now only game state 0xd (the score screen) keeps the HUD centred
 - [x] Network play (user, 2026-10-27): Host Game and Join Game. `dplay.rs`: IDirectPlay4A
       from CoCreateInstance, sessions found by UDP (broadcast, this computer, or the address
       typed into our field in the Join dialog), messages over TCP through the host. Checked
