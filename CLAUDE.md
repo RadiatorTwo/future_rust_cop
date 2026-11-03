@@ -342,6 +342,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (else the sparks below a quarter stayed; the robot data's +0x58 is only the HUD's copy);
   `ammo`: data +0x84... as at the mission's start; `hurt`: the game's damage 0x446720(actor,
   max / 4). Game functions are called with `guest_call`. New ones go into `CHEATS`.
+  These (`solo`) run only in a one-player Crime War (the user: never in Precinct Assault, nor
+  in co-op): refused in mode +0x5c = 1, with a second player's actor [0x511fd4], split screen
+  [0x511f54] or a network game ([0x511fa0] >= 0).
+  Test-only cheats are `#[cfg(feature = "cheats")]` (Cargo feature `cheats`, off by default,
+  never in a release: `cargo build --release --features cheats`): `points` (Shift+F6) gives
+  each human player's team 1000 Precinct Assault points: game record +0x64 + 4 * team (i32;
+  team = robot data +0xc1 as i8; HUD 0x434e34, a pickup adds 200 at 0x44ed7d), only in mode
+  +0x5c = 1 (Precinct Assault, its end is the score screen 0x407fe0). (The user's Cheat
+  Engine address 0x80FF0344 was guest 0x1000344 with the guest base at 0x7FFF0000.)
 - Cameras (`camera.rs`): robot_camera 0x4456a0 (hooked) places the player's camera each
   frame; the camera key counts the robot data's mode +0xa4 (0...6, a table at 0x48c468 /
   presets at 0x48c2a8) and sets a timer +0xae to 900 (a press = that timer going up). Modes 5

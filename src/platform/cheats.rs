@@ -1,7 +1,8 @@
 //! Debug cheats: by name in FCOP_INPUT ("30000:win") and, with FCOP_CHEATS=1, on Shift+F1...
 //! (Ctrl is player 1's special weapon). A cheat only asks; it runs in the mission loop's
 //! frame wait (0x406a30, every frame, split screen too), between two frames of the game's
-//! logic, and waits there while no mission is played.
+//! logic, and waits there while no mission is played. Cheats marked `#[cfg(feature = "cheats")]`
+//! exist only in builds with `--features cheats` (never a release: players must not reach them).
 
 use crate::ver::Us;
 use super::{guest_call, log, mem};
@@ -15,6 +16,10 @@ pub const FRAME_WAIT: Us = Us(0x406a30);
 const GAME_STATE: Us = Us(0x511fb8);
 /// Pointer to the game record: progress +0x40, goal +0x44 (won when equal).
 const GAME: Us = Us(0x511f80);
+/// Nonzero in split screen.
+const SPLIT: Us = Us(0x511f54);
+/// In a network game this computer's view (the host 0, the other 1), else negative.
+const NET_VIEW: Us = Us(0x511fa0);
 /// The players' actors (two pointers); an actor's data at +0xac.
 const PLAYERS: Us = Us(0x511fd0);
 /// An actor's health and its maximum (16 bits each; the robot's data keeps a copy of the
@@ -30,21 +35,35 @@ const DAMAGE_LOOK: Us = Us(0x42bab0);
 const DAMAGE: Us = Us(0x446720);
 /// In a robot's data: the three weapons' ammunition.
 const AMMO: u32 = 0x84;
+/// In the game record: the mode (1 Precinct Assault: its end is the score screen, 0x407fe0),
+/// and each team's points (i32 at +0x64 + 4 * team; the HUD shows them, 0x434e34, a pickup adds
+/// 200, 0x44ed7d). A robot's team is the byte at +0xc1 of its data.
+#[cfg(feature = "cheats")]
+const MODE: u32 = 0x5c;
+#[cfg(feature = "cheats")]
+const POINTS: u32 = 0x64;
+#[cfg(feature = "cheats")]
+const TEAM: u32 = 0xc1;
 
 pub struct Cheat {
     pub name: &'static str,
     /// Shift + this function key (1 = F1)
     pub key: u8,
     pub what: &'static str,
+    /// only in a one-player Crime War (not in Precinct Assault, split screen or a network game)
+    solo: bool,
     run: fn(&mut Cpu),
 }
 
 pub const CHEATS: &[Cheat] = &[
-    Cheat { name: "win", key: 1, what: "win the mission (as its script does)", run: win },
-    Cheat { name: "lose", key: 2, what: "lose the mission", run: lose },
-    Cheat { name: "health", key: 3, what: "full health", run: health },
-    Cheat { name: "ammo", key: 4, what: "ammunition as at the mission's start", run: ammo },
-    Cheat { name: "hurt", key: 5, what: "a quarter of the health lost (the game's damage)", run: hurt },
+    Cheat { name: "win", key: 1, what: "win the mission (as its script does)", solo: true, run: win },
+    Cheat { name: "lose", key: 2, what: "lose the mission", solo: true, run: lose },
+    Cheat { name: "health", key: 3, what: "full health", solo: true, run: health },
+    Cheat { name: "ammo", key: 4, what: "ammunition as at the mission's start", solo: true, run: ammo },
+    Cheat { name: "hurt", key: 5, what: "a quarter of the health lost (the game's damage)", solo: true, run: hurt },
+    // test-only: compiled in only with `--features cheats`, never in a release build
+    #[cfg(feature = "cheats")]
+    Cheat { name: "points", key: 6, what: "Precinct Assault: +1000 points for the players' teams", solo: false, run: points },
 ];
 
 struct State {
@@ -111,11 +130,23 @@ pub fn frame_wait(c: &mut Cpu) {
             std::mem::take(&mut s.pending)
         };
         for k in run {
+            if CHEATS[k].solo && !solo_game() {
+                log!("cheat: {} only in a one-player Crime War", CHEATS[k].name);
+                continue;
+            }
             log!("cheat: {}", CHEATS[k].name);
             (CHEATS[k].run)(c);
         }
     }
     call_original(c, FRAME_WAIT.at());
+}
+
+/// One player in Crime War: not Precinct Assault (game record mode +0x5c = 1), no second
+/// player (split screen or network: its actor [0x511fd4]), no network game ([0x511fa0] >= 0).
+fn solo_game() -> bool {
+    let m = mem();
+    let g = m.rd32(GAME.at());
+    g != 0 && m.rd32(g + 0x5c) != 1 && player(1) == 0 && m.rd8(SPLIT.at()) == 0 && (m.rd32(NET_VIEW.at()) as i32) < 0
 }
 
 fn win(_: &mut Cpu) {
@@ -170,6 +201,34 @@ fn health(c: &mut Cpu) {
 
 fn ammo(_: &mut Cpu) {
     restore(1..4);
+}
+
+/// Precinct Assault: 1000 points more for each human player's team (once per team).
+#[cfg(feature = "cheats")]
+fn points(_: &mut Cpu) {
+    let m = mem();
+    let g = m.rd32(GAME.at());
+    if m.rd32(g + MODE) != 1 {
+        log!("cheat: points only in Precinct Assault");
+        return;
+    }
+    let mut done = Vec::new();
+    for p in 0..2 {
+        let actor = player(p);
+        let data = if actor != 0 { m.rd32(actor + 0xac) } else { 0 };
+        if data == 0 {
+            continue;
+        }
+        let team = m.rd8(data + TEAM) as i8 as i32;
+        if done.contains(&team) || !(0..2).contains(&team) {
+            continue;
+        }
+        done.push(team);
+        let at = g + POINTS + 4 * team as u32;
+        let v = m.rd32(at) as i32;
+        m.wr32(at, v.saturating_add(1000) as u32);
+        log!("cheat: team {team} points {v} -> {}", v.saturating_add(1000));
+    }
 }
 
 fn hurt(c: &mut Cpu) {

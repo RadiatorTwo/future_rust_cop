@@ -28,6 +28,8 @@ png = "0.18"
 
 [features]
 difftest = ["dep:unicorn-engine"]
+# test-only cheats (`cheats.rs`), never in a release build: `cargo build --release --features cheats`
+cheats = []
 
 [[bin]]
 name = "difftest"

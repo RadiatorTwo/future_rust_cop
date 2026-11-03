@@ -151,7 +151,7 @@
 0x511f40  frame_count
 0x511fb8  game_state              4 playing, 8 paused, 0xb mission over (won or lost by game record +0x40/+0x44), 0xd ending (timer)
 0x511fc0  mission_end_timer       counts frame_dt down to the end of a mission (mode +0x5c = 1), then game_state 0xd
-0x511f80  game_record             pointer (0x10002e0): +0x10 mission result, +0x40 progress, +0x44 goal, +0x5c mode
+0x511f80  game_record             pointer (0x10002e0): +0x10 mission result, +0x40 progress, +0x44 goal, +0x5c mode (1 Precinct Assault), +0x64 + 4*team Precinct Assault points (i32; team = robot data +0xc1)
 0x511f50  views                   1 one view
 0x511f54  split_screen            nonzero in split screen
 0x511fa4  glide_active
