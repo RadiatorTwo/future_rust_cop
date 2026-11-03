@@ -25,6 +25,7 @@ pub mod hd;
 pub mod kernel32;
 pub mod menupad;
 pub mod misc;
+pub mod record;
 pub mod user32;
 pub mod walker;
 pub mod wide;

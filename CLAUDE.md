@@ -310,7 +310,14 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   give `timeout` enough on top; the intro videos now come first: "3000:Space 5000:Space
   8000:Space 11000:click@484,303 20000:Space" skips them and the briefing and starts the
   mission; `poke@addr=value` writes a dword (hex); `text@Name` types characters (WM_CHAR,
-  `_` a space); cheat names run a cheat, below),
+  `_` a space); cheat names run a cheat, below; `FCOP_INPUT=@file.txt` reads the items from a
+  file, `#` comments), `FCOP_RECORD=file.txt` (`record.rs`, as rustschweine/rust_metal: the
+  player's real input written as FCOP_INPUT items at ms since start: keys and mouse buttons with
+  their hold (`click@x,y*n`, also `mclick`), moves every 50 ms, `wheel@n`, `text@`/`char@hex`,
+  focus, close, and the first real pad as `pad@` items (sticks in 0.05 steps; replayed on the
+  scripted pad, player 1's); F11 writes a `# mark` line and `file.txt.<ms>.png`, the game does
+  not see it; replay with `FCOP_INPUT=@file.txt`; timing is by ms, so loading times shift a
+  mission's input a little),
   `FCOP_WATCH=1` (last import call and turn state every 2 s), `FCOP_PROF=1` (time in
   each import, every 2 s), `FCOP_COUNT=<file>` (calls per function and second: "second
   address calls [name]"; counting is compiled in only then), `FCOP_VIDEO_LOG=1` (videos, their window and end), `FCOP_NO_VIDEO=1` (videos end at

@@ -111,7 +111,7 @@ thread_local! {
 
 fn scripted_pad() -> bool {
     static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *S.get_or_init(|| std::env::var("FCOP_INPUT").is_ok_and(|v| v.contains("pad@")))
+    *S.get_or_init(|| super::window::script_text().contains("pad@"))
 }
 
 thread_local! {
@@ -222,6 +222,19 @@ fn update() {
             Entry { pad, pressed: pressed_before(Some(id)) | new | pad.buttons, id: Some(id), name: p.name().to_string() }
         }));
     });
+    if super::record::on() {
+        // the first real pad (with a press between two reads held for one)
+        let e = now.iter().find(|e| e.id.is_some());
+        let p = e.map_or(Pad::default(), |e| e.pad);
+        let buttons = p.buttons | e.map_or(0, |e| e.pressed & !pressed_before(e.id));
+        let mut v = [0.0; CONTROLS.len()];
+        for (k, x) in v.iter_mut().enumerate().take(15) {
+            *x = (buttons >> k & 1) as f32;
+        }
+        v[15] = p.start as u8 as f32;
+        v[16..].copy_from_slice(&[p.stick[0], -p.stick[1], p.stick[2], -p.stick[3]]);
+        super::record::pad(&v);
+    }
     let was = pads.first().is_some_and(|e| e.pad.start);
     let start = now.first().is_some_and(|e| e.pad.start);
     *pads = now;

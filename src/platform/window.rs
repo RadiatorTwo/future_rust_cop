@@ -58,6 +58,8 @@ struct App {
     cursor_hidden: bool,
     /// a gamepad chooses in the menu (its frame shows the item; the cursor is hidden)
     pad_focus: bool,
+    /// where the next picture goes (a mark of FCOP_RECORD, F11)
+    mark_shot: Option<String>,
 }
 
 struct Host {
@@ -118,6 +120,7 @@ fn with_host<R>(f: impl FnOnce(&mut Host) -> R) -> R {
                     cursor_caught: false,
                     cursor_hidden: false,
                     pad_focus: false,
+                    mark_shot: None,
                 },
             }
         });
@@ -174,17 +177,20 @@ pub fn pump(wait: Duration) {
 }
 
 /// FCOP_INPUT="9000:click@484,303 12000:Enter 15000:Up*3000": input at fixed times (ms
-/// after start) for tests. `click@x,y` / `rclick@x,y` (frame pixels, after a move there),
-/// `move@x,y`, a key held 100 ms or `*ms` (Enter, Escape, Space, Tab, Up, Down, Left, Right,
-/// Ctrl, Alt, Shift, A-Z, 0-9, Numpad0-9, F1-F12), `close` (the window's close button),
-/// `blur` / `focus` (the window loses or gets the focus), `poke@511fc0=1` (a dword written to
-/// guest memory, hex address and value), a cheat by name (`win`, see `cheats::CHEATS`),
-/// `text@Name` (typed characters, `_` a space), `pad@A*500` (a control of the scripted pad held,
-/// `dinput::CONTROLS`), `pad@LX=-1*1000` (its stick at a value, -1...1, y up).
+/// after start) for tests. `click@x,y` / `rclick@x,y` / `mclick` / `x1click` / `x2click` (frame
+/// pixels, after a move there; held 100 ms or `*ms`), `move@x,y`, `wheel@n` (lines), a key held
+/// 100 ms or `*ms` (Enter, Escape, Space, Tab, Up, Down, Left, Right, Ctrl, Alt, Shift,
+/// Backspace, Delete, A-Z, 0-9, Numpad0-9, F1-F12, or winit's name: Minus, ShiftRight...),
+/// `close` (the window's close button), `blur` / `focus` (the window loses or gets the focus),
+/// `poke@511fc0=1` (a dword written to guest memory, hex address and value), a cheat by name
+/// (`win`, see `cheats::CHEATS`), `text@Name` (typed characters, `_` a space), `char@0d` (one,
+/// hex), `pad@A*500` (a control of the scripted pad held, `dinput::CONTROLS`), `pad@LX=-1*1000`
+/// (its stick at a value, -1...1, y up). `FCOP_INPUT=@file.txt` reads the items from a file (as
+/// `FCOP_RECORD` writes them, `record.rs`); `#` starts a comment to the end of the line.
 fn scripted(input: &mut VecDeque<Input>) {
     static SCRIPT: Mutex<Option<VecDeque<(u64, Input)>>> = Mutex::new(None);
     let mut s = SCRIPT.lock().unwrap();
-    let script = s.get_or_insert_with(|| std::env::var("FCOP_INPUT").map(|v| parse_script(&v)).unwrap_or_default());
+    let script = s.get_or_insert_with(|| parse_script(script_text()));
     let now = super::kernel32::start_time().elapsed().as_millis() as u64;
     while script.front().is_some_and(|e| e.0 <= now) {
         match script.pop_front().unwrap().1 {
@@ -194,6 +200,22 @@ fn scripted(input: &mut VecDeque<Input>) {
             i => input.push_back(i),
         }
     }
+}
+
+/// The scripted input's items (FCOP_INPUT, or the file it names with `@`), comments removed.
+pub fn script_text() -> &'static str {
+    static TEXT: OnceLock<String> = OnceLock::new();
+    TEXT.get_or_init(|| {
+        let Ok(v) = std::env::var("FCOP_INPUT") else { return String::new() };
+        let text = match v.strip_prefix('@') {
+            Some(path) => std::fs::read_to_string(path).unwrap_or_else(|e| {
+                log!("FCOP_INPUT: cannot read {path}: {e}");
+                String::new()
+            }),
+            None => v,
+        };
+        text.lines().map(|l| l.split('#').next().unwrap_or("")).collect::<Vec<_>>().join("\n")
+    })
 }
 
 fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
@@ -210,6 +232,10 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
             for (n, ch) in text.chars().filter(|&c| (c as u32) < 256).enumerate() {
                 ev.push((t + 50 * n as u64, Input::Char(if ch == '_' { b' ' } else { ch as u8 })));
             }
+        } else if let Some(ch) = what.strip_prefix("char@").and_then(|h| u8::from_str_radix(h, 16).ok()) {
+            ev.push((t, Input::Char(ch)));
+        } else if let Some(n) = what.strip_prefix("wheel@").and_then(|n| n.parse().ok()) {
+            ev.push((t, Input::Wheel(n)));
         } else if let Some(p) = what.strip_prefix("pad@") {
             let (name, hold) = p.split_once('*').map_or((p, 100), |(n, h)| (n, h.parse().unwrap_or(100)));
             let (name, v) = name.split_once('=').map_or((name, 1.0), |(n, v)| (n, v.parse().unwrap_or(0.0)));
@@ -225,17 +251,19 @@ fn parse_script(text: &str) -> VecDeque<(u64, Input)> {
                 ev.push((t, Input::Poke(a, v)));
             }
         } else if let Some((b, xy)) = what.split_once('@') {
+            let (xy, hold) = xy.split_once('*').map_or((xy, 100), |(p, h)| (p, h.parse().unwrap_or(100)));
             let Some((x, y)) = at(xy) else { continue };
             ev.push((t, Input::Move(x, y)));
             let b = match b {
                 "click" => 0,
                 "rclick" => 1,
+                "mclick" => 2,
                 "x1click" => 3,
                 "x2click" => 4,
                 _ => continue,
             };
             ev.push((t + 30, Input::Button(b, true)));
-            ev.push((t + 130, Input::Button(b, false)));
+            ev.push((t + 30 + hold, Input::Button(b, false)));
         } else if what == "close" {
             ev.push((t, Input::Close));
         } else if what == "blur" || what == "focus" {
@@ -282,20 +310,49 @@ fn key_by_name(n: &str) -> Option<KeyCode> {
     if let Some(d) = n.strip_prefix('F').and_then(|d| d.parse::<usize>().ok()) {
         return FN.get(d.wrapping_sub(1)).copied();
     }
-    Some(match n {
-        "Enter" | "Return" => Enter,
-        "Escape" | "Esc" => Escape,
-        "Space" => Space,
-        "Tab" => Tab,
-        "Up" => ArrowUp,
-        "Down" => ArrowDown,
-        "Left" => ArrowLeft,
-        "Right" => ArrowRight,
-        "Ctrl" => ControlLeft,
-        "Alt" => AltLeft,
-        "Shift" => ShiftLeft,
-        _ => return None,
-    })
+    match n {
+        "Return" => return Some(Enter),
+        "Esc" => return Some(Escape),
+        _ => {}
+    }
+    SHORT.iter().find(|s| s.0 == n).map(|s| s.1).or_else(|| OTHER.into_iter().find(|k| format!("{k:?}") == n))
+}
+
+/// Keys with a short name in FCOP_INPUT besides letters, digits, Numpad<n> and F<n>.
+const SHORT: [(&str, KeyCode); 13] = [
+    ("Enter", KeyCode::Enter),
+    ("Escape", KeyCode::Escape),
+    ("Space", KeyCode::Space),
+    ("Tab", KeyCode::Tab),
+    ("Up", KeyCode::ArrowUp),
+    ("Down", KeyCode::ArrowDown),
+    ("Left", KeyCode::ArrowLeft),
+    ("Right", KeyCode::ArrowRight),
+    ("Ctrl", KeyCode::ControlLeft),
+    ("Alt", KeyCode::AltLeft),
+    ("Shift", KeyCode::ShiftLeft),
+    ("Backspace", KeyCode::Backspace),
+    ("Delete", KeyCode::Delete),
+];
+
+/// The other keys the game gets (`vk_of`), by winit's name.
+const OTHER: [KeyCode; 26] = {
+    use KeyCode::*;
+    [
+        NumpadEnter, ShiftRight, ControlRight, AltRight, Insert, Home, End, PageUp, PageDown, NumpadAdd, NumpadSubtract,
+        NumpadMultiply, NumpadDivide, NumpadDecimal, Minus, Equal, Comma, Period, Slash, Semicolon, Quote, BracketLeft,
+        BracketRight, Backslash, Backquote, Pause,
+    ]
+};
+
+/// The FCOP_INPUT name of the key with this virtual-key and scan code (`record.rs`).
+pub fn key_name(vk: u8, scan: u8) -> Option<String> {
+    let mut names: Vec<String> = SHORT.iter().map(|s| s.0.to_string()).collect();
+    names.extend((b'A'..=b'Z').chain(b'0'..=b'9').map(|c| (c as char).to_string()));
+    names.extend((0..10).map(|d| format!("Numpad{d}")));
+    names.extend((1..=12).map(|d| format!("F{d}")));
+    names.extend(OTHER.iter().map(|k| format!("{k:?}")));
+    names.into_iter().find(|n| key_by_name(n).and_then(vk_of) == Some((vk, scan)))
 }
 
 /// The next input event, if any (call `pump` first).
@@ -527,10 +584,22 @@ impl App {
             return;
         }
         let want_shot = shot_due(self.overlay_changed);
-        if let Some((px, w, h)) = gl.draw(size.width, size.height, want_shot) {
-            write_shot(&px, w, h);
-            self.overlay_changed = false;
+        let mark = self.mark_shot.take();
+        if let Some((px, w, h)) = gl.draw(size.width, size.height, want_shot || mark.is_some()) {
+            if want_shot {
+                write_shot(&px, w, h);
+                self.overlay_changed = false;
+            }
+            if let Some(path) = mark {
+                let _ = std::fs::write(path, png(&px, w, h));
+            }
         }
+    }
+
+    /// Input from the window system for the game (recorded with FCOP_RECORD).
+    fn push(&mut self, i: Input) {
+        super::record::input(&i);
+        self.input.push_back(i);
     }
 
     fn create(&mut self, el: &ActiveEventLoop) {
@@ -607,7 +676,7 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, e: WindowEvent) {
         match e {
-            WindowEvent::CloseRequested => self.input.push_back(Input::Close),
+            WindowEvent::CloseRequested => self.push(Input::Close),
             WindowEvent::Focused(f) => {
                 self.focused = f;
                 // Windows drops a confinement when the focus goes: set it anew when it comes back
@@ -617,7 +686,7 @@ impl ApplicationHandler for App {
                     w.set_cursor_visible(true);
                     let _ = w.set_cursor_grab(CursorGrabMode::None);
                 }
-                self.input.push_back(Input::Focus(f));
+                self.push(Input::Focus(f));
             }
             WindowEvent::Resized(size) => {
                 if let Some(gl) = &self.gl {
@@ -633,7 +702,7 @@ impl ApplicationHandler for App {
                 }
                 self.cursor = position;
                 let (x, y) = self.frame_pos();
-                self.input.push_back(Input::Move(x, y));
+                self.push(Input::Move(x, y));
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let lines = match delta {
@@ -641,7 +710,7 @@ impl ApplicationHandler for App {
                     winit::event::MouseScrollDelta::PixelDelta(p) => (p.y / 40.0).round() as i32,
                 };
                 if lines != 0 {
-                    self.input.push_back(Input::Wheel(lines));
+                    self.push(Input::Wheel(lines));
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -653,7 +722,7 @@ impl ApplicationHandler for App {
                     MouseButton::Forward | MouseButton::Other(5) => 4,
                     _ => return,
                 };
-                self.input.push_back(Input::Button(b, state == ElementState::Pressed));
+                self.push(Input::Button(b, state == ElementState::Pressed));
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.alt = m.state().alt_key();
@@ -681,14 +750,22 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    // F11 while recording: a mark with a picture (the game does not see the key)
+                    if code == KeyCode::F11 && super::record::on() {
+                        if down && !event.repeat {
+                            self.mark_shot = super::record::mark();
+                            self.draw();
+                        }
+                        return;
+                    }
                     if let Some((vk, scan)) = vk_of(code) {
-                        self.input.push_back(Input::Key { vk, scan, down, repeat: event.repeat });
+                        self.push(Input::Key { vk, scan, down, repeat: event.repeat });
                     }
                 }
                 if down {
                     if let Some(t) = &event.text {
                         for ch in t.chars().filter(|&c| (c as u32) < 256) {
-                            self.input.push_back(Input::Char(ch as u8));
+                            self.push(Input::Char(ch as u8));
                         }
                     }
                 }
