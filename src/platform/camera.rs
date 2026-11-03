@@ -10,28 +10,29 @@
 //! position the same way. Positions are 20.12 with y up; a robot at yaw w (actor +0xb0, 4096 a
 //! turn) faces (sin w, 0, cos w); a camera's yaw looks the same way, pitch > 0 looks down.
 
+use crate::ver::Us;
 use super::{guest_call, mem};
 use crate::rt::{call_original, Cpu, ESP};
 use std::sync::Mutex;
 
 /// robot_camera(actor, dt, dt / 2): places the player's camera every frame.
-pub const ROBOT_CAMERA: u32 = 0x4456a0;
+pub const ROBOT_CAMERA: Us = Us(0x4456a0);
 /// robot_draw(upper part): the robot's body, upper part, side weapons, lights, muzzle flash.
-pub const ROBOT_DRAW: u32 = 0x447ba0;
+pub const ROBOT_DRAW: Us = Us(0x447ba0);
 /// render_hud(player actor): while the camera key's timer runs it shows the camera's name,
 /// from the table of the game's modes that [NAMES] points to.
-pub const RENDER_HUD: u32 = 0x434c90;
-const NAMES: u32 = 0x48b7fc;
+pub const RENDER_HUD: Us = Us(0x434c90);
+const NAMES: Us = Us(0x48b7fc);
 const GAME_MODES: u32 = 7;
 
 /// The camera in use, a player's camera by its number (robot data +0xac), and setting the
 /// current camera's angles and position.
-const CAMERA: u32 = 0x511f48;
-const CAMERA_OF: u32 = 0x434900;
-const SET_ANGLES: u32 = 0x434760;
-const SET_POSITION: u32 = 0x4346d0;
+const CAMERA: Us = Us(0x511f48);
+const CAMERA_OF: Us = Us(0x434900);
+const SET_ANGLES: Us = Us(0x434760);
+const SET_POSITION: Us = Us(0x4346d0);
 /// The players' actors.
-const PLAYERS: u32 = 0x511fd0;
+const PLAYERS: Us = Us(0x511fd0);
 
 /// In the robot's data: the game's camera mode (0...6), and a timer the camera key sets to
 /// 900 (it runs down by the frame's ticks): a press is that timer going up.
@@ -60,17 +61,17 @@ struct State {
 static STATE: Mutex<State> = Mutex::new(State { mode: [Mode::Game; 2], last: [None; 2], buf: 0, names: [0; 2] });
 
 fn player_of(actor: u32) -> Option<usize> {
-    (0..2).find(|&p| mem().rd32(PLAYERS + 4 * p as u32) == actor)
+    (0..2).find(|&p| mem().rd32(PLAYERS.at() + 4 * p as u32) == actor)
 }
 
 pub fn robot_camera(c: &mut Cpu) {
     let m = mem();
     let actor = m.rd32(c.r[ESP] + 4);
     let data = m.rd32(actor + 0xac);
-    let Some(p) = player_of(actor) else { return call_original(c, ROBOT_CAMERA) };
+    let Some(p) = player_of(actor) else { return call_original(c, ROBOT_CAMERA.at()) };
     let before = m.rd32(data + MODE) & 0xff;
     let timer = m.rd16(data + KEY_TIMER) as i16;
-    call_original(c, ROBOT_CAMERA);
+    call_original(c, ROBOT_CAMERA.at());
     let after = m.rd32(data + MODE) & 0xff;
     // a press sets the timer up again (it only runs down otherwise)
     let pressed = m.rd16(data + KEY_TIMER) as i16 > timer;
@@ -124,7 +125,7 @@ pub fn robot_camera(c: &mut Cpu) {
         _ => (8.0, 5.0, 190),
     };
     let at = [pos[0] - fx * back * UNIT, pos[1] + up * UNIT, pos[2] - fz * back * UNIT];
-    let cam = guest_call(c, CAMERA_OF, &[m.rd32(data + 0xac) as i8 as i32 as u32]);
+    let cam = guest_call(c, CAMERA_OF.at(), &[m.rd32(data + 0xac) as i8 as i32 as u32]);
     if cam == 0 {
         return;
     }
@@ -135,15 +136,15 @@ pub fn robot_camera(c: &mut Cpu) {
         }
         s.buf
     };
-    let saved = m.rd32(CAMERA);
-    m.wr32(CAMERA, cam);
+    let saved = m.rd32(CAMERA.at());
+    m.wr32(CAMERA.at(), cam);
     let yaw = ((yaw & 0xfff) + 0x800) % 0x1000 - 0x800;
-    guest_call(c, SET_ANGLES, &[yaw as u32, pitch as u32, 0]);
+    guest_call(c, SET_ANGLES.at(), &[yaw as u32, pitch as u32, 0]);
     for (k, v) in at.iter().enumerate() {
         m.wr32(buf + 4 * k as u32, *v as i32 as u32);
     }
-    guest_call(c, SET_POSITION, &[buf]);
-    m.wr32(CAMERA, saved);
+    guest_call(c, SET_POSITION.at(), &[buf]);
+    m.wr32(CAMERA.at(), saved);
 }
 
 /// In first person the robot is not drawn in its own view.
@@ -156,7 +157,7 @@ pub fn robot_draw(c: &mut Cpu) {
         c.r[ESP] += 4;
         return;
     }
-    call_original(c, ROBOT_DRAW);
+    call_original(c, ROBOT_DRAW.at());
 }
 
 /// Our cameras' names in the HUD: the game shows its "Standard Camera" (its mode stays 0 in
@@ -165,7 +166,7 @@ pub fn render_hud(c: &mut Cpu) {
     let m = mem();
     let player = m.rd32(c.r[ESP] + 4);
     let (k, name) = match mode_of(player) {
-        Mode::Game => return call_original(c, RENDER_HUD),
+        Mode::Game => return call_original(c, RENDER_HUD.at()),
         Mode::FirstPerson => (0, "First Person Camera"),
         Mode::Behind => (1, "Chase Camera"),
     };
@@ -183,10 +184,10 @@ pub fn render_hud(c: &mut Cpu) {
         }
         s.names[k]
     };
-    let saved = m.rd32(NAMES);
-    m.wr32(NAMES, table);
-    call_original(c, RENDER_HUD);
-    m.wr32(NAMES, saved);
+    let saved = m.rd32(NAMES.at());
+    m.wr32(NAMES.at(), table);
+    call_original(c, RENDER_HUD.at());
+    m.wr32(NAMES.at(), saved);
 }
 
 fn mode_of(robot: u32) -> Mode {
@@ -197,17 +198,17 @@ fn mode_of(robot: u32) -> Mode {
 fn own_view(c: &mut Cpu, robot: u32) -> bool {
     let m = mem();
     let data = m.rd32(robot + 0xac);
-    guest_call(c, CAMERA_OF, &[m.rd32(data + 0xac) as i8 as i32 as u32]) == m.rd32(CAMERA)
+    guest_call(c, CAMERA_OF.at(), &[m.rd32(data + 0xac) as i8 as i32 as u32]) == m.rd32(CAMERA.at())
 }
 
 /// After the HUD's target markers (0x435330) of `player`, which added display list records
 /// from `from` on: in our cameras the line from the robot to its target (the last record,
 /// type 0x3a) is taken out again, the markers stay.
 pub fn drop_laser(player: u32, from: u32) {
-    const LIST_END: u32 = 0x511dc0;
+    const LIST_END: Us = Us(0x511dc0);
     let m = mem();
-    let end = m.rd32(LIST_END);
+    let end = m.rd32(LIST_END.at());
     if mode_of(player) != Mode::Game && end >= from + 0x38 && m.rd8(end - 0x38 + 4) == 0x3a {
-        m.wr32(LIST_END, end - 0x38);
+        m.wr32(LIST_END.at(), end - 0x38);
     }
 }

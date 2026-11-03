@@ -26,25 +26,26 @@
 //! groups at the frame's left edge, centre and right edge; in split screen one per player's
 //! half. Full-height HUD records (the split-screen divider) are moved like target markers.
 
+use crate::ver::Us;
 use super::glide::{self, View};
 use super::{mem, wide};
 use crate::rt::{Cpu, ESP, call_original};
 use std::sync::OnceLock;
 
-pub const GLIDE_WALKER: u32 = 0x4393e0;
+pub const GLIDE_WALKER: Us = Us(0x4393e0);
 /// The walker's jump table of resolution cases (indices 4..10) and its unscaled path.
-const TABLE: u32 = 0x43a168;
+const TABLE: Us = Us(0x43a168);
 const TABLE_FIRST: u32 = 4;
 const TABLE_LEN: u32 = 7;
-const PLAIN: u32 = 0x4397cd;
+const PLAIN: Us = Us(0x4397cd);
 /// The node in front of bucket 0 (the HUD).
-const HUD_NODE: u32 = 0x499ad0;
+const HUD_NODE: Us = Us(0x499ad0);
 /// The game's resolution index.
-const RES_INDEX: u32 = 0x511e58;
+const RES_INDEX: Us = Us(0x511e58);
 /// Nonzero in split screen.
-const SPLIT: u32 = 0x511f54;
+const SPLIT: Us = Us(0x511f54);
 /// The game state, and its value at the end of a mission (score screen, mission_loop 0x406820).
-const GAME_STATE: u32 = 0x511fb8;
+const GAME_STATE: Us = Us(0x511fb8);
 const ENDING: u32 = 0xd;
 
 pub fn precise() -> bool {
@@ -70,13 +71,13 @@ struct Control {
 /// Hook of 0x4393e0(list, ..).
 pub fn draw_glide(c: &mut Cpu) {
     if !precise() {
-        call_original(c, GLIDE_WALKER);
+        call_original(c, GLIDE_WALKER.at());
         return;
     }
     let m = mem();
     let sp = c.r[ESP];
     let head = m.rd32(sp + 4);
-    let hud_node = m.rd32(HUD_NODE);
+    let hud_node = m.rd32(HUD_NODE.at());
     let mut recs = Vec::new();
     let mut ctls = Vec::new();
     let mut hud = false;
@@ -102,8 +103,8 @@ pub fn draw_glide(c: &mut Cpu) {
     }
     // The end of a match (Precinct Assault's score screen, 0x4080a0) is one 4:3 layout over
     // both halves, drawn in one call after the views: not one player's half.
-    let ending = m.rd32(GAME_STATE) == ENDING;
-    if m.rd8(SPLIT) == 0 || ending {
+    let ending = m.rd32(GAME_STATE.at()) == ENDING;
+    if m.rd8(SPLIT.at()) == 0 || ending {
         split = None;
     }
     let wide = wide::k() != 1.0;
@@ -129,11 +130,11 @@ pub fn draw_glide(c: &mut Cpu) {
         (None, _) => View::Hud(0.5),
     };
 
-    let idx = m.rd32(RES_INDEX).wrapping_sub(TABLE_FIRST);
-    let entry = (idx < TABLE_LEN).then(|| TABLE + 4 * idx);
+    let idx = m.rd32(RES_INDEX.at()).wrapping_sub(TABLE_FIRST);
+    let entry = (idx < TABLE_LEN).then(|| TABLE.at() + 4 * idx);
     let saved = entry.map(|e| m.rd32(e));
     if let Some(e) = entry {
-        m.wr32(e, PLAIN);
+        m.wr32(e, PLAIN.at());
     }
     let (gw, gh) = wide::game_px();
     'passes: for pass in 0..4 {
@@ -160,7 +161,7 @@ pub fn draw_glide(c: &mut Cpu) {
             // each call pushes the return address back (the walker's ret popped it)
             c.r[ESP] = sp;
             m.wr32(sp + 4, first);
-            call_original(c, GLIDE_WALKER);
+            call_original(c, GLIDE_WALKER.at());
             if c.stop != 0 {
                 break 'passes;
             }

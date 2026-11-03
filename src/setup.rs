@@ -18,8 +18,6 @@ use crate::iso::Iso;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-/// The version of FCopLAPD.exe data/functions.json was made for.
-const GAME_SHA256: &str = "2dcdd1e78b99947d125712e1a159548e6f5f3929020c29af9e156314ed1c7e5e";
 const GAME: &str = "FCopLAPD";
 const VIDEO: &str = "Video";
 /// replacement textures (`platform::hd`), the player's
@@ -140,7 +138,7 @@ fn from_image(path: &Path, root: &Path) -> Result<(), String> {
         crate::splash::status(&format!("Copying the game from the CD image... {}%", n * 100 / total))
     }));
     let hash = hex(&Sha256::digest(&bytes));
-    if hash != GAME_SHA256 {
+    if crate::ver::known(&hash).is_none() {
         return Err(unknown(&format!("FCopLAPD.exe on {}", path.display()), &hash));
     }
     eprintln!("setup: taking the game from the CD image {}", path.display());
@@ -170,20 +168,19 @@ fn hex(d: &[u8]) -> String {
 }
 
 fn unknown(what: &str, hash: &str) -> String {
+    let known: Vec<String> = crate::ver::VERSIONS.iter().map(|v| format!("{}: {}", v.name, v.sha256)).collect();
     format!(
-        "{what} is a version of Future Cop this port does not know (only the PC version with SHA-256 \
-         {GAME_SHA256} is supported).\n\nIts SHA-256: {hash}"
+        "{what} is a version of Future Cop this port does not know (the PC versions with these \
+         SHA-256 are supported:\n{}).\n\nIts SHA-256: {hash}",
+        known.join("\n")
     )
 }
 
-/// Is this the FCopLAPD.exe we know?
-pub fn check(exe: &Path) -> Result<(), String> {
+/// Which version of FCopLAPD.exe this is, if we know it.
+pub fn check(exe: &Path) -> Result<&'static crate::ver::Version, String> {
     let bytes = std::fs::read(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
     let hash = hex(&Sha256::digest(&bytes));
-    if hash != GAME_SHA256 {
-        return Err(unknown(&exe.display().to_string(), &hash));
-    }
-    Ok(())
+    crate::ver::known(&hash).ok_or_else(|| unknown(&exe.display().to_string(), &hash))
 }
 
 /// The entry of `dir` called `name`, in any case.

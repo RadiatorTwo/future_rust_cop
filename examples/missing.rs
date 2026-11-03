@@ -6,6 +6,7 @@ fn main() {
     let ranges = load_functions();
     let mut code = Code::new(&img);
     let prog = Program::build(&mut code, &ranges);
+    eprintln!("{} functions", prog.fns.len());
     let mut seen = std::collections::BTreeSet::new();
     for f in prog.fns.values() {
         for &a in &f.ins {

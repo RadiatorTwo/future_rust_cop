@@ -215,6 +215,13 @@ Next:
       animated models
 - [ ] Replacement textures: a switch in Preferences
 
+- [x] German version (2026-11-02): recognised by SHA-256, US addresses moved by
+      `data/map-de.txt` (`src/ver.rs`, `examples/vermap.rs`); UDF CD images (`src/iso.rs`).
+      Plays like the US one (menu, missions, graphics, sound, input)
+- [ ] German version: check our rows in Preferences / pause bar with the longer German
+      texts; save games and network play between German and US untested (network likely
+      incompatible)
+
 ### 3. Smaller open points
 
 - [x] Debug cheats (`cheats.rs`, 2026-10-27): `win`, `lose`, `health`, `ammo` by name in

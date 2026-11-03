@@ -34,6 +34,10 @@ fn le32(d: &[u8], o: usize) -> u32 {
 impl Image {
     pub fn load(path: &Path) -> std::io::Result<Image> {
         let data = std::fs::read(path)?;
+        // the addresses we know are those of the US version: where they are in this one
+        if let Some(v) = crate::ver::of_exe(&data) {
+            crate::ver::select(v);
+        }
         let pe = le32(&data, 0x3c) as usize;
         let nsec = le16(&data, pe + 6) as usize;
         let opt = le16(&data, pe + 20) as usize;
@@ -121,14 +125,16 @@ pub struct FuncInfo {
     pub name: String,
 }
 
-/// data/functions.json, built into the program: (start, end, name), sorted.
+/// data/functions.json, built into the program: (start, end, name), sorted; at their places in
+/// the version that runs (`ver`).
 pub fn load_functions() -> Vec<(u32, u32, String)> {
     let list: Vec<FuncInfo> = serde_json::from_str(include_str!("../data/functions.json")).expect("functions.json");
     let mut out: Vec<(u32, u32, String)> = list
         .into_iter()
+        .filter(|f| !crate::ver::gone(u32::from_str_radix(f.addr.trim_start_matches("0x"), 16).unwrap_or(0)))
         .map(|f| {
             let lo = u32::from_str_radix(f.addr.trim_start_matches("0x"), 16).expect("functions.json: bad addr");
-            (lo, lo + f.size, f.name)
+            (crate::ver::at(lo), crate::ver::at(lo + f.size), f.name)
         })
         .collect();
     out.sort();
@@ -136,7 +142,7 @@ pub fn load_functions() -> Vec<(u32, u32, String)> {
 }
 
 /// The names in data/symbols.txt (what we know about the game's code and data, built into the
-/// program), by address.
+/// program), by address (in the version that runs: `ver`).
 pub fn symbols() -> &'static std::collections::BTreeMap<u32, String> {
     static S: std::sync::OnceLock<std::collections::BTreeMap<u32, String>> = std::sync::OnceLock::new();
     S.get_or_init(|| {
@@ -145,7 +151,7 @@ pub fn symbols() -> &'static std::collections::BTreeMap<u32, String> {
             .filter_map(|l| {
                 let mut w = l.split_whitespace();
                 let a = u32::from_str_radix(w.next()?.strip_prefix("0x")?, 16).ok()?;
-                Some((a, w.next()?.to_string()))
+                Some((crate::ver::at(a), w.next()?.to_string()))
             })
             .collect()
     })

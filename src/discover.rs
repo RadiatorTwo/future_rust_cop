@@ -7,7 +7,8 @@ use iced_x86::{Decoder, DecoderOptions, FlowControl, Instruction, Mnemonic, OpKi
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub const TEXT_START: u32 = 0x401000;
-pub const TEXT_END: u32 = 0x483AE0;
+/// (the German version's is 0x20 bytes longer)
+pub const TEXT_END: u32 = 0x483B00;
 
 pub fn is_code(a: u32) -> bool {
     (TEXT_START..TEXT_END).contains(&a)
@@ -221,11 +222,18 @@ impl Program {
                     continue;
                 }
                 let k = los.partition_point(|&lo| lo <= t);
-                if k == 0 || t >= ranges[k - 1].1 {
+                if k == 0 {
                     continue;
                 }
                 let (lo, hi, name) = &ranges[k - 1];
-                let e = Func::new(code, t, *lo, *hi, format!("{name}+0x{:x}", t - lo));
+                let e = if t < *hi {
+                    Func::new(code, t, *lo, *hi, format!("{name}+0x{:x}", t - lo))
+                } else {
+                    // a function functions.json does not know (one only another version has):
+                    // up to the next one
+                    let next = los.get(k).copied().unwrap_or(TEXT_END);
+                    Func::new(code, t, t, next, format!("FUN_{t:08x}"))
+                };
                 next.push(e.targets.iter().chain(&e.calls).copied().filter(|&x| !(e.inside(x) && e.ins.contains(&x))).collect());
                 fns.insert(t, e);
             }

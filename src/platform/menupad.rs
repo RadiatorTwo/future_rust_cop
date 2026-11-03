@@ -12,6 +12,7 @@
 //! (4 | 8: not there, 1 pressed, 2 under the mouse), action +0x20. Its size is its picture's
 //! (0x40b990: the first of the three found by 0x414450 in the image table [0x499aa4]).
 
+use crate::ver::Us;
 use super::dialog::{OV_H, OV_W};
 use super::window::Input;
 use super::{dialog, log, mem};
@@ -20,16 +21,16 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Nonzero while the menu is up (the window procedure passes the mouse to it only then).
-const MENU_UP: u32 = 0x499a9c;
-const MENU: u32 = 0x511e44;
+const MENU_UP: Us = Us(0x499a9c);
+const MENU: Us = Us(0x511e44);
 /// The mouse as the menu last saw it (frame pixels).
-const MOUSE: u32 = 0x499a90;
+const MOUSE: Us = Us(0x499a90);
 /// The image table and whether images are loaded (0x414450).
-const IMAGES: u32 = 0x499aa4;
-const IMAGES_LOADED: u32 = 0x4a0038;
+const IMAGES: Us = Us(0x499aa4);
+const IMAGES_LOADED: Us = Us(0x4a0038);
 /// The video playing (0x408af0): graph, flags (bit 0: playing).
-const VIDEO: u32 = 0x499740;
-const VIDEO_FLAGS: u32 = 0x499750;
+const VIDEO: Us = Us(0x499740);
+const VIDEO_FLAGS: Us = Us(0x499750);
 
 const ITEM_SIZE: u32 = 0x2c;
 
@@ -86,14 +87,14 @@ pub type Rect = (i32, i32, i32, i32);
 
 fn video_playing() -> bool {
     let m = mem();
-    m.rd32(VIDEO) != 0 && m.rd8(VIDEO_FLAGS) & 1 != 0
+    m.rd32(VIDEO.at()) != 0 && m.rd8(VIDEO_FLAGS.at()) & 1 != 0
 }
 
 /// The image with id `id` (0x414450), 0 if none.
 fn image(id: u32) -> u32 {
     let m = mem();
-    let table = m.rd32(IMAGES);
-    if m.rd8(IMAGES_LOADED) == 0 || table == 0 || id < 1 || id > m.rd32(table) {
+    let table = m.rd32(IMAGES.at());
+    if m.rd8(IMAGES_LOADED.at()) == 0 || table == 0 || id < 1 || id > m.rd32(table) {
         return 0;
     }
     m.rd32(m.rd32(table + 4) + (id - 1) * 4)
@@ -102,7 +103,7 @@ fn image(id: u32) -> u32 {
 /// The items of the menu shown that the mouse can hit.
 fn items() -> Vec<Rect> {
     let m = mem();
-    let menu = m.rd32(MENU);
+    let menu = m.rd32(MENU.at());
     if menu == 0 {
         return Vec::new();
     }
@@ -284,7 +285,7 @@ pub fn step(input: &mut VecDeque<Input>) -> Step {
             overlay: None,
         };
     }
-    let items = if video || m.rd8(MENU_UP) == 0 {
+    let items = if video || m.rd8(MENU_UP.at()) == 0 {
         Vec::new()
     } else {
         items()
@@ -295,7 +296,7 @@ pub fn step(input: &mut VecDeque<Input>) -> Step {
     }
     if !items.is_empty() {
         if let Some(d) = repeat(&mut s, direction(buttons, stick), now) {
-            let from = s.focus.map_or((m.rd32(MOUSE) as i32, m.rd32(MOUSE + 4) as i32), |f| centre(&f));
+            let from = s.focus.map_or((m.rd32(MOUSE.at()) as i32, m.rd32(MOUSE.at() + 4) as i32), |f| centre(&f));
             let cur = s.focus.and_then(|f| items.iter().position(|&r| r == f));
             let came = s.came.and_then(|(r, way)| Some((items.iter().position(|&q| q == r)?, way)));
             if let Some(r) = nearest(&items, cur, came, from, d).map(|k| items[k]) {

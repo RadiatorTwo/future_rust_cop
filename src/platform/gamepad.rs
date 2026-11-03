@@ -13,22 +13,23 @@
 //! keys are not captured (`editing`, `user32`), saving controls.txt (0x417bc0) writes
 //! gamepad.txt instead, and `end` puts the game's back.
 
+use crate::ver::Us;
 use super::{alloc, cstr, dinput, free, game_dir, guest_call, log, mem, put_cstr};
 use crate::rt::{Cpu, EAX, ESP, call_original};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub const BINDING_DOWN: u32 = 0x4162a0;
-pub const SAVE_CONTROLS: u32 = 0x417bc0;
+pub const BINDING_DOWN: Us = Us(0x4162a0);
+pub const SAVE_CONTROLS: Us = Us(0x417bc0);
 /// The Controller dialog and its procedure.
 pub const CONTROLLER: u32 = 113;
-pub const CONTROLLER_PROC: u32 = 0x402bb0;
+pub const CONTROLLER_PROC: Us = Us(0x402bb0);
 /// The game's bindings: 14 (device, key) pairs per player, 0x80 apart.
-const BINDINGS: u32 = 0x511c20;
+const BINDINGS: Us = Us(0x511c20);
 const SIZE: u32 = 0x80;
 const ACTIONS: u32 = 14;
 /// The default profiles the Controller dialog's OK sets (two dwords).
-const PROFILE_CHOICES: u32 = 0x4a01b0;
+const PROFILE_CHOICES: Us = Us(0x4a01b0);
 const FILE: &str = "gamepad.txt";
 
 /// Our bindings in guest memory (both players, `SIZE` apart); 0 until loaded.
@@ -73,7 +74,7 @@ fn load(c: &mut Cpu, table: u32) {
     for (k, line) in text.lines().take(2 * ACTIONS as usize).enumerate() {
         let (p, i) = (k as u32 / ACTIONS, k as u32 % ACTIONS);
         put_cstr(buf, line.trim(), 0x80);
-        guest_call(c, dinput::BINDING_PARSE, &[buf, table + SIZE * p + 8 * i]);
+        guest_call(c, dinput::BINDING_PARSE.at(), &[buf, table + SIZE * p + 8 * i]);
     }
     free(buf);
 }
@@ -83,7 +84,7 @@ fn save(c: &mut Cpu, table: u32) {
     let mut out = String::new();
     for p in 0..2 {
         for i in 0..ACTIONS {
-            let name = guest_call(c, dinput::BINDING_NAME, &[table + SIZE * p + 8 * i]);
+            let name = guest_call(c, dinput::BINDING_NAME.at(), &[table + SIZE * p + 8 * i]);
             out += &cstr(name);
             out += "\r\n";
         }
@@ -104,10 +105,10 @@ pub fn binding_down(c: &mut Cpu) {
     let (player, binding) = (m.rd32(c.r[ESP] + 4), m.rd32(c.r[ESP] + 8));
     let read = |b: u32| (m.rd32(b), m.rd32(b + 4));
     let game = read(binding);
-    call_original(c, BINDING_DOWN);
-    let action = binding.wrapping_sub(BINDINGS + SIZE * player) / 8;
+    call_original(c, BINDING_DOWN.at());
+    let action = binding.wrapping_sub(BINDINGS.at() + SIZE * player) / 8;
     // read_controls also asks for Escape (not one of the 14)
-    if player > 1 || binding < BINDINGS + SIZE * player || action >= ACTIONS || EDITING.load(Ordering::Relaxed) {
+    if player > 1 || binding < BINDINGS.at() + SIZE * player || action >= ACTIONS || EDITING.load(Ordering::Relaxed) {
         return;
     }
     let ours = read(tables(c) + SIZE * player + 8 * action);
@@ -130,11 +131,11 @@ pub fn binding_down(c: &mut Cpu) {
 /// Saving controls.txt (the Controller dialog's OK): gamepad.txt while it shows ours.
 pub fn save_controls(c: &mut Cpu) {
     if editing() {
-        save(c, BINDINGS);
+        save(c, BINDINGS.at());
         // The original is not called on this path, so emulate its ret.
         c.r[ESP] += 4;
     } else {
-        call_original(c, SAVE_CONTROLS);
+        call_original(c, SAVE_CONTROLS.at());
     }
 }
 
@@ -147,10 +148,10 @@ pub fn editing() -> bool {
 pub fn begin(c: &mut Cpu) {
     let t = tables(c);
     let m = mem();
-    let kept = m.slice(BINDINGS, 2 * SIZE as usize).to_vec();
-    *KEPT.lock().unwrap() = Some((kept, [m.rd32(PROFILE_CHOICES), m.rd32(PROFILE_CHOICES + 4)]));
+    let kept = m.slice(BINDINGS.at(), 2 * SIZE as usize).to_vec();
+    *KEPT.lock().unwrap() = Some((kept, [m.rd32(PROFILE_CHOICES.at()), m.rd32(PROFILE_CHOICES.at() + 4)]));
     let ours = m.slice(t, 2 * SIZE as usize).to_vec();
-    m.slice(BINDINGS, ours.len()).copy_from_slice(&ours);
+    m.slice(BINDINGS.at(), ours.len()).copy_from_slice(&ours);
     EDITING.store(true, Ordering::Relaxed);
 }
 
@@ -158,10 +159,10 @@ pub fn begin(c: &mut Cpu) {
 pub fn end() {
     let Some((kept, choices)) = KEPT.lock().unwrap().take() else { return };
     let m = mem();
-    let edited = m.slice(BINDINGS, 2 * SIZE as usize).to_vec();
+    let edited = m.slice(BINDINGS.at(), 2 * SIZE as usize).to_vec();
     m.slice(*TABLES.lock().unwrap(), edited.len()).copy_from_slice(&edited);
-    m.slice(BINDINGS, kept.len()).copy_from_slice(&kept);
-    m.wr32(PROFILE_CHOICES, choices[0]);
-    m.wr32(PROFILE_CHOICES + 4, choices[1]);
+    m.slice(BINDINGS.at(), kept.len()).copy_from_slice(&kept);
+    m.wr32(PROFILE_CHOICES.at(), choices[0]);
+    m.wr32(PROFILE_CHOICES.at() + 4, choices[1]);
     EDITING.store(false, Ordering::Relaxed);
 }

@@ -8,13 +8,14 @@
 //!
 //! Settings are REG_DWORD/REG_SZ values under the game's own key (`advapi32::FCOP_KEY`).
 
+use crate::ver::Us;
 use super::template::{Class, Item, Template};
 use super::{Dialog, FIRST_OURS, Kind};
 use crate::platform::{advapi32, mem};
 
 /// The Preferences dialog and the game's procedure for it.
 const PREFERENCES: u32 = 101;
-const PREFERENCES_PROC: u32 = 0x402030;
+const PREFERENCES_PROC: Us = Us(0x402030);
 /// Its "Processor Select" label and combo box (the game hides them): our renderer choice goes there.
 const PROCESSOR_LABEL: u32 = 1111;
 const PROCESSOR_COMBO: u32 = 1023;
@@ -40,8 +41,8 @@ const AUDIO_BUTTON: u32 = 1100;
 /// Its gamma slider (shown with Glide); the game reads it only when Glide starts.
 const GAMMA: u32 = 1118;
 /// The game's gamma: slider position * [GAMMA_SCALE] - [GAMMA_BASE] (doubles, as 0x43a540).
-const GAMMA_SCALE: u32 = 0x484678;
-const GAMMA_BASE: u32 = 0x484680;
+const GAMMA_SCALE: Us = Us(0x484678);
+const GAMMA_BASE: Us = Us(0x484680);
 
 const RENDERER_LABEL: u32 = FIRST_OURS;
 const RENDERER: u32 = FIRST_OURS + 1;
@@ -88,8 +89,8 @@ const PLAYER_TITLES: [u32; 2] = [1025, 1154];
 
 /// The Load / Save Game dialog: its combo box holds the slots, its text the save's name.
 const LOAD_SAVE: u32 = 163;
-/// the name of an unused slot (the game refuses it as a save's name)
-const EMPTY_SLOT: &str = "-EMPTY-";
+/// the name of an unused slot (the game refuses it as a save's name): US, German version
+const EMPTY_SLOT: [&str; 2] = ["-EMPTY-", "-LEER-"];
 
 /// A gamepad clicks control k (before the click): saving to an unused slot, which needs a
 /// name the pad cannot type, gets "Save <slot>".
@@ -103,7 +104,7 @@ pub fn pad_click(d: &mut Dialog, k: usize) {
     for c in &mut d.controls {
         if let Kind::Combo { edit: true, sel, whole, .. } = &mut c.kind {
             let name = c.text.trim();
-            if name.is_empty() || name == EMPTY_SLOT {
+            if name.is_empty() || EMPTY_SLOT.contains(&name) {
                 c.text = format!("Save {}", *sel + 1);
                 *whole = false;
             }
@@ -378,12 +379,12 @@ pub fn init(d: &mut Dialog) {
 pub fn command(d: &mut Dialog, id: u32) -> Option<After> {
     use crate::platform::dinput;
     match id {
-        DISPLAY => Some(After::Open(PREFERENCES, PREFERENCES_PROC)),
+        DISPLAY => Some(After::Open(PREFERENCES, PREFERENCES_PROC.at())),
         GAMEPAD => Some(After::Gamepad),
         XBOX => {
             // as the game's profile buttons: show its bindings, remember the choice
-            mem().wr32(dinput::PROFILE_CHOICE, dinput::XBOX_CHOICE);
-            Some(After::Call(dinput::PROFILE_SHOW, vec![d.hwnd, dinput::xbox_profile(), 14]))
+            mem().wr32(dinput::PROFILE_CHOICE.at(), dinput::XBOX_CHOICE);
+            Some(After::Call(dinput::PROFILE_SHOW.at(), vec![d.hwnd, dinput::xbox_profile(), 14]))
         }
         _ => None,
     }
@@ -457,7 +458,7 @@ pub fn ok(d: &mut Dialog) {
         });
         if let Some(pos) = gamma {
             let at = |a: u32| f64::from_bits(mem().rd32(a) as u64 | (mem().rd32(a + 4) as u64) << 32);
-            crate::platform::glide::set_gamma((pos as f64 * at(GAMMA_SCALE) - at(GAMMA_BASE)) as f32);
+            crate::platform::glide::set_gamma((pos as f64 * at(GAMMA_SCALE.at()) - at(GAMMA_BASE.at())) as f32);
         }
     }
 }

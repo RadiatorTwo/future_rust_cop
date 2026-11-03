@@ -5,13 +5,14 @@
 //! change get one version per encoding the table can produce, chosen at run time by
 //! comparing the bytes in guest memory.
 
+use crate::ver::Us;
 use crate::discover::{Code, Program, TEXT_END, TEXT_START, is_code};
 use iced_x86::{Decoder, DecoderOptions, FlowControl, Instruction, Mnemonic, OpKind, Register};
 use std::collections::{BTreeMap, HashMap};
 
 /// FUN_0045b1c0's patch table: entries of a size in bits (1 byte), a code address and the
 /// value for each pixel format (4 bytes each); a zero size ends it.
-const PATCH_TABLE: u32 = 0x48ea20;
+const PATCH_TABLE: Us = Us(0x48ea20);
 
 
 /// A code field written at run time: its guest address and size in bytes.
@@ -122,7 +123,7 @@ impl Smc {
 
 fn patch_table(code: &Code) -> Vec<(u32, u32, [u32; 2])> {
     let mut out = Vec::new();
-    let mut at = PATCH_TABLE;
+    let mut at = PATCH_TABLE.at();
     loop {
         let bits = code.img.byte(at);
         if bits == 0 {

@@ -6,6 +6,7 @@
 //! an audio device a timer thread advances them instead. A stream of host samples (`stream_*`)
 //! carries the videos' sound.
 
+use crate::ver::Us;
 use super::{Import, ResId, alloc, arg, com_new, cstr, free, guest_call, host_path, log, mem, new_cstr, resource};
 use crate::rt::{Cpu, EAX, ESP};
 use std::collections::{BTreeMap, VecDeque};
@@ -693,7 +694,7 @@ fn play_sound(c: &mut Cpu) -> u32 {
 /// The game sets a sound effect's volume with 0x4318e0(buffer, 0...127). Its curve went from
 /// 0 to only -16.7 dB, so effects stayed audible with the effects volume at 0. Ours: the
 /// amplitude in proportion, 0 silent.
-pub const SET_VOLUME: u32 = 0x4318e0;
+pub const SET_VOLUME: Us = Us(0x4318e0);
 
 pub fn set_volume(c: &mut Cpu) {
     let v = (arg(c, 1) as i32).clamp(0, 127);

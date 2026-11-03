@@ -76,6 +76,7 @@ fn run() -> u32 {
             std::process::exit(2);
         }
     };
+    // (loading it picks the version: `ver`)
     let img = Image::load(&exe).unwrap_or_else(|e| panic!("{}: {e}", exe.display()));
     let ranges = load_functions();
     fcop::platform::dinput::start(); // gamepads are found while we compile
@@ -88,7 +89,8 @@ fn run() -> u32 {
     // the machine code is kept beside the EXE, for this program and this EXE
     let cache = exe.with_file_name(setup::COMPILED);
     let key = cache_key(&img);
-    let compiled = compile_cached(&prog, &smc, &mut code, fcop::platform::HOOKS, key.map(|k| (cache.as_path(), k)));
+    let hooks: Vec<_> = fcop::platform::HOOKS.iter().map(|&(a, h)| (a.at(), h)).collect();
+    let compiled = compile_cached(&prog, &smc, &mut code, &hooks, key.map(|k| (cache.as_path(), k)));
     let st = &compiled.stats;
     if st.cached {
         eprintln!("compiled code of {} functions loaded in {} ms", st.functions, t.elapsed().as_millis());

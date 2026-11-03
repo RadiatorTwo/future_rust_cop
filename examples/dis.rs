@@ -27,7 +27,7 @@ fn main() {
         return;
     }
     let addr = u32::from_str_radix(args[2].trim_start_matches("0x"), 16).unwrap();
-    println!("== {}", named(addr));
+    println!("== {} ({:x}..{:x}, {})", named(addr), prog.fns[&addr].lo, prog.fns[&addr].hi, prog.fns[&addr].name);
     for &a in &prog.fns[&addr].ins {
         line(a, &code.at(a).unwrap());
     }

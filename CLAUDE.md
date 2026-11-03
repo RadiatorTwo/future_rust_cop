@@ -28,6 +28,17 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   description; "?" marks guesses). Keep it current when something new is understood.
 - `src/image.rs`: the EXE's sections and imports; `data/functions.json` and `data/symbols.txt`
   are built into the program (`include_str!`: fcop.exe needs no files of its own).
+- `src/ver.rs`: versions of FCopLAPD.exe (US, German). Everything we know is by US addresses
+  (functions.json, symbols.txt, hooks, the game data the platform reads); a US address in code
+  is `Us(0x...)`, `.at()` gives its place in the version that runs. `Image::load` picks the
+  version by SHA-256 (`ver::of_exe`, first choice stays). The German EXE is the same code linked
+  again a week later: functions and data a few bytes to ~4 KB elsewhere, 3 functions not there
+  (`ver::gone`: discovery leaves them out, no synthetic functions there). `data/map-de.txt`
+  (only addresses: `<US address> <delta>` from there on, `-` = not in this version) is made
+  by `examples/vermap.rs <us exe> <other exe>`: both .text sections decoded and compared with
+  addresses masked; equal runs give the code's moves, the addresses the matched instructions
+  use give the data's (outliers far from both neighbours dropped). New hard-coded game
+  addresses must go through `Us(...).at()`. A new version: its SHA-256 and map in `VERSIONS`.
 - `src/discover.rs`: finds the code (recursive descent from each function, jump tables,
   extra entry points where other code jumps into the middle of a function or where data
   holds code addresses). Finds 2176 functions incl. 147 extra entries, matching the old
@@ -65,11 +76,13 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (next index, value) pairs). Matches ffmpeg (frames within IDCT rounding, sound within float
   noise); `examples/movie.rs <file.mpg> [dir]` decodes one and writes raw frames/samples.
 - `src/setup.rs`: the game files in `game_files` (next to fcop.exe, else in the current
-  folder): finds FCopLAPD.exe (6 folders deep), checks its SHA-256, moves FCopLAPD.exe,
+  folder): finds FCopLAPD.exe (6 folders deep), checks its SHA-256 (one of `ver::VERSIONS`), moves FCopLAPD.exe,
   febmp.bin, missions (and registry.txt, controls.txt, save.cfg, compiled.bin) into `game_files/FCopLAPD`
   and the folder with intro.mpg into `game_files/Video` (no FCopLAPD.exe but a CD image, .iso
   or raw .bin/.img, in game_files (then trashed) or next to fcop.exe (kept; game_files is made
-  there): `src/iso.rs` (ISO 9660, Joliet names when there are) extracts those from it,
+  there): `src/iso.rs` (ISO 9660, Joliet names when there are; UDF for images without ISO
+  9660, as one of the German CD: anchor at sector 256, partition and file set descriptors,
+  file entries with short/long extents or data in the entry) extracts those from it,
   checked first; `examples/iso.rs` lists an image), clears read-only (CD copies), and
   moves everything else in both folders to the recycle bin (elsewhere deleted), at every start, without asking
   (kept beside them: `game_files/Textures`, the player's replacement textures).
@@ -443,7 +456,7 @@ source by HTTP to it (copy and paste there is text only).
   signs). Exact s64 shadow for the fild/fistp qword memcpy idiom.
 - CD check: volume label FCOP_CD on drive D:, paths like D:\FCopLAPD\Missions\...; the CD's
   root MISSIONS folder is the Mac version (big-endian). Videos are MPEG-1 in the CD's Video
-  folder. The supported EXE has SHA-256 2dcdd1e7...7e5e.
+  folder. Supported EXEs: US SHA-256 2dcdd1e7...7e5e, German bffbc4bb...74f4 (`src/ver.rs`).
 
 ## Next steps
 

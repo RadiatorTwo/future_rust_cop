@@ -960,7 +960,7 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
             Some(extend::After::Gamepad) => {
                 use crate::platform::gamepad;
                 gamepad::begin(c);
-                open(c, ResId::Id(gamepad::CONTROLLER), gamepad::CONTROLLER_PROC, 0);
+                open(c, ResId::Id(gamepad::CONTROLLER), gamepad::CONTROLLER_PROC.at(), 0);
                 gamepad::end();
             }
             None => {}

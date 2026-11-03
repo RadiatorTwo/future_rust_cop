@@ -1,6 +1,7 @@
 //! USER32: window classes and windows, the message queue, timers, keyboard and mouse state.
 //! The game's window procedures are guest code; input comes from `window`.
 
+use crate::ver::Us;
 use super::dialog;
 use super::window::{self, Input};
 use super::{Import, arg, cstr, guest_call, log, mem, put_cstr};
@@ -247,7 +248,7 @@ fn take_hooked(c: &mut Cpu, min: u32, max: u32, remove: bool) -> Option<Msg> {
         let hooks: Vec<u32> = st()
             .hooks
             .iter()
-            .filter(|h| h.1 == WH_KEYBOARD && !(pad_only && h.2 == CONTROLLER_KEY_HOOK))
+            .filter(|h| h.1 == WH_KEYBOARD && !(pad_only && h.2 == CONTROLLER_KEY_HOOK.at()))
             .map(|h| h.2)
             .collect();
         let mouse = controller_mouse_button(&m, &hooks);
@@ -259,7 +260,7 @@ fn take_hooked(c: &mut Cpu, min: u32, max: u32, remove: bool) -> Option<Msg> {
         let flags = if mouse.is_some() { 0 } else { m.lp };
         let swallowed = hooks
             .into_iter()
-            .filter(|&p| mouse.is_none() || p == CONTROLLER_KEY_HOOK)
+            .filter(|&p| mouse.is_none() || p == CONTROLLER_KEY_HOOK.at())
             .any(|p| guest_call(c, p, &[0, key, flags]) != 0);
         if !swallowed {
             return Some(m);
@@ -273,14 +274,14 @@ fn is_keyboard_hook_message(msg: u32) -> bool {
     matches!(msg, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP)
 }
 
-const CONTROLLER_KEY_HOOK: u32 = 0x4032c0;
-const CONTROLLER_FIELD: u32 = 0x498cf8;
+const CONTROLLER_KEY_HOOK: Us = Us(0x4032c0);
+const CONTROLLER_FIELD: Us = Us(0x498cf8);
 
 /// Mouse buttons use their Windows virtual-key codes as ordinary keyboard-device bindings.
 /// Right, middle and side clicks are not used by our dialogs. A left click is captured only when
 /// it repeats the click on the already selected binding field, so the first click can select it.
 fn controller_mouse_button(m: &Msg, hooks: &[u32]) -> Option<u32> {
-    if !hooks.contains(&CONTROLLER_KEY_HOOK) {
+    if !hooks.contains(&CONTROLLER_KEY_HOOK.at()) {
         return None;
     }
     match m.msg {
@@ -288,7 +289,7 @@ fn controller_mouse_button(m: &Msg, hooks: &[u32]) -> Option<u32> {
         0x207 => Some(0x04), // WM_MBUTTONDOWN / VK_MBUTTON
         0x20b if m.wp >> 16 == 1 => Some(0x05), // WM_XBUTTONDOWN / VK_XBUTTON1
         0x20b if m.wp >> 16 == 2 => Some(0x06), // WM_XBUTTONDOWN / VK_XBUTTON2
-        0x201 if dialog::control_at(m.lp) == Some(mem().rd32(CONTROLLER_FIELD)) => Some(0x01), // VK_LBUTTON
+        0x201 if dialog::control_at(m.lp) == Some(mem().rd32(CONTROLLER_FIELD.at())) => Some(0x01), // VK_LBUTTON
         _ => None,
     }
 }
@@ -895,14 +896,14 @@ pub const IMPORTS: &[Import] = &[
 /// virtual key, used without controls.txt and by "Select Default Profile") is the numeric
 /// keypad, as is player 2's. Player 1 gets keys every keyboard has: the arrows, and A/D to jink.
 pub fn single_player_keys() {
-    const PROFILE: u32 = 0x48afb8;
+    const PROFILE: Us = Us(0x48afb8);
     // forward, back, turn right, turn left, gun, action, special, jump, map, camera,
     // jink left, jink right, heavy weapon, change target
     const KEYS: [u32; 14] = [0x26, 0x28, 0x27, 0x25, 0x20, b'X' as u32, 0x11, b'Z' as u32, b'M' as u32, 0x09, b'A' as u32, b'D' as u32, 0x12, b'S' as u32];
     let m = mem();
     for (i, k) in KEYS.into_iter().enumerate() {
-        m.wr32(PROFILE + 8 * i as u32, 0);
-        m.wr32(PROFILE + 8 * i as u32 + 4, k);
+        m.wr32(PROFILE.at() + 8 * i as u32, 0);
+        m.wr32(PROFILE.at() + 8 * i as u32 + 4, k);
     }
 }
 

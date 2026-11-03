@@ -614,7 +614,7 @@ fn find_import(dll: &str, name: &str) -> Option<&'static Import> {
 }
 
 /// Game functions replaced by our own (`jit::compile`).
-pub const HOOKS: &[(u32, crate::rt::Hook)] = &[
+pub const HOOKS: &[(crate::ver::Us, crate::rt::Hook)] = &[
     (walker::GLIDE_WALKER, walker::draw_glide),
     (wide::TERRAIN_VERTEX, wide::terrain_vertex),
     (wide::SPRITE, wide::sprite),

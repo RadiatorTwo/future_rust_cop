@@ -27,6 +27,7 @@
 //! read the last state. `FCOP_PAD_LOG=1` logs pads and the game's use of them. `pad@...` items
 //! in FCOP_INPUT drive a scripted pad (pad 0, before the real ones).
 
+use crate::ver::Us;
 use super::{Import, alloc, arg, cstr, free, guest_call, log, mem, put_cstr};
 use crate::rt::{Cpu, EAX, ESP, call_original};
 use gilrs::{Axis, Button, Gilrs};
@@ -646,7 +647,7 @@ pub fn key_down(p: &Pad, key: u32) -> bool {
 }
 
 /// joy_key(pad, key): extend the game's four axis keys with the right stick directions.
-pub const JOY_KEY: u32 = 0x412d70;
+pub const JOY_KEY: Us = Us(0x412d70);
 
 pub fn joy_key(c: &mut Cpu) {
     let (pad, key) = (mem().rd32(c.r[ESP] + 4), mem().rd32(c.r[ESP] + 8));
@@ -655,19 +656,19 @@ pub fn joy_key(c: &mut Cpu) {
         // The original is not called on this path, so emulate its ret.
         c.r[ESP] += 4;
     } else {
-        call_original(c, JOY_KEY);
+        call_original(c, JOY_KEY.at());
     }
 }
 
 /// joy_capture(pad, &binding): the stick direction or button pressed, as a binding (device 1,
 /// key); al = 1 when one was. The game looks at buttons 0...9 only: hooked for 10...16 (L3).
-pub const JOY_CAPTURE: u32 = 0x412c10;
-const JOY_STATES: u32 = 0x49fd98;
+pub const JOY_CAPTURE: Us = Us(0x412c10);
+const JOY_STATES: Us = Us(0x49fd98);
 
 pub fn joy_capture(c: &mut Cpu) {
     let m = mem();
     let (pad, binding) = (m.rd32(c.r[ESP] + 4), m.rd32(c.r[ESP] + 8));
-    call_original(c, JOY_CAPTURE);
+    call_original(c, JOY_CAPTURE.at());
     // a pad choosing in the dialog does not bind (`dialog::pad_capture`); the pad's bindings
     // are made in its own dialog (`gamepad.rs`), the game's binds the keyboard
     if !super::dialog::pad_capture() || !super::gamepad::editing() {
@@ -680,7 +681,7 @@ pub fn joy_capture(c: &mut Cpu) {
             m.wr32(binding + 4, key);
             c.r[EAX] = c.r[EAX] & !0xff | 1;
         } else {
-            let buttons = JOY_STATES + 0x50 * pad + 0x30;
+            let buttons = JOY_STATES.at() + 0x50 * pad + 0x30;
             if let Some(b) = (10..=16).find(|&b| m.rd8(buttons + b) & 0x80 != 0) {
                 m.wr32(binding, 1);
                 m.wr32(binding + 4, b);
@@ -698,11 +699,11 @@ pub fn joy_capture(c: &mut Cpu) {
 /// [`PROFILE_CHOICE`] to 0...2; after OK the Controller dialog applies the table at 0x48afb8
 /// (player 2: 0x48b120) + choice * 0x78 with `PROFILE_APPLY`(dialog, player, table, 14). Our
 /// "Xbox Controller" button (`extend.rs`) is choice 3, whose table is ours (issue #9).
-pub const PROFILE_CHOICE: u32 = 0x486290;
-pub const PROFILE_SHOW: u32 = 0x4037d0;
-pub const PROFILE_APPLY: u32 = 0x403380;
+pub const PROFILE_CHOICE: Us = Us(0x486290);
+pub const PROFILE_SHOW: Us = Us(0x4037d0);
+pub const PROFILE_APPLY: Us = Us(0x403380);
 pub const XBOX_CHOICE: u32 = 3;
-const PROFILES: [u32; 2] = [0x48afb8, 0x48b120];
+const PROFILES: [Us; 2] = [Us(0x48afb8), Us(0x48b120)];
 const PROFILE_SIZE: u32 = 0x78;
 
 /// The Xbox profile in guest memory: the Sidewinder profile (1) with turning on the right
@@ -713,7 +714,7 @@ pub fn xbox_profile() -> u32 {
         let m = mem();
         let t = alloc(PROFILE_SIZE);
         for i in 0..PROFILE_SIZE / 4 {
-            m.wr32(t + 4 * i, m.rd32(PROFILES[0] + PROFILE_SIZE + 4 * i));
+            m.wr32(t + 4 * i, m.rd32(PROFILES[0].at() + PROFILE_SIZE + 4 * i));
         }
         // turn right, turn left, jink left, jink right (the order of controls.txt)
         for (action, key) in [(2, RIGHT_RIGHT), (3, RIGHT_LEFT), (10, 0x12), (11, 0x13)] {
@@ -728,17 +729,17 @@ pub fn xbox_profile() -> u32 {
 pub fn profile_apply(c: &mut Cpu) {
     let m = mem();
     let (player, table) = (m.rd32(c.r[ESP] + 8), c.r[ESP] + 12);
-    if m.rd32(PROFILE_CHOICE) == XBOX_CHOICE && player < 2 && m.rd32(table) == PROFILES[player as usize] + XBOX_CHOICE * PROFILE_SIZE {
+    if m.rd32(PROFILE_CHOICE.at()) == XBOX_CHOICE && player < 2 && m.rd32(table) == PROFILES[player as usize].at() + XBOX_CHOICE * PROFILE_SIZE {
         m.wr32(table, xbox_profile());
     }
-    call_original(c, PROFILE_APPLY);
+    call_original(c, PROFILE_APPLY.at());
 }
 
 /// controls.txt parsing and display. The game's fixed name tables do not contain mouse buttons
 /// or our right-stick keys, so both need names in both directions to survive a restart.
-pub const BINDING_PARSE: u32 = 0x417870;
-pub const BINDING_NAME: u32 = 0x4179e0;
-const BINDING_NAME_BUF: u32 = 0x4a0410;
+pub const BINDING_PARSE: Us = Us(0x417870);
+pub const BINDING_NAME: Us = Us(0x4179e0);
+const BINDING_NAME_BUF: Us = Us(0x4a0410);
 
 pub fn binding_parse(c: &mut Cpu) {
     let m = mem();
@@ -755,7 +756,7 @@ pub fn binding_parse(c: &mut Cpu) {
         // The original parser writes the device before it knows whether the name is valid.
         // Keep an invalid/truncated dialog field from leaving a half-updated live binding.
         let old = [m.rd32(binding), m.rd32(binding + 4)];
-        call_original(c, BINDING_PARSE);
+        call_original(c, BINDING_PARSE.at());
         if c.r[EAX] & 0xff == 0 {
             m.wr32(binding, old[0]);
             m.wr32(binding + 4, old[1]);
@@ -773,24 +774,24 @@ pub fn binding_name(c: &mut Cpu) {
         _ => None,
     };
     if let Some((device, name)) = custom {
-        put_cstr(BINDING_NAME_BUF, &format!("{device}: {name}"), 64);
-        c.r[EAX] = BINDING_NAME_BUF;
+        put_cstr(BINDING_NAME_BUF.at(), &format!("{device}: {name}"), 64);
+        c.r[EAX] = BINDING_NAME_BUF.at();
         // The original is not called on this path, so emulate its ret.
         c.r[ESP] += 4;
     } else {
-        call_original(c, BINDING_NAME);
+        call_original(c, BINDING_NAME.at());
     }
 }
 
 // ---- analog player movement ------------------------------------------------------------------
 
 /// Player robot physics and the helpers that build its desired horizontal movement vector.
-pub const ROBOT_PHYSICS: u32 = 0x442120;
-pub const HOVER_MOVE_VECTOR: u32 = 0x443e80;
-pub const WALK_MOVE_VECTOR: u32 = 0x444f40;
+pub const ROBOT_PHYSICS: Us = Us(0x442120);
+pub const HOVER_MOVE_VECTOR: Us = Us(0x443e80);
+pub const WALK_MOVE_VECTOR: Us = Us(0x444f40);
 
-const PLAYERS: u32 = 0x511fd0;
-const NET: u32 = 0x511fa0;
+const PLAYERS: Us = Us(0x511fd0);
+const NET: Us = Us(0x511fa0);
 const ROBOT_DATA: u32 = 0xac;
 const CONTROLS_BITS: u32 = 0x30;
 const HEADING: u32 = 0xb0;
@@ -869,10 +870,10 @@ fn analog_amounts(amounts: [Option<f32>; 14], controls: u32) -> AnalogMove {
 /// bits, not magnitude; retaining digital movement there keeps both peers deterministic.
 fn analog_for(actor: u32, controls: u32) -> Option<AnalogMove> {
     let m = mem();
-    if m.rd32(NET) as i32 >= 0 {
+    if m.rd32(NET.at()) as i32 >= 0 {
         return None;
     }
-    let player = (0..2).find(|&p| m.rd32(PLAYERS + 4 * p) == actor)?;
+    let player = (0..2).find(|&p| m.rd32(PLAYERS.at() + 4 * p) == actor)?;
     let analog = analog_amounts(super::gamepad::amounts(player), controls);
     (analog.vector.is_some() || analog.turn.is_some()).then_some(analog)
 }
@@ -927,11 +928,11 @@ fn move_vector(c: &mut Cpu, addr: u32) {
 }
 
 pub fn hover_move_vector(c: &mut Cpu) {
-    move_vector(c, HOVER_MOVE_VECTOR);
+    move_vector(c, HOVER_MOVE_VECTOR.at());
 }
 
 pub fn walk_move_vector(c: &mut Cpu) {
-    move_vector(c, WALK_MOVE_VECTOR);
+    move_vector(c, WALK_MOVE_VECTOR.at());
 }
 
 /// Run the original physics with proportional desired translation, then scale only the
@@ -944,7 +945,7 @@ pub fn robot_physics(c: &mut Cpu) {
     let analog = (controls & MOVE_BITS != 0).then(|| analog_for(actor, controls)).flatten();
     let before = m.rd16(actor + HEADING) as i32 & 0xfff;
     let previous = ANALOG_MOVE.replace(analog);
-    call_original(c, ROBOT_PHYSICS);
+    call_original(c, ROBOT_PHYSICS.at());
     ANALOG_MOVE.set(previous);
 
     let Some(amount) = analog.and_then(|a| a.turn) else { return };

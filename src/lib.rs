@@ -17,3 +17,4 @@ pub mod setup;
 pub mod smc;
 pub mod sounds;
 pub mod splash;
+pub mod ver;

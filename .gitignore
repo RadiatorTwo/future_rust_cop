@@ -3,3 +3,7 @@
 # build output
 /target/
 shot/
+# CD images of the game: never committed
+/*.iso
+/*.bin
+/*.img

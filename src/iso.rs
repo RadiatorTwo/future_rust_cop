@@ -1,5 +1,6 @@
-//! Reading files from a CD image: ISO 9660 with Joliet names when there are, in an `.iso` (2048
-//! bytes a sector) or a raw `.bin` (2352 bytes a sector, mode 1 or mode 2 form 1).
+//! Reading files from a CD image: ISO 9660 with Joliet names when there are, or UDF (images
+//! made without ISO 9660, as one of the German CD), in an `.iso` (2048 bytes a sector) or a raw
+//! `.bin` (2352 bytes a sector, mode 1 or mode 2 form 1).
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -10,6 +11,7 @@ use std::path::Path;
 pub struct Entry {
     pub name: String,
     pub dir: bool,
+    /// ISO 9660: the first sector of its data; UDF: the sector of its file entry
     sector: u32,
     pub size: u32,
 }
@@ -23,6 +25,8 @@ pub struct Iso {
     sector_size: u64,
     data_at: u64,
     joliet: bool,
+    /// UDF: the sector its partition starts at
+    udf: Option<u32>,
     root: Entry,
 }
 
@@ -41,9 +45,10 @@ impl Iso {
                 sector_size,
                 data_at,
                 joliet: false,
+                udf: None,
                 root: Entry::default(),
             };
-            if iso.descriptors().is_some() {
+            if iso.descriptors().is_some() || iso.udf_descriptors().is_some() {
                 return Some(iso);
             }
         }
@@ -76,6 +81,84 @@ impl Iso {
         found.then_some(())
     }
 
+    /// UDF (ECMA-167): the anchor at sector 256, the volume descriptors it points to (the
+    /// partition's start, the file set's place), the file set's root folder.
+    fn udf_descriptors(&mut self) -> Option<()> {
+        let anchor = self.sector(256).ok()?;
+        if tag(&anchor) != 2 {
+            return None;
+        }
+        let (len, at) = (le32(&anchor, 16), le32(&anchor, 20));
+        let (mut start, mut fileset) = (None, None);
+        for s in at..at + len.div_ceil(2048) {
+            let d = self.sector(s).ok()?;
+            match tag(&d) {
+                5 => start = Some(le32(&d, 188)),
+                6 if le32(&d, 212) == 2048 => fileset = Some(le32(&d, 252)),
+                8 => break,
+                _ => {}
+            }
+        }
+        let start = start?;
+        let fsd = self.sector(start + fileset?).ok()?;
+        if tag(&fsd) != 256 {
+            return None;
+        }
+        self.udf = Some(start);
+        let root = start + le32(&fsd, 404);
+        let size = self.udf_entry(root).ok()?.0;
+        self.root = Entry { name: String::new(), dir: true, sector: root, size };
+        Some(())
+    }
+
+    /// A UDF file entry: its length and where its data is: (sector, bytes) extents, or the
+    /// data itself when it is in the entry.
+    fn udf_entry(&mut self, n: u32) -> std::io::Result<(u32, Result<Vec<(u32, u32)>, Vec<u8>>)> {
+        let d = self.sector(n)?;
+        let bad = || std::io::Error::new(std::io::ErrorKind::InvalidData, "bad UDF file entry");
+        // (extended) file entry: lengths of the extended attributes and allocation descriptors
+        let (ea, ad) = match tag(&d) {
+            261 => (le32(&d, 168), 176),
+            266 => (le32(&d, 208), 216),
+            _ => return Err(bad()),
+        };
+        let lad = le32(&d, ad - 4) as usize;
+        let size = le32(&d, 56);
+        let from = ad + ea as usize;
+        let ads = d.get(from..from + lad).ok_or_else(bad)?;
+        let start = self.udf.unwrap_or(0);
+        // short or long allocation descriptors (length, block in the partition), or the data
+        let extents = match le16(&d, 34) & 7 {
+            0 => ads.chunks_exact(8).map(|a| (start + le32(a, 4), le32(a, 0) & 0x3fff_ffff)).collect(),
+            1 => ads.chunks_exact(16).map(|a| (start + le32(a, 4), le32(a, 0) & 0x3fff_ffff)).collect(),
+            3 => return Ok((size, Err(ads.to_vec()))),
+            _ => return Err(bad()),
+        };
+        Ok((size, Ok(extents)))
+    }
+
+    /// The entries of a UDF folder: its file identifier descriptors.
+    fn udf_list(&mut self, dir: &Entry) -> std::io::Result<Vec<Entry>> {
+        let mut data = Vec::new();
+        self.copy(dir, &mut data)?;
+        let mut out = Vec::new();
+        let mut at = 0;
+        while at + 38 <= data.len() && tag(&data[at..]) == 257 {
+            let fid = &data[at..];
+            let (kind, lfi, liu) = (fid[18], fid[19] as usize, le16(fid, 36) as usize);
+            let name = fid.get(38 + liu..38 + liu + lfi).map(dstring).unwrap_or_default();
+            at += (38 + liu + lfi + 3) & !3;
+            // deleted, or the parent folder
+            if kind & (4 | 8) != 0 || name.is_empty() {
+                continue;
+            }
+            let sector = self.udf.unwrap_or(0) + le32(fid, 24);
+            let size = self.udf_entry(sector)?.0;
+            out.push(Entry { name, dir: kind & 2 != 0, sector, size });
+        }
+        Ok(out)
+    }
+
     fn sector(&mut self, n: u32) -> std::io::Result<[u8; 2048]> {
         let mut b = [0u8; 2048];
         self.file.seek(SeekFrom::Start(n as u64 * self.sector_size + self.data_at))?;
@@ -89,6 +172,9 @@ impl Iso {
 
     /// The entries of a folder.
     pub fn list(&mut self, dir: &Entry) -> std::io::Result<Vec<Entry>> {
+        if self.udf.is_some() {
+            return self.udf_list(dir);
+        }
         let mut out = Vec::new();
         for k in 0..dir.size.div_ceil(2048) {
             let d = self.sector(dir.sector + k)?;
@@ -143,17 +229,35 @@ impl Iso {
     }
 
     fn copy(&mut self, f: &Entry, out: &mut impl Write) -> std::io::Result<()> {
+        if self.udf.is_none() {
+            return self.copy_run(f.sector, f.size, out);
+        }
+        let extents = match self.udf_entry(f.sector)?.1 {
+            Ok(e) => e,
+            Err(data) => return out.write_all(&data[..data.len().min(f.size as usize)]),
+        };
+        let mut left = f.size;
+        for (sector, len) in extents {
+            let n = len.min(left);
+            self.copy_run(sector, n, out)?;
+            left -= n;
+        }
+        Ok(())
+    }
+
+    /// `size` bytes from sector `first` on.
+    fn copy_run(&mut self, first: u32, size: u32, out: &mut impl Write) -> std::io::Result<()> {
         if self.sector_size == 2048 {
-            self.file.seek(SeekFrom::Start(f.sector as u64 * 2048))?;
-            std::io::copy(&mut (&mut self.file).take(f.size as u64), out)?;
+            self.file.seek(SeekFrom::Start(first as u64 * 2048))?;
+            std::io::copy(&mut (&mut self.file).take(size as u64), out)?;
             return Ok(());
         }
-        let mut left = f.size as usize;
+        let mut left = size as usize;
         for k in 0.. {
             if left == 0 {
                 break;
             }
-            let d = self.sector(f.sector + k)?;
+            let d = self.sector(first + k)?;
             let n = left.min(2048);
             out.write_all(&d[..n])?;
             left -= n;
@@ -179,6 +283,28 @@ impl Iso {
 impl Default for Entry {
     fn default() -> Self {
         Entry { name: String::new(), dir: true, sector: 0, size: 0 }
+    }
+}
+
+fn le16(d: &[u8], o: usize) -> u16 {
+    u16::from_le_bytes([d[o], d[o + 1]])
+}
+
+fn le32(d: &[u8], o: usize) -> u32 {
+    u32::from_le_bytes(d[o..o + 4].try_into().unwrap())
+}
+
+/// A UDF descriptor's tag identifier.
+fn tag(d: &[u8]) -> u16 {
+    if d.len() < 16 { 0 } else { le16(d, 0) }
+}
+
+/// A UDF name: 8 bits a character or UTF-16 (big-endian), after a byte that says which.
+fn dstring(d: &[u8]) -> String {
+    match d.split_first() {
+        Some((8, rest)) => rest.iter().map(|&b| b as char).collect(),
+        Some((16, rest)) => String::from_utf16_lossy(&rest.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect::<Vec<_>>()),
+        _ => String::new(),
     }
 }
 

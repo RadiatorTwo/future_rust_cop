@@ -9,25 +9,26 @@
 //! on or off in Preferences (REG_DWORD `Widescreen` in the game's key, default on);
 //! `FCOP_WIDE=0` turns it off, `FCOP_WIDE=<aspect>` forces one.
 
+use crate::ver::Us;
 use super::{advapi32, mem};
 use crate::rt::{Cpu, ESP, call_original};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
-pub const TERRAIN_VERTEX: u32 = 0x453740;
-pub const SPRITE: u32 = 0x457140;
-pub const POINTS: u32 = 0x457340;
-pub const TERRAIN_VISIBLE: u32 = 0x452fd0;
-pub const OBJECT_VISIBLE: u32 = 0x4572a0;
-pub const MARKERS: u32 = 0x435330;
+pub const TERRAIN_VERTEX: Us = Us(0x453740);
+pub const SPRITE: Us = Us(0x457140);
+pub const POINTS: Us = Us(0x457340);
+pub const TERRAIN_VISIBLE: Us = Us(0x452fd0);
+pub const OBJECT_VISIBLE: Us = Us(0x4572a0);
+pub const MARKERS: Us = Us(0x435330);
 
 /// The display list's bump pointer (next free 0x38-byte record).
-const LIST_TOP: u32 = 0x511dc0;
+const LIST_TOP: Us = Us(0x511dc0);
 /// Nonzero in split screen (each view is 1280 units wide).
-const SPLIT: u32 = 0x511f54;
+const SPLIT: Us = Us(0x511f54);
 /// The game's resolution index, and its table of modes (20 bytes each: width, height, ...).
-const RES_INDEX: u32 = 0x511e58;
-const RES_TABLE: u32 = 0x487080;
+const RES_INDEX: Us = Us(0x511e58);
+const RES_TABLE: Us = Us(0x487080);
 
 /// k as f32 bits; 1.0 is off.
 static K: AtomicU32 = AtomicU32::new(0x3f80_0000);
@@ -91,7 +92,7 @@ pub fn terrain_vertex(c: &mut Cpu) {
         let a = c.r[ESP] + 8;
         m.wr32(a, sx(m.rd32(a) as i32) as u32);
     }
-    call_original(c, TERRAIN_VERTEX);
+    call_original(c, TERRAIN_VERTEX.at());
 }
 
 /// 0x457140(p): a sprite {x, y, z, _, w, h} (s16).
@@ -103,7 +104,7 @@ pub fn sprite(c: &mut Cpu) {
             m.wr16(a, sx(m.rd16(a) as i16 as i32) as u16);
         }
     }
-    call_original(c, SPRITE);
+    call_original(c, SPRITE.at());
 }
 
 /// 0x457340(points, flags, n): n points {x, y, z, _} (s16, 8 bytes each), projected in place.
@@ -116,33 +117,33 @@ pub fn points(c: &mut Cpu) {
             m.wr16(p + 8 * i, sx(m.rd16(p + 8 * i) as i16 as i32) as u16);
         }
     }
-    call_original(c, POINTS);
+    call_original(c, POINTS.at());
 }
 
 /// 0x452fd0(p, r): is the sphere at camera-space p {x, y, z} (s32) with radius r inside the
 /// 4:3 view? Terrain blocks and cells are culled with it (0x452a20).
 pub fn terrain_visible(c: &mut Cpu) {
     if k() == 1.0 {
-        return call_original(c, TERRAIN_VISIBLE);
+        return call_original(c, TERRAIN_VISIBLE.at());
     }
     let m = mem();
     let p = m.rd32(c.r[ESP] + 4);
     let x = m.rd32(p);
     m.wr32(p, sx(x as i32) as u32);
-    call_original(c, TERRAIN_VISIBLE);
+    call_original(c, TERRAIN_VISIBLE.at());
     m.wr32(p, x);
 }
 
 /// 0x4572a0(p, r): the same test for objects, p {x, y, z} s16.
 pub fn object_visible(c: &mut Cpu) {
     if k() == 1.0 {
-        return call_original(c, OBJECT_VISIBLE);
+        return call_original(c, OBJECT_VISIBLE.at());
     }
     let m = mem();
     let p = m.rd32(c.r[ESP] + 4);
     let x = m.rd16(p);
     m.wr16(p, sx(x as i16 as i32) as u16);
-    call_original(c, OBJECT_VISIBLE);
+    call_original(c, OBJECT_VISIBLE.at());
     m.wr16(p, x);
 }
 
@@ -151,10 +152,10 @@ pub fn object_visible(c: &mut Cpu) {
 pub fn markers(c: &mut Cpu) {
     let m = mem();
     let player = m.rd32(c.r[ESP] + 4);
-    let from = m.rd32(LIST_TOP);
-    call_original(c, MARKERS);
+    let from = m.rd32(LIST_TOP.at());
+    call_original(c, MARKERS.at());
     super::camera::drop_laser(player, from);
-    let to = m.rd32(LIST_TOP);
+    let to = m.rd32(LIST_TOP.at());
     if k() == 1.0 || to < from || to - from > 0x38 * 256 {
         return;
     }
@@ -172,14 +173,14 @@ pub fn placed(r: u32) -> bool {
 
 /// The centre of the view in 2560x1920 units (split screen: each view's own coordinates).
 fn centre() -> i32 {
-    if mem().rd8(SPLIT) != 0 { 640 } else { 1280 }
+    if mem().rd8(SPLIT.at()) != 0 { 640 } else { 1280 }
 }
 
 /// The game's resolution in pixels (the space of type-6 records).
 pub fn game_px() -> (u32, u32) {
     let m = mem();
-    let r = m.rd32(RES_INDEX);
-    let (w, h) = if r <= 10 { (m.rd32(RES_TABLE + 20 * r), m.rd32(RES_TABLE + 4 + 20 * r)) } else { (1280, 960) };
+    let r = m.rd32(RES_INDEX.at());
+    let (w, h) = if r <= 10 { (m.rd32(RES_TABLE.at() + 20 * r), m.rd32(RES_TABLE.at() + 4 + 20 * r)) } else { (1280, 960) };
     if w < 320 || h < 200 { (1280, 960) } else { (w, h) }
 }
 

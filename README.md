@@ -35,7 +35,8 @@ releases: you need your own copy of the game.
    `game_files` goes to the recycle bin (Linux: it is deleted). The first start compiles the
    game (a second or two; kept in `game_files/FCopLAPD/compiled.bin`), later starts are quick.
 
-Only the PC version's `FCopLAPD.exe` (SHA-256 `2dcdd1e7...7e5e`) is supported; with any other,
+The US and the German PC version are supported (`FCopLAPD.exe` with SHA-256 `2dcdd1e7...7e5e`
+or `bffbc4bb...74f4`); with any other,
 or without one, fcop says so. Its messages go to `fcop.log` next to it on Windows, to the
 terminal on Linux. Settings go to `registry.txt`, key bindings to `controls.txt` and saves to
 `save.cfg` in `game_files/FCopLAPD`. On Linux the libraries for sound (ALSA, or PipeWire/
