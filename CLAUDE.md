@@ -322,7 +322,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   forward; view space = game camera space, x right, y up, z ahead), noted by the projection
   hooks 0x457340 / 0x452fd0 per view (`camera`), taken in order by `glide::post_3d`
   (`next_view`); its shadow is multiplied into the AO's half-resolution result (blurred and
-  applied with it, also with the AO off). The 4 strongest dynamic lights are marched in the
+  applied with it, also with the AO off). The 8 strongest dynamic lights are marched (fully blocked, no fade) in the
   lights' pass. The game's round shadows under objects (blend (0, 5): ZERO, 1 - SRC_ALPHA) are
   not drawn in the 3D picture while it is on (`glide::add`).
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the

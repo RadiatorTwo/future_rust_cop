@@ -208,7 +208,7 @@ void main() {
     vec3 n = N(q, z, p, 2);
     // a different turn of the samples at every pixel (interleaved gradient noise), blurred after
     float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    float lit = sun_on != 0 ? 1.0 - sun_strength * shadow(p, n, sun, sun_len, ign, 16) : 1.0;
+    float lit = sun_on != 0 ? 1.0 - sun_strength * shadow(p, n, sun, sun_len, ign, 16, 0.6) : 1.0;
     float rpx = min(radius * focal / z, max_px);
     if (ao_on == 0 || rpx < 2.0) { o = vec4(lit); return; }
     float a = 6.2831853 * ign;
