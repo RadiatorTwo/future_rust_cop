@@ -1091,7 +1091,7 @@ fn buffer_swap(_: &mut Cpu) -> u32 {
     let shown = with(|g, gl| {
         g.flush(gl);
         g.resolve(gl);
-        (g.color, g.target, g.gamma)
+        (g.color, g.target, super::light::gamma(g.gamma))
     });
     if let Some((tex, (w, h), gamma)) = shown {
         super::window::show_texture(tex, w, h, gamma);

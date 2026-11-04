@@ -88,14 +88,16 @@ Next:
 - [x] "Widescreen" box in Preferences (3DFX Options, `dialog/extend.rs`): REG_DWORD
       `Widescreen` in the game's key (default on), applies at OK
 - [x] Widescreen checked by the user: split screen, fullscreen, fast movement (2026-10-26)
-- [ ] PlayStation lighting in Glide (`light.rs`, 2026-11-04; to be checked by the user): light
-      above the texture's own brightness (byte 0x80 = 1.0, up to 2.0: lamps, flashes) as the
-      software renderer and the PlayStation show it; the game's Glide walker (and its THRASH/D3D
-      one, 0x456270) clamped it at 1.0. Measured at the first mission's start: the lamp's warm
-      pool on the wall comes back, lit-normal surfaces unchanged. Box "PlayStation Lighting" in
-      3DFX Options (REG_DWORD `Lighting`, default on). Still darker and more contrasty in the
-      software renderer (its shade tables, no gamma): not lighting. Flat RGB (0x30) and
-      untextured records left as they are (the game's flat untextured colours wrap above 0x7f)
+- [ ] PlayStation look in Glide (`light.rs`, 2026-11-04; to be checked by the user):
+  - Texture Coloring: light above the texture's own brightness (byte 0x80 = 1.0, up to
+    2.0: lamps, flashes) as the software renderer and the PlayStation show it; the game's
+    Glide walker (and its THRASH/D3D one, 0x456270) clamped it at 1.0. The lamp's warm pool
+    on the wall at the first mission's start comes back; flat RGB (0x30) and untextured
+    records left as they are (the game's flat untextured colours wrap above 0x7f)
+  - PlayStation Lighting: the darkness. The game's Glide gamma starts at 1.25 (slider * 0.01
+    + 1.25); shown 0.25 lower, Glide's picture has the software renderer's brightness
+    (measured: before ~1.7x brighter, now mean 39.6 vs 37.5). The user: Texture Coloring
+    alone looked nearly the same as before
 - [x] Split screen (Crime War): both players share one health bar and die together: the
       original's design (Precinct Assault has separate bars; checked by the user)
 - [ ] Widescreen with the software renderer (not planned yet: Glide is the default)

@@ -1,5 +1,6 @@
-//! PlayStation lighting for Glide: light brighter than the texture itself.
+//! The PlayStation's look for Glide: texture colouring and lighting.
 //!
+//! Texture coloring: light brighter than the texture itself.
 //! Like the PlayStation, the game lights a textured polygon with a byte per colour where 0x80
 //! leaves the texture as it is and more brightens it up to twice (lamps, muzzle flashes,
 //! explosions). The software renderer and the PlayStation show that; the Glide walker
@@ -21,8 +22,15 @@
 //! Flat RGB records (0x30) use their bytes directly (0xff = 1.0) and untextured ones are
 //! colours of their own: left as they are, as is the HUD.
 //!
-//! REG_DWORD `Lighting` in the game's key: 1 PlayStation (default), 0 original;
-//! `FCOP_LIGHT=0/1` overrides it.
+//! REG_DWORD `TextureColoring` in the game's key: 1 on (default), 0 the game's clamp;
+//! `FCOP_COLORING=0/1` overrides it.
+//!
+//! PlayStation lighting: the game shows Glide with gamma = slider * 0.01 + 1.25 (0x43a540,
+//! [0x484678], [0x484680]): even at Min 1.25, a third brighter in the shadows than the
+//! PlayStation and the software renderer (measured at the first mission's start: with 1.0
+//! Glide's picture matches the software renderer's brightness). On, the shown gamma is 0.25
+//! lower: Min is the PlayStation's 1.0, the slider brightens from there. REG_DWORD
+//! `PlayStationLighting` (default on), `FCOP_PS_LIGHTING=0/1`.
 
 use crate::ver::Us;
 use super::{advapi32, mem};
@@ -38,26 +46,65 @@ const TEXTURES: Us = Us(0x50dc20);
 /// Record +7 up to this is a texture page (beyond: the walker's special cases).
 const LAST_PAGE: u8 = 0xc;
 
-/// 0 original, 1 PlayStation, 2 not read yet.
-static MODE: AtomicU8 = AtomicU8::new(2);
+/// The game's lowest Glide gamma (slider at Min), and the PlayStation's.
+const GAME_GAMMA_MIN: f32 = 1.25;
+const PS_GAMMA: f32 = 1.0;
 
-pub fn enabled() -> bool {
-    let e = MODE.load(Ordering::Relaxed);
-    if e != 2 {
-        return e == 1;
-    }
-    let on = match std::env::var("FCOP_LIGHT") {
-        Ok(v) => v != "0",
-        Err(_) => advapi32::value("", "Lighting").is_none_or(|(_, d)| d.first().is_some_and(|&b| b != 0)),
-    };
-    MODE.store(on as u8, Ordering::Relaxed);
-    on
+/// An on/off setting: a REG_DWORD in the game's key (default on), an environment variable
+/// over it; 0 off, 1 on, 2 not read yet.
+struct Setting {
+    on: AtomicU8,
+    value: &'static str,
+    env: &'static str,
 }
 
-/// Preferences' OK: saved, and used from the next picture on.
-pub fn set_enabled(on: bool) {
-    MODE.store(on as u8, Ordering::Relaxed);
-    advapi32::set_value("", "Lighting", 4, &(on as u32).to_le_bytes());
+impl Setting {
+    const fn new(value: &'static str, env: &'static str) -> Setting {
+        Setting { on: AtomicU8::new(2), value, env }
+    }
+
+    fn get(&self) -> bool {
+        let e = self.on.load(Ordering::Relaxed);
+        if e != 2 {
+            return e == 1;
+        }
+        let on = match std::env::var(self.env) {
+            Ok(v) => v != "0",
+            Err(_) => advapi32::value("", self.value).is_none_or(|(_, d)| d.first().is_some_and(|&b| b != 0)),
+        };
+        self.on.store(on as u8, Ordering::Relaxed);
+        on
+    }
+
+    /// Preferences' OK: saved, and used from the next picture on.
+    fn set(&self, on: bool) {
+        self.on.store(on as u8, Ordering::Relaxed);
+        advapi32::set_value("", self.value, 4, &(on as u32).to_le_bytes());
+    }
+}
+
+static COLORING: Setting = Setting::new("TextureColoring", "FCOP_COLORING");
+static PS_LIGHTING: Setting = Setting::new("PlayStationLighting", "FCOP_PS_LIGHTING");
+
+pub fn coloring() -> bool {
+    COLORING.get()
+}
+
+pub fn set_coloring(on: bool) {
+    COLORING.set(on);
+}
+
+pub fn ps_lighting() -> bool {
+    PS_LIGHTING.get()
+}
+
+pub fn set_ps_lighting(on: bool) {
+    PS_LIGHTING.set(on);
+}
+
+/// The gamma to show a Glide frame with, from the one the game set.
+pub fn gamma(game: f32) -> f32 {
+    if ps_lighting() { (game - (GAME_GAMMA_MIN - PS_GAMMA)).max(0.1) } else { game }
 }
 
 /// What `begin` changed in the records.
@@ -67,7 +114,7 @@ pub struct Changed {
 
 /// Before the walker draws the 3D picture's records (`(record, vertices)`).
 pub fn begin(recs: impl Iterator<Item = (u32, u32)>) -> Option<Changed> {
-    if !enabled() {
+    if !coloring() {
         return None;
     }
     let m = mem();
