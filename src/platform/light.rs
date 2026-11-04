@@ -28,23 +28,25 @@
 //! PlayStation colors: the PC version recoloured one mission's textures, the first (`M2C`):
 //! all 10 pages darker, yellower and more saturated than the PlayStation's (mean difference
 //! 9...17 of 255 a page; every other mission's pages are the PlayStation's within 1...5, its
-//! rounding; ConFt's pages 6 and 10 differ in content, not colour). A colour matrix fitted to
-//! the two (least squares over all M2C texels) brings them within ~6 (the floor is ~3):
-//! `M2C_TO_PS`. Its pages are known by their hashes, computed from the player's `missions/M2C`
+//! rounding; ConFt's pages 6 and 10 differ in content, not colour). A cubic polynomial in r, g,
+//! b fitted to the two (least squares over all M2C texels), `M2C_TO_PS`, brings them within
+//! 5.2 on average (a 3x3 matrix: 6.2, and it dulled saturated colours such as the effects
+//! page's blues; the best any colour-to-colour function can do is 4.0, the rest is the PC's
+//! different dithering). Its pages are known by their hashes, computed from the player's `missions/M2C`
 //! when Glide first downloads; whole downloads of them are recoloured (black stays black: it
 //! is keyed out). Seen from the next mission start on. REG_DWORD `PlayStationColors` (default
 //! on), `FCOP_PS_COLORS=0/1`. With PS1 textures and the game's own gamma the mean brightness was
 //! the user's PS1 screenshot's (63, 63, 48 against 62, 60, 47), but the user finds the
-//! software renderer's contrast right (Software Shading below).
+//! software renderer's contrast right (PlayStation Shading below).
 
-//! Software Shading: the software renderer's contrast. The game shows Glide with gamma =
+//! PlayStation Shading: the software renderer's (and so the PlayStation's) contrast. The game shows Glide with gamma =
 //! slider * 0.01 + 1.25 (0x43a540, [0x484678], [0x484680]), so 1.25 even at Min; the software
 //! renderer has none (1.0), and its shadows and dark places are that much darker (measured at
 //! M2C's start, 32x32 blocks against the software renderer's: with 1.25 the software one has
 //! 0.55 of Glide's brightness in the dark ones, 0.75 in the bright ones; with 1.0 0.9...1.0
 //! throughout, mean 39.2 against 36.8). On, the shown gamma is 0.25 lower (Min = 1.0), the
-//! slider brightens from there. REG_DWORD `SoftwareShading` (default on),
-//! `FCOP_SW_SHADING=0/1`. The rest of the difference is texture filtering (block contrast 8.7
+//! slider brightens from there. REG_DWORD `PlayStationShading` (default on),
+//! `FCOP_PS_SHADING=0/1`. The rest of the difference is texture filtering (block contrast 8.7
 //! against 10.2; 9.8 with the game's Filtering box off).
 
 use crate::ver::Us;
@@ -63,13 +65,18 @@ const TEXTURES: Us = Us(0x50dc20);
 /// Record +7 up to this is a texture page (beyond: the walker's special cases).
 const LAST_PAGE: u8 = 0xc;
 
-/// PC M2C texel -> PlayStation colour: per output channel r, g, b the weights of r, g, b
-/// (0...1) and an offset.
-const M2C_TO_PS: [[f32; 4]; 3] = [
-    [0.9362, 0.1643, 0.1087, -0.0011],
-    [0.0857, 1.0441, 0.1013, -0.0091],
-    [0.0899, 0.1432, 1.0376, -0.0023],
+/// PC M2C texel -> PlayStation colour (0...1): per output channel r, g, b the coefficients of
+/// 1, r, g, b, r², g², b², rg, rb, gb, r³, g³, b³, r²g, r²b, g²r, g²b, b²r, b²g, rgb.
+const M2C_TO_PS: [[f32; 20]; 3] = [
+    [-0.00277, 0.94171, 0.08660, 0.18271, 0.47165, 0.15931, -0.02743, -0.73229, -0.23186, 0.44827, -0.22774, -0.02446, -0.18170, -0.21668, -0.34787, 0.70052, -1.23201, 0.40937, 0.60689, 0.41940],
+    [-0.00495, 0.03424, 0.95710, 0.17906, 0.10807, -0.23197, -0.03041, 0.41900, -0.16880, 0.19412, -0.07054, 0.41911, -0.17705, -0.10117, 0.46991, -0.42952, -1.30955, 0.02382, 1.04700, -0.18791],
+    [-0.00111, 0.12885, 0.20055, 0.88434, -0.20669, -0.20197, 0.22840, 0.15889, 0.68736, -0.50324, 0.12801, 0.26842, 0.16021, 0.67011, -0.42131, -1.13189, 1.01177, -0.81781, -0.91434, 0.82501],
 ];
+
+/// The terms `M2C_TO_PS` weighs.
+fn cubic([r, g, b]: [f32; 3]) -> [f32; 20] {
+    [1.0, r, g, b, r * r, g * g, b * b, r * g, r * b, g * b, r * r * r, g * g * g, b * b * b, r * r * g, r * r * b, g * g * r, g * g * b, b * b * r, b * b * g, r * g * b]
+}
 /// The mission whose pages are recoloured.
 const RECOLOURED: &str = "M2C";
 
@@ -108,7 +115,7 @@ impl Setting {
 
 static COLORING: Setting = Setting::new("TextureColoring", "FCOP_COLORING");
 static PS_COLORS: Setting = Setting::new("PlayStationColors", "FCOP_PS_COLORS");
-static SW_SHADING: Setting = Setting::new("SoftwareShading", "FCOP_SW_SHADING");
+static PS_SHADING: Setting = Setting::new("PlayStationShading", "FCOP_PS_SHADING");
 
 pub fn coloring() -> bool {
     COLORING.get()
@@ -118,21 +125,21 @@ pub fn set_coloring(on: bool) {
     COLORING.set(on);
 }
 
-pub fn software_shading() -> bool {
-    SW_SHADING.get()
+pub fn ps_shading() -> bool {
+    PS_SHADING.get()
 }
 
-pub fn set_software_shading(on: bool) {
-    SW_SHADING.set(on);
+pub fn set_ps_shading(on: bool) {
+    PS_SHADING.set(on);
 }
 
-/// The game's lowest Glide gamma (slider at Min) and the software renderer's.
+/// The game's lowest Glide gamma (slider at Min) and the software renderer's (the PlayStation's).
 const GAME_GAMMA_MIN: f32 = 1.25;
-const SOFTWARE_GAMMA: f32 = 1.0;
+const PS_GAMMA: f32 = 1.0;
 
 /// The gamma to show a Glide frame with, from the one the game set.
 pub fn gamma(game: f32) -> f32 {
-    if software_shading() { (game - (GAME_GAMMA_MIN - SOFTWARE_GAMMA)).max(0.1) } else { game }
+    if ps_shading() { (game - (GAME_GAMMA_MIN - PS_GAMMA)).max(0.1) } else { game }
 }
 
 pub fn ps_colors() -> bool {
@@ -176,7 +183,8 @@ pub fn recolour(key: u64, rgba: &mut [u8]) {
             continue;
         }
         let c = [p[0], p[1], p[2]].map(|v| v as f32 / 255.0);
-        let out = M2C_TO_PS.map(|m| ((m[0] * c[0] + m[1] * c[1] + m[2] * c[2] + m[3]).clamp(0.0, 1.0) * 255.0).round() as u8);
+        let t = cubic(c);
+        let out = M2C_TO_PS.map(|m| (m.iter().zip(&t).map(|(m, t)| m * t).sum::<f32>().clamp(0.0, 1.0) * 255.0).round() as u8);
         // black would be keyed out
         if out != [0, 0, 0] {
             p[..3].copy_from_slice(&out);

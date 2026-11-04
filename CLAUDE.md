@@ -265,9 +265,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `PlayStationColors`, default on; `FCOP_PS_COLORS=0/1`): the PC version recoloured only the
   first mission's (M2C) 10 texture pages (darker, yellower; every other mission's pages are
   the PlayStation's within rounding, ConFt pages 6/10 differ in content); `M2C_TO_PS`, a
-  3x3 matrix + offset fitted to PC/PS1 texels, recolours whole downloads whose hash is one of
-  M2C's pages (hashed from the player's `missions/M2C`), black kept. Software Shading (REG_DWORD `SoftwareShading`, default on;
-  `FCOP_SW_SHADING=0/1`): the game's Glide gamma is slider * 0.01 + 1.25 (1.25 at Min), the
+  cubic polynomial in r, g, b fitted to PC/PS1 texels (mean error 5.2 of 255; a matrix 6.2), recolours whole downloads whose hash is one of
+  M2C's pages (hashed from the player's `missions/M2C`), black kept. PlayStation Shading (REG_DWORD `PlayStationShading`, default on;
+  `FCOP_PS_SHADING=0/1`): the game's Glide gamma is slider * 0.01 + 1.25 (1.25 at Min), the
   software renderer has none; frames shown 0.25 lower match its contrast (measured in 32x32
   blocks: dark and bright alike within 0.9...1.0, before 0.55 dark / 0.75 bright). The
   user's reference is the software renderer. Comparing with it: `Group` in registry.txt (the

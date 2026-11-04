@@ -96,9 +96,9 @@ Next:
     records left as they are (the game's flat untextured colours wrap above 0x7f)
   - PlayStation Colors (instead of a lowered gamma, which made it darker than the PS1;
     compared with the user's PS1 screenshot and disc): only M2C's textures were recoloured
-    for the PC; a fitted colour matrix gives them the PS1's colours (mean 65, 64, 47 against
+    for the PC; a fitted colour polynomial (cubic; a matrix dulled saturated colours) gives them the PS1's colours (mean 65, 64, 47 against
     the PS1's 62, 60, 47 at M2C's start; the floor still a little brighter than the PS1's)
-  - Software Shading: the software renderer's contrast (the user: it looks right, 3Dfx
+  - PlayStation Shading: the software renderer's contrast (the user: it looks right, 3Dfx
     "not remotely"). The game's Glide gamma starts at 1.25; shown 0.25 lower, Glide's blocks
     are the software renderer's brightness in dark and bright places alike. Left: texture
     filtering (block contrast 8.7 against 10.2, 9.8 with the game's Filtering box off). The
