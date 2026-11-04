@@ -274,6 +274,57 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   user switches it) decides which renderer a test runs, set it and put it back. PS1 disc: `CW/*.MIS`, `PA/*.MIS`, same chunk
   format; its `Cbmp` holds `PDAT` (256x256 8-bit indices) and `PLUT` (12-byte header, 256
   PS1 colours, red in the low bits) instead of `PX16`.
+- `ao.rs`: ambient occlusion (SSAO, PLAN.md 2a step 1; REG_DWORD `AmbientOcclusion`, default
+  off, `FCOP_SSAO=0/1`, box in Advanced Graphics). Depth without a depth buffer: the hooks of
+  0x457340 (object points, in place {sx, sy, z}, flag 1 = before the near plane) and 0x453740
+  (terrain, out {sx, sy, z / 16}: both in object units) keep each projected point's z by its
+  screen position in 2560x1920 units (`ao::point`, cleared at grBufferSwap); `glide::add`
+  finds each 3D vertex's z by its x/y (precise mode passes the units on; split screen: less the
+  view's origin, `glide::set_gbuffer(Some(dx))` from the walker); ~97% are found, the rest (near
+  plane clipping) take the primitive's others. A vertex attribute, interpolated as 1/z, into a
+  second colour attachment (RG32F, multisampled with MSAA; R depth, G a mask) of the
+  framebuffer drawn into: written by opaque and alpha-blended 3D batches (the game draws solid
+  geometry with SRC_ALPHA, 1-SRC_ALPHA and alpha 1: cut at alpha 0.5 by blending the attachment
+  with its own alpha), additive/blended ones write only the mask (not darkened), the game's
+  shadows (src ZERO) and the HUD nothing. After the 3D picture of each view the walker calls
+  `glide::post_3d`: AO at half resolution (12 samples, radius 400 object units, normals from
+  the depth), a depth-aware blur in two passes, the picture times it (through a framebuffer
+  with only the colour, as the depth is read), in the view's clip window. A camera's focal
+  length: 4096 * target height / 1920 pixels. `FCOP_GBUFFER=depth` / `=ao` show them alone.
+  Cost ~0.4 ms a frame at 1920x1080 with MSAA 4x. Sprites (0x457140, centre, z at +4, size
+  at +8) are kept as rectangles: a primitive none of whose corners is a projected point takes
+  the z of the sprite holding its centre. The depth is made when AO or the lights want it
+  (`ao::depth_wanted`; shadows too). The AO's GLSL has a normal function `N`: no other name N in the passes.
+- `lights.rs`: dynamic lights (PLAN.md 2a step 2; REG_DWORD `DynamicLights`, default off,
+  `FCOP_LIGHTS=0/1`, box in Advanced Graphics, `FCOP_GBUFFER=lights`). Every additive primitive
+  of the 3D picture (blend SRC_ALPHA or ONE, ONE) becomes a light in `glide::add`: centre and z,
+  colour = local colour (vertices' or constant, by grColorCombine) times the mean of its texture
+  rectangle (`Texture::rgb`, a CPU copy of each download) times alpha, size in the world from
+  its extent (z / focal). Merged when near, the strongest 32, as uniforms; `glide::post_3d`
+  applies them after the AO: per pixel the lights in reach (falloff (1 - d/r)², by N·L with
+  normals from the depth, weaker at a light's core so its own robot is not flooded), picture *
+  (1 + 1.6 L) + 0.12 L (two draws: dark asphalt got nothing from the factor alone), not where
+  the mask is. Cost ~0.2 ms at 1920x1080. Whitish lights (muzzle flashes) up to 45% weaker,
+  strength by size at most 1.2. Lines (the laser sight) are no lights. Police
+  lights: the game draws only red glows at the light bar's ends (vertex colour pure red, 0 ...
+  0x40, the two ends blinking offset, one always dark); such primitives give `lights::police`:
+  0.25 s red, 0.25 s blue by our clock, as bright as the brightest glow seen, reach as a 190
+  unit light (the glows are ~30 px; only sprites, all corners one depth). A rocket's trail: its
+  red ribbon (pure red too, but 3D geometry) and smoke puffs (no projected point or sprite:
+  `ao::depth_near`, the nearest point's z within 160 units) are `lights::trail`, size at least
+  150, a share each (0.15 / 0.4), merged to a few lights along it. Lights are merged only with
+  a like hue (red and blue apart).
+- `shadows.rs`: screen-space shadows (PLAN.md 2a step 3; REG_DWORD `Shadows`, default off,
+  `FCOP_SHADOWS=0/1`, box in Advanced Graphics, `FCOP_GBUFFER=shadows`). A ray march per pixel
+  through the depth toward the light (GLSL `shadow()`, after `ao::COMMON`): a step behind the
+  depth there by less than a thickness is shadowed. The sun (world direction `SUN`, y up) in
+  view space by the camera's matrix [0x511f48] + 0x58 (3x3 i32 16.16, rows right / up /
+  forward; view space = game camera space, x right, y up, z ahead), noted by the projection
+  hooks 0x457340 / 0x452fd0 per view (`camera`), taken in order by `glide::post_3d`
+  (`next_view`); its shadow is multiplied into the AO's half-resolution result (blurred and
+  applied with it, also with the AO off). The 4 strongest dynamic lights are marched in the
+  lights' pass. The game's round shadows under objects (blend (0, 5): ZERO, 1 - SRC_ALPHA) are
+  not drawn in the 3D picture while it is on (`glide::add`).
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
   projections (0x453740 terrain vertex, 0x457340 object points, 0x457140 sprites) and the
   sphere view tests (0x452fd0 terrain cells, 0x4572a0 objects); target markers (0x435330,
@@ -422,7 +473,12 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   controls have ids from 0x7E00 and the game's procedure never sees them. The pause bar
   (166) gets a "Display" button: Preferences (101) with the game's procedure 0x402030 (not
   its caller 0x402000, which resets the game state), without Renderer, Display Mode,
-  FullScreen, Controller and Audio, our rows in the left column. Every setting there applies
+  FullScreen, Controller and Audio, our rows in the left column.
+  Advanced Graphics (`extend::ADVANCED`): our own dialog, not from the EXE (`extend::template`,
+  no game procedure: its push buttons end it, OK (id 1) runs `extend::ok` first), opened by
+  the "Advanced Graphics..." button below the lighting boxes (3DFX Options, Glide only;
+  `After::Ours`): only for the new effects (PLAN.md 2a): Ambient Occlusion, Dynamic Lights. Every
+  setting there applies
   at once (seen after Resume: a paused game draws no frames); the gamma slider is read by
   the game only when Glide starts (0x43a540), so OK sets it too (`glide::set_gamma`,
   position * [0x484678] - [0x484680]). Keyboard hooks

@@ -323,8 +323,15 @@ impl Dialog {
         }
         let c = &self.controls[k];
         if self.proc_ == 0 {
-            // a message box: any button ends it
-            self.result = Some(c.id);
+            // a message box or one of our own dialogs: a push button ends it (OK saves ours
+            // first), check boxes only toggle
+            if matches!(c.kind, Kind::Push { .. }) {
+                let id = c.id;
+                if id == 1 {
+                    extend::ok(self);
+                }
+                self.result = Some(id);
+            }
         } else if c.ours {
             let id = c.id;
             self.then = extend::command(self, id);
@@ -957,6 +964,9 @@ fn run(c: &mut Cpu, mut d: Dialog, param: u32) -> u32 {
                 guest_call(c, f, &args);
                 stack().dirty = true;
             }
+            Some(extend::After::Ours(template)) => {
+                show(c, template, extend::template(template), 0, 0);
+            }
             Some(extend::After::Gamepad) => {
                 use crate::platform::gamepad;
                 gamepad::begin(c);
@@ -1116,6 +1126,11 @@ fn open(c: &mut Cpu, id: ResId, proc_: u32, param: u32) -> u32 {
         log!("dialog {id:?} opens");
     }
     extend::adjust(tid, &mut t);
+    show(c, tid, t, proc_, param)
+}
+
+/// Build a dialog from template `t` (resource id or one of ours: `tid`) and run it.
+fn show(c: &mut Cpu, tid: u32, t: Template, proc_: u32, param: u32) -> u32 {
     let hwnd = {
         let mut s = stack();
         s.serial = s.serial.wrapping_add(1);
@@ -1210,12 +1225,7 @@ fn message_box(c: &mut Cpu) -> u32 {
         items.push(Item { class: Class::Button, id, text: t.into(), style: WS_VISIBLE | (k == 0) as u32, ex_style: 0, rect: [bx + 56 * k as i32, th + 18, 50, 14] });
     }
     let t = Template { style: if title.is_empty() { 0 } else { WS_CAPTION }, title, rect: [0, 0, width, th + 40], font: None, items };
-    let hwnd = {
-        let mut s = stack();
-        s.serial = s.serial.wrapping_add(1);
-        0x00da_0000 | (s.serial & 0xff) << 8
-    };
-    run(c, Dialog::new(hwnd, 0, 0, &t), 0)
+    show(c, 0, t, 0, 0)
 }
 
 pub const IMPORTS: &[Import] = &[

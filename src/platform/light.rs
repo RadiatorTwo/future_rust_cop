@@ -80,34 +80,39 @@ fn cubic([r, g, b]: [f32; 3]) -> [f32; 20] {
 /// The mission whose pages are recoloured.
 const RECOLOURED: &str = "M2C";
 
-/// An on/off setting: a REG_DWORD in the game's key (default on), an environment variable
-/// over it; 0 off, 1 on, 2 not read yet.
-struct Setting {
+/// An on/off setting: a REG_DWORD in the game's key, an environment variable over it;
+/// 0 off, 1 on, 2 not read yet.
+pub struct Setting {
     on: AtomicU8,
     value: &'static str,
     env: &'static str,
+    default: bool,
 }
 
 impl Setting {
     const fn new(value: &'static str, env: &'static str) -> Setting {
-        Setting { on: AtomicU8::new(2), value, env }
+        Setting::with_default(value, env, true)
     }
 
-    fn get(&self) -> bool {
+    pub const fn with_default(value: &'static str, env: &'static str, default: bool) -> Setting {
+        Setting { on: AtomicU8::new(2), value, env, default }
+    }
+
+    pub fn get(&self) -> bool {
         let e = self.on.load(Ordering::Relaxed);
         if e != 2 {
             return e == 1;
         }
         let on = match std::env::var(self.env) {
             Ok(v) => v != "0",
-            Err(_) => advapi32::value("", self.value).is_none_or(|(_, d)| d.first().is_some_and(|&b| b != 0)),
+            Err(_) => advapi32::value("", self.value).map_or(self.default, |(_, d)| d.first().is_some_and(|&b| b != 0)),
         };
         self.on.store(on as u8, Ordering::Relaxed);
         on
     }
 
     /// Preferences' OK: saved, and used from the next picture on.
-    fn set(&self, on: bool) {
+    pub fn set(&self, on: bool) {
         self.on.store(on as u8, Ordering::Relaxed);
         advapi32::set_value("", self.value, 4, &(on as u32).to_le_bytes());
     }

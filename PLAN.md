@@ -237,6 +237,216 @@ Next:
       texts; save games and network play between German and US untested (network likely
       incompatible)
 
+### 2a. Modern graphics effects (Glide only, planned 2026-11-04)
+
+The user's wish: ambient occlusion, dynamic lights, dynamic shadows, more to follow. Each is
+a switch in our Advanced Graphics dialog (`extend::template`, button in 3DFX Options; REG_DWORD, an
+`FCOP_...` override), off keeps the PlayStation look. The software renderer gets none.
+
+**What the renderer has to work with.** The display list records (`walker.rs`) hold only
+screen x/y (s16, 2560x1920 units) and colours; the walker gives every Glide vertex oow = 1.0
+(0x439456: textures are affine, as on the PS1). There is no depth per vertex, no normal, no
+world position, no depth buffer: the list is sorted in depth buckets, farthest first. Known:
+the projection `sx = 1280 + x * 4096 / z` (times k for widescreen, `wide.rs`), its three
+functions 0x453740 terrain vertex, 0x457340 object points (in place: {x, y, z, _} s16, z
+probably left), 0x457140 sprites (all hooked already), a record's depth key at +0 until the
+sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
+
+#### Step 0: depth and normals (needed by all three)
+
+- [x] Camera-space z per vertex (2026-11-04, `ao.rs`): the simpler way, a table screen (x, y)
+      -> z filled by the projection hooks, looked up per Glide vertex (~97% found; clipped
+      vertices take the primitive's others; sprites none). Checked with `FCOP_GBUFFER=depth`.
+      Original idea: find the code that copies projected points into records
+      (callers of 0x457340 / 0x453740, writes at record +0x28...) and keep z beside each
+      record: a parallel array indexed by (record - [0x499b0c]) / 0x38, 4 z values. Simpler
+      first try, if that is too spread out: the projection hooks fill a table screen (x, y)
+      -> z, and the Glide draw looks each vertex up (precise mode passes the record's units
+      unchanged); vertices made by clipping or not found take the record's depth key.
+      Check: a picture of the depth (`FCOP_GBUFFER=depth` shows it instead of the frame,
+      read back with FCOP_SHOT).
+- [x] Depth into a second attachment (RG32F: depth, mask; multisampled with MSAA), written by
+      opaque and alpha-blended 3D batches (the game's solid geometry is SRC_ALPHA blended with
+      alpha 1), the mask by additive / blended ones. No normals stored: the AO takes them from
+      the depth. Planned at first: z as a vertex
+      attribute; second and third colour attachments of the target (and of the MSAA
+      buffer): view-space depth (R32F) and a normal (RG16F, octahedral), written only by
+      opaque 3D records (`glColorMaski`, `glEnablei`/`glDisablei(BLEND, i)`, GL 3.0), not by
+      blended ones or the HUD. Normals: per triangle on the CPU in `add` (three view-space
+      points: x = (sx - 1280) * z / 4096 / k, y likewise), a flat attribute. A fourth
+      attachment: the unlit texture colour (albedo, for step 2) and a mask where additive /
+      transparent things were drawn (they should not be darkened or lit afterwards).
+- [x] The hook point (`glide::post_3d` after the walker's 3D pass, per view in its clip
+      window). Planned: the effects are applied to the 3D picture when the HUD starts (the
+      walker reaches bucket 0, `walker.rs` draws it in its own calls), once per view (split
+      screen: each half by its clip window), in `fps.rs`'s pictures too. A
+      `glide::post_3d()` runs the passes on the target, the HUD is drawn over the result.
+- [ ] Bonus that comes almost free: with z, perspective-correct textures (an option; the
+      affine warping is part of the PS1 look, so off by default)
+
+#### Step 1: ambient occlusion (SSAO)
+
+- [x] Done 2026-11-04 (`ao.rs`): half resolution, 12 samples on a disc (radius 400 object
+      units, at most a quarter of the height in pixels), occlusion by how far each rises above
+      the surface's plane, depth-aware blur and upsampling, full strength (made stronger after the user saw it: 2026-11-04). Planned: a
+      full-screen pass at half resolution: per pixel ~12-16 samples in a hemisphere
+      around its normal, compared with the depth texture (radius in world units, ~0.5 of a
+      robot's height; fades with distance), then a depth-aware blur (two passes), then
+      colour *= mix(1, ao, strength * (1 - mask)) on the full-resolution target.
+- [x] Setting: Ambient Occlusion box in Advanced Graphics (REG_DWORD `AmbientOcclusion`,
+      default off; later Low / High); `FCOP_SSAO=0/1`; `FCOP_GBUFFER=ao` shows it alone.
+- [ ] Check at the M2C start and in a city mission with FCOP_SHOT (on/off pairs), at
+      1920x1080 and 4K; cost with FCOP_FPS (aim: well under 1 ms). Done for M2C at 1920x1080:
+      contact shadows at walls, under people and robots; ~0.4 ms (965 -> 690 fps unlimited).
+      Open: a city mission, 4K, split screen, the user's look (strength, radius); foliage
+      (keyed trees) is noisy
+- Risks: z wrong where vertices were clipped at the near plane (holes, halos at the screen's
+  edge); terrain tiles with the game's baked shading get darker on top of it (strength).
+
+#### Step 2: dynamic lights
+
+- [x] Done 2026-11-04 (`lights.rs`), as planned below; depth of glows that are sprites from
+      the sprite projection 0x457140. The robots' police lights now colour the ground, walls and
+      robot red/blue, muzzle flashes and rocket trails orange. Planned: sources without reverse
+      engineering: every additive Glide primitive of the 3D picture
+      (blend ONE, ONE or SRC_ALPHA, ONE: muzzle flashes, explosions, shots, glows) becomes a
+      point light at its centre and depth, its colour = average texture colour times vertex
+      colour, its strength and radius by its area. Merged when close, the strongest 32-64
+      kept. They come and go with the game's effects, fps.rs's pictures included.
+- [x] The pass after the AO; no albedo buffer: the picture itself stands in for it (times 1 +
+      1.6 L), plus 0.12 L for dark surfaces; no tiles (32 lights at most). Planned: deferred
+      lighting pass after SSAO: per pixel colour += albedo * Σ light * atten *
+      max(N·L, 0), not where the mask is set; lights sorted into screen tiles if there are
+      many. Strength setting.
+- [ ] Later, with reverse engineering: lights the game knows itself (the robot's lights in
+      its data +0x1c4 per `fps.rs`, street lamps, vehicles' headlights as cones), and a
+      flicker for fires.
+- [x] Setting: Dynamic Lights box in Advanced Graphics (REG_DWORD `DynamicLights`, default off);
+      `FCOP_LIGHTS=0/1`; `FCOP_GBUFFER=lights`. Police lights flash red and blue (the game
+      draws only red glows; blue added, own 0.25 s rhythm). Open: the user's look (strength, reach),
+      explosions and other missions checked, split screen.
+
+#### Step 3: dynamic shadows
+
+- [x] Done 2026-11-04 (`shadows.rs`): sun shadows in the AO's half-resolution pass (16 steps,
+      900 units, thickness max(220, 2% of z), 45% darker, blurred and applied with the AO), the
+      strongest 4 dynamic lights blocked in the lights' pass (12 steps). Sun toward (0.45, 1,
+      -0.3) in the world, turned by the camera's matrix +0x58 (rows right / up / forward,
+      16.16), noted per view by the projection hooks. One box "Shadows" (REG_DWORD `Shadows`,
+      default off, `FCOP_SHADOWS=0/1`, `FCOP_GBUFFER=shadows`). Checked at the M2C start: the
+      robot's shadow, the ramp's and walls' on the ground; 300 fps held at 1920x1080 with AO,
+      lights and shadows. Open: the user's look (direction, length, strength), a sun per
+      mission, the keyed trees are speckled (as with the AO), split screen.
+      Planned: screen-space shadows. Per pixel a short ray march in view space toward the
+      light through the depth texture (16 steps, a thickness assumed); shadowed: colour *=
+      1 - strength. For a sun (a direction per mission, a table with a default from above;
+      the camera's matrix turns it into view space) and for the 2-4 strongest dynamic
+      lights of step 2 (explosions throw shadows). Contact shadows under robots, at walls and
+      buildings. Limits: no shadows from things off screen or hidden behind others.
+- [ ] Later, real shadow maps, two ways to try:
+  - the game draws the scene a second time from a camera above the player along the sun
+    (as `fps.rs` already reruns the render block, with the same care for random generators,
+    visibility leftovers and the display list), its depth is the shadow map; per pixel the
+    view-space position goes to world space (the camera's inverse) and into the sun's view.
+    Costs a second game render per frame; the visibility pass culls by that camera
+  - or our own: terrain (`Ctil`) and models (`Cobj`, placed by the actors' matrix +0x2c and
+    position +0x50) drawn by us into a shadow map; independent of the game's renderer, but
+    animated models (several vertex lists) and every kind of object have to be right
+- [x] The game's own round shadows under objects (blend ZERO, 1 - SRC_ALPHA, one texture)
+      are left out of the 3D picture while Shadows is on (`glide::add`, 2026-11-04).
+- [ ] Setting: Shadows Off / Contact / Full; `FCOP_SHADOWS=0/1/2` (now a box: Off / Contact).
+
+#### Step 4: knowing the effects (needed by steps 5-9)
+
+- [ ] Which primitive is which effect: smoke, fire, explosion, rocket trail, muzzle flash,
+      police light, spark. By the texture's hash (as `hd.rs` hashes every download; the
+      pieces seen with `FCOP_DUMP_TEXTURES=1` / `fcop export`), sorted by hand into a small
+      table in the code (only hashes, nothing from the EXE), with the blend mode as a
+      fallback (additive = glowing, alpha-blended grey = smoke). A flat vertex attribute
+      `effect` to the shader.
+- [ ] Reverse engineering, as far as needed: the game's particle/effect system (who adds the
+      sprite records, 0x457140's callers; the emitter's place, speed, age). Needed for
+      step 5's extra particles and for rockets' direction in step 7.
+- [ ] `FCOP_GBUFFER=effects` colours each kind, to check the table.
+
+#### Step 5: better particles, soft particles, smoke
+
+- [ ] Soft particles: blended sprites fade where they come near the scene behind them
+      (alpha *= clamp((scene z - sprite z) / d, 0, 1), the depth texture of step 0 read in
+      the fragment shader; the sprite's own z from 0x457140's hook). No more hard lines where
+      smoke and explosions cut into the ground and walls.
+- [ ] Smoke: the game's smoke sprites drawn softer and fuller: a noise texture of our own
+      (generated, no asset) scrolled over them, the edge from it, a slow turn and growth by
+      age (needs step 4's age, else by the sprite's size).
+- [ ] More particles: our own extra smoke and sparks at the game's emitters (explosions,
+      burning wrecks, rocket trails), simulated in Rust per game frame (`fps.rs` timing:
+      by game time, so pictures in between move them evenly), drawn as sprites with the
+      depth test of step 0. Count and lifetime by a setting (Off / Low / High).
+- Order: sprites are blended in the game's depth order, ours have to go in by their z
+  (drawn into the list's buckets, or sorted with the game's blended records at the HUD's
+  start).
+
+#### Step 6: lit smoke
+
+- [ ] Smoke and other alpha-blended (not additive) effects take the lights of step 2 in
+      their own fragment shader (the light list as a uniform buffer), with no normal:
+      light by distance only, plus a little light from behind (forward scattering) so a
+      fire or explosion behind a cloud makes its edge glow. Explosions colour it orange,
+      police lights blue/red.
+- [ ] Police lights as sources: the cars' flashing lights are found by step 4 (texture or
+      colour); if the game draws them only as small sprites, their light gets a larger
+      radius and a flicker that follows the sprite's own blink.
+- [ ] Strongest in dark missions: a light's strength against the picture's brightness
+      (the scene's mean, measured on a small mip of the target).
+
+#### Step 7: heat shimmer / distortion
+
+- [ ] A distortion buffer (RG16F, screen offsets) written by the sources: behind rockets
+      (along their trail, from step 4; direction from consecutive positions), above fire
+      (rising, slow), short rings at explosions (a shock ring growing for ~0.3 s, then a
+      fading shimmer). Offsets from a scrolling noise, weaker with distance, zero on the HUD.
+- [ ] Pass at the HUD's start: the 3D picture copied, read back at pixel + offset (only
+      from things behind the source: depth of step 0 compared, else foreground objects
+      bleed into the shimmer).
+- [ ] Setting: Heat Distortion Off / On; `FCOP_DISTORT=0/1`.
+
+#### Step 8: height fog
+
+- [ ] Per pixel the world height: the view-space position (step 0) through the camera's
+      inverse ([0x511f48]: matrix and position; y is up). Fog density grows below a height
+      (per mission: from the terrain's height range, `Ctil`, so low streets and trenches get
+      haze and rooftops stay clear), falls off exponentially above, times the distance the
+      view ray runs through it (the closed formula for exponential height fog, no ray
+      march). Colour per mission (a table; default from the sky / clear colour).
+- [ ] In the drawing fragment shader itself (every fragment has its z from step 0), opaque
+      and blended alike, not as a post pass: blended things are drawn between the opaque
+      ones, a post pass would fog a sprite by the wall behind it. Subtle by default.
+- [ ] Setting: Height Fog Off / On (strength later); `FCOP_FOG=0/1`; per-mission table
+      checked in every mission with FCOP_SHOT.
+
+#### Step 9: subtle bloom
+
+- [ ] Brightness first: the target in RGBA16F (HDR, Texture Coloring's up to 2x not clipped
+      before the end), else bloom has nothing above white to work with.
+- [ ] Source: the bright part of the 3D picture (soft threshold) plus the glowing effects
+      (step 4's mask, so explosions and police lights bloom, bright walls barely). A mip
+      chain down (5-6 levels, 13-tap filter) and back up (tent filter), added at low
+      strength; HUD not bloomed. Then the shown frame's gamma as before.
+- [ ] Setting: Bloom Off / On; `FCOP_BLOOM=0/1`.
+
+#### Order of the post passes (at the HUD's start)
+
+While drawing (per fragment): soft particles, lit smoke, height fog. At the HUD's start, over
+the finished 3D picture (blended effects included, so these use step 0's mask to leave them
+alone): SSAO -> dynamic lights -> shadows -> distortion -> bloom. Then the HUD, then the
+gamma at the frame shown.
+
+#### Ideas after these (the user: "more to come")
+
+Tone mapping (with step 9's HDR target), FXAA/SMAA as an alternative to MSAA, colour grading,
+motion blur from the interpolated actors, sharper sprites (perspective-correct, replacement
+textures), wet streets / reflections in dark missions.
+
 ### 3. Smaller open points
 
 - [x] Debug cheats (`cheats.rs`, 2026-10-27): `win`, `lose`, `health`, `ammo` by name in

@@ -92,7 +92,13 @@ pub fn terrain_vertex(c: &mut Cpu) {
         let a = c.r[ESP] + 8;
         m.wr32(a, sx(m.rd32(a) as i32) as u32);
     }
+    let out = mem().rd32(c.r[ESP] + 4);
     call_original(c, TERRAIN_VERTEX.at());
+    // {x, y, z / 16} (s16) for the ambient occlusion's depth
+    if super::ao::depth_wanted() {
+        let m = mem();
+        super::ao::point(m.rd16(out) as i16, m.rd16(out + 2) as i16, m.rd16(out + 4) as i16);
+    }
 }
 
 /// 0x457140(p): a sprite {x, y, z, _, w, h} (s16).
@@ -104,7 +110,14 @@ pub fn sprite(c: &mut Cpu) {
             m.wr16(a, sx(m.rd16(a) as i16 as i32) as u16);
         }
     }
+    let p = mem().rd32(c.r[ESP] + 4);
     call_original(c, SPRITE.at());
+    // projected in place: centre {sx, sy}, z, size {w, h} at +8 (al = 0: in front of the camera)
+    if super::ao::depth_wanted() && c.r[crate::rt::EAX] & 0xff == 0 {
+        let m = mem();
+        let r = |o: u32| m.rd16(p + o) as i16;
+        super::ao::sprite(r(0), r(2), r(8), r(10), r(4));
+    }
 }
 
 /// 0x457340(points, flags, n): n points {x, y, z, _} (s16, 8 bytes each), projected in place.
@@ -117,12 +130,29 @@ pub fn points(c: &mut Cpu) {
             m.wr16(p + 8 * i, sx(m.rd16(p + 8 * i) as i16 as i32) as u16);
         }
     }
+    let m = mem();
+    let (p, flags, n) = (m.rd32(c.r[ESP] + 4), m.rd32(c.r[ESP] + 8), m.rd32(c.r[ESP] + 12) as i32);
     call_original(c, POINTS.at());
+    // projected in place: {sx, sy, z}; flag 1 = in front of the near plane (not projected)
+    if super::shadows::enabled() {
+        super::shadows::camera();
+    }
+    if super::ao::depth_wanted() {
+        for i in 0..n.max(0) as u32 {
+            if m.rd8(flags + i) != 1 {
+                let a = p + 8 * i;
+                super::ao::point(m.rd16(a) as i16, m.rd16(a + 2) as i16, m.rd16(a + 4) as i16);
+            }
+        }
+    }
 }
 
 /// 0x452fd0(p, r): is the sphere at camera-space p {x, y, z} (s32) with radius r inside the
 /// 4:3 view? Terrain blocks and cells are culled with it (0x452a20).
 pub fn terrain_visible(c: &mut Cpu) {
+    if super::shadows::enabled() {
+        super::shadows::camera();
+    }
     if k() == 1.0 {
         return call_original(c, TERRAIN_VISIBLE.at());
     }

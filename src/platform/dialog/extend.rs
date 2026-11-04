@@ -90,6 +90,15 @@ const PS_COLORS: u32 = FIRST_OURS + 17;
 const PS_SHADING: u32 = FIRST_OURS + 18;
 const LIGHT_ROW: i32 = 12;
 const LIGHT_ROWS: i32 = 3 * LIGHT_ROW;
+/// The Advanced Graphics dialog (ours, no game procedure: `template`) for the new effects
+/// (PLAN.md 2a), opened by the button below the lighting boxes in the 3DFX Options group.
+pub const ADVANCED: u32 = FIRST_OURS;
+const ADVANCED_BUTTON: u32 = FIRST_OURS + 19;
+/// how much taller the 3DFX Options group gets for the button
+const ADVANCED_ROWS: i32 = 16;
+const AMBIENT_OCCLUSION: u32 = FIRST_OURS + 20;
+const DYNAMIC_LIGHTS: u32 = FIRST_OURS + 21;
+const SHADOWS: u32 = FIRST_OURS + 22;
 /// The Controller dialog's "Player1" / "Player2 " titles.
 const PLAYER_TITLES: [u32; 2] = [1025, 1154];
 
@@ -127,6 +136,8 @@ pub enum After {
     Call(u32, Vec<u32>),
     /// open the Controller dialog on the gamepad's bindings
     Gamepad,
+    /// open one of our own dialogs (`template`)
+    Ours(u32),
 }
 
 const VISIBLE: u32 = 0x1000_0000;
@@ -134,6 +145,22 @@ const TABSTOP: u32 = 0x0001_0000;
 
 /// The renderers a player can choose (the registry's `Group` value of the game's key).
 const RENDERERS: &[&str] = &["Software", "3Dfx"];
+
+/// One of our own dialogs, built here instead of from the EXE's resources.
+pub fn template(id: u32) -> Template {
+    debug_assert_eq!(id, ADVANCED);
+    let w = 190;
+    let mut items = Vec::new();
+    let mut add = |class, id, text: &str, style, rect| items.push(Item { class, id, text: text.into(), style: VISIBLE | style, ex_style: 0, rect });
+    // the new effects, a box each (PLAN.md 2a)
+    add(Class::Button, AMBIENT_OCCLUSION, "Ambient Occlusion", TABSTOP | 3, [7, 10, w - 14, 9]);
+    add(Class::Button, DYNAMIC_LIGHTS, "Dynamic Lights", TABSTOP | 3, [7, 22, w - 14, 9]);
+    add(Class::Button, SHADOWS, "Shadows", TABSTOP | 3, [7, 34, w - 14, 9]);
+    // OK (1, the default) and Cancel (2), bottom right
+    add(Class::Button, 1, "OK", TABSTOP | 1, [w - 116, 54, 50, 14]);
+    add(Class::Button, 2, "Cancel", TABSTOP, [w - 57, 54, 50, 14]);
+    Template { style: 0x00c0_0000, title: "Advanced Graphics".into(), rect: [0, 0, w, 74], font: None, items }
+}
 
 fn renderer() -> String {
     advapi32::value("", "Group")
@@ -201,16 +228,17 @@ pub fn adjust(template: u32, t: &mut Template) {
                 t.items.push(item);
             }
         }
-        // the 3DFX Options group three rows taller for our lighting boxes, OK and Cancel down
+        // the 3DFX Options group taller for our lighting boxes and the Advanced Graphics
+        // button, OK and Cancel down
         if t.items.iter().any(|i| i.id == GAMMA) {
             for i in t.items.iter_mut() {
                 if i.id == OPTIONS_GROUP {
-                    i.rect[3] += LIGHT_ROWS;
+                    i.rect[3] += LIGHT_ROWS + ADVANCED_ROWS;
                 } else if i.id == OK || i.id == CANCEL {
-                    i.rect[1] += LIGHT_ROWS;
+                    i.rect[1] += LIGHT_ROWS + ADVANCED_ROWS;
                 }
             }
-            t.rect[3] += LIGHT_ROWS;
+            t.rect[3] += LIGHT_ROWS + ADVANCED_ROWS;
         }
         let place = |id: u32| t.items.iter().find(|i| i.id == id).map(|i| i.rect);
         let (Some(label), Some(combo)) = (place(PROCESSOR_LABEL), place(PROCESSOR_COMBO)) else { return };
@@ -244,6 +272,11 @@ pub fn adjust(template: u32, t: &mut Template) {
             for (k, (id, text)) in [(COLORING, "Texture Coloring"), (PS_COLORS, "PlayStation Colors"), (PS_SHADING, "PlayStation Shading")].into_iter().enumerate() {
                 let rect = [g[0], g[1] + g[3] + LIGHT_ROW - 1 + LIGHT_ROW * k as i32, 128, 9];
                 t.items.push(Item { class: Class::Button, id, text: text.into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect });
+            }
+            // below them, as wide as the group
+            if let Some(o) = group {
+                let rect = [g[0], g[1] + g[3] + LIGHT_ROW - 1 + LIGHT_ROWS, o[0] + o[2] - 7 - g[0], 13];
+                t.items.push(Item { class: Class::Button, id: ADVANCED_BUTTON, text: "Advanced Graphics...".into(), style: VISIBLE | TABSTOP, ex_style: 0, rect });
             }
         }
         if let Some(g) = group {
@@ -289,6 +322,17 @@ pub fn init(d: &mut Dialog) {
             }
         }
     }
+    if d.template == ADVANCED {
+        if let Some(c) = d.control(AMBIENT_OCCLUSION) {
+            c.check = crate::platform::ao::enabled() as u32;
+        }
+        if let Some(c) = d.control(DYNAMIC_LIGHTS) {
+            c.check = crate::platform::lights::enabled() as u32;
+        }
+        if let Some(c) = d.control(SHADOWS) {
+            c.check = crate::platform::shadows::enabled() as u32;
+        }
+    }
     if d.template == JOIN {
         if let Some(c) = d.control(ADDRESS) {
             c.text = saved_address();
@@ -324,6 +368,9 @@ pub fn init(d: &mut Dialog) {
                 c.check = on as u32;
                 c.visible = glide;
             }
+        }
+        if let Some(c) = d.control(ADVANCED_BUTTON) {
+            c.visible = glide;
         }
         // with Glide the game's resolution does not matter (we draw at ours): its list makes way
         if let Some(c) = d.control(DISPLAY_MODE) {
@@ -411,6 +458,7 @@ pub fn command(d: &mut Dialog, id: u32) -> Option<After> {
     use crate::platform::dinput;
     match id {
         DISPLAY => Some(After::Open(PREFERENCES, PREFERENCES_PROC.at())),
+        ADVANCED_BUTTON => Some(After::Ours(ADVANCED)),
         GAMEPAD => Some(After::Gamepad),
         XBOX => {
             // as the game's profile buttons: show its bindings, remember the choice
@@ -499,6 +547,17 @@ pub fn ok(d: &mut Dialog) {
         if let Some(pos) = gamma {
             let at = |a: u32| f64::from_bits(mem().rd32(a) as u64 | (mem().rd32(a + 4) as u64) << 32);
             crate::platform::glide::set_gamma((pos as f64 * at(GAMMA_SCALE.at()) - at(GAMMA_BASE.at())) as f32);
+        }
+    }
+    if d.template == ADVANCED {
+        if let Some(on) = d.control(AMBIENT_OCCLUSION).map(|c| c.check != 0) {
+            crate::platform::ao::set_enabled(on);
+        }
+        if let Some(on) = d.control(DYNAMIC_LIGHTS).map(|c| c.check != 0) {
+            crate::platform::lights::set_enabled(on);
+        }
+        if let Some(on) = d.control(SHADOWS).map(|c| c.check != 0) {
+            crate::platform::shadows::set_enabled(on);
         }
     }
 }
