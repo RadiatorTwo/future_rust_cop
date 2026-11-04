@@ -261,11 +261,16 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   after), and flat grey textured records (kinds 0x00/0x10/0x20: brightness from the
   shade-table pointer +0x10 less [[0x50dc20 + 4 * page] + 0x30], >> 6) become Gouraud records
   (0x40) with it; put back after. Record colours: 4 bytes per vertex at +0x18 (grey, r, g,
-  b); kind = type & 0x70, 0x80 textured. PlayStation Lighting (REG_DWORD
-  `PlayStationLighting`, default on; `FCOP_PS_LIGHTING=0/1`): the game's Glide gamma is
-  slider * 0.01 + 1.25, so Min was already 1.25 and Glide much brighter in the shadows than
-  the PlayStation and the software renderer; on, frames are shown with it 0.25 lower (Min =
-  1.0: the first mission's start then matches the software renderer, mean 39.6 vs 37.5).
+  b); kind = type & 0x70, 0x80 textured. PlayStation Colors (REG_DWORD
+  `PlayStationColors`, default on; `FCOP_PS_COLORS=0/1`): the PC version recoloured only the
+  first mission's (M2C) 10 texture pages (darker, yellower; every other mission's pages are
+  the PlayStation's within rounding, ConFt pages 6/10 differ in content); `M2C_TO_PS`, a
+  3x3 matrix + offset fitted to PC/PS1 texels, recolours whole downloads whose hash is one of
+  M2C's pages (hashed from the player's `missions/M2C`), black kept. The game's own gamma
+  then matches the PS1's brightness (an earlier "PlayStation Lighting" that lowered the gamma
+  made it darker than the PS1: dropped). PS1 disc: `CW/*.MIS`, `PA/*.MIS`, same chunk
+  format; its `Cbmp` holds `PDAT` (256x256 8-bit indices) and `PLUT` (12-byte header, 256
+  PS1 colours, red in the low bits) instead of `PX16`.
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
   projections (0x453740 terrain vertex, 0x457340 object points, 0x457140 sprites) and the
   sphere view tests (0x452fd0 terrain cells, 0x4572a0 objects); target markers (0x435330,

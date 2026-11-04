@@ -925,8 +925,9 @@ impl Glide {
                 return;
             }
             let n = ((r1 - r0 + 1) * w) as usize;
-            let px = convert(format, data, n);
+            let mut px = convert(format, data, n);
             let key = super::hd::hash(format, w, r1 - r0 + 1, mem().slice(data, n * bytes_per_texel(format) as usize));
+            super::light::recolour(key, &mut px);
             // as a replacement has it: alpha 0 where keyed out
             let original: Vec<u8> = px.chunks(4).flat_map(|p| [p[0], p[1], p[2], if p[..3] == [0, 0, 0] { 0 } else { 255 }]).collect();
             super::hd::dump(key, w, r1 - r0 + 1, &original);
@@ -1091,7 +1092,7 @@ fn buffer_swap(_: &mut Cpu) -> u32 {
     let shown = with(|g, gl| {
         g.flush(gl);
         g.resolve(gl);
-        (g.color, g.target, super::light::gamma(g.gamma))
+        (g.color, g.target, g.gamma)
     });
     if let Some((tex, (w, h), gamma)) = shown {
         super::window::show_texture(tex, w, h, gamma);

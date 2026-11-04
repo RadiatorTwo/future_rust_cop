@@ -1,4 +1,4 @@
-//! The PlayStation's look for Glide: texture colouring and lighting.
+//! The PlayStation's look for Glide: texture coloring and colours.
 //!
 //! Texture coloring: light brighter than the texture itself.
 //! Like the PlayStation, the game lights a textured polygon with a byte per colour where 0x80
@@ -25,15 +25,21 @@
 //! REG_DWORD `TextureColoring` in the game's key: 1 on (default), 0 the game's clamp;
 //! `FCOP_COLORING=0/1` overrides it.
 //!
-//! PlayStation lighting: the game shows Glide with gamma = slider * 0.01 + 1.25 (0x43a540,
-//! [0x484678], [0x484680]): even at Min 1.25, a third brighter in the shadows than the
-//! PlayStation and the software renderer (measured at the first mission's start: with 1.0
-//! Glide's picture matches the software renderer's brightness). On, the shown gamma is 0.25
-//! lower: Min is the PlayStation's 1.0, the slider brightens from there. REG_DWORD
-//! `PlayStationLighting` (default on), `FCOP_PS_LIGHTING=0/1`.
+//! PlayStation colors: the PC version recoloured one mission's textures, the first (`M2C`):
+//! all 10 pages darker, yellower and more saturated than the PlayStation's (mean difference
+//! 9...17 of 255 a page; every other mission's pages are the PlayStation's within 1...5, its
+//! rounding; ConFt's pages 6 and 10 differ in content, not colour). A colour matrix fitted to
+//! the two (least squares over all M2C texels) brings them within ~6 (the floor is ~3):
+//! `M2C_TO_PS`. Its pages are known by their hashes, computed from the player's `missions/M2C`
+//! when Glide first downloads; whole downloads of them are recoloured (black stays black: it
+//! is keyed out). Seen from the next mission start on. REG_DWORD `PlayStationColors` (default
+//! on), `FCOP_PS_COLORS=0/1`. With them the game's own gamma (slider * 0.01 + 1.25) matches the
+//! PlayStation's brightness (measured at M2C's start: mean 63, 63, 48 against 62, 60, 47).
 
 use crate::ver::Us;
 use super::{advapi32, mem};
+use std::collections::HashSet;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 /// The walker's four `cmp eax, 0xff` (imm32 at +1) of the Gouraud colour bytes.
@@ -46,9 +52,15 @@ const TEXTURES: Us = Us(0x50dc20);
 /// Record +7 up to this is a texture page (beyond: the walker's special cases).
 const LAST_PAGE: u8 = 0xc;
 
-/// The game's lowest Glide gamma (slider at Min), and the PlayStation's.
-const GAME_GAMMA_MIN: f32 = 1.25;
-const PS_GAMMA: f32 = 1.0;
+/// PC M2C texel -> PlayStation colour: per output channel r, g, b the weights of r, g, b
+/// (0...1) and an offset.
+const M2C_TO_PS: [[f32; 4]; 3] = [
+    [0.9362, 0.1643, 0.1087, -0.0011],
+    [0.0857, 1.0441, 0.1013, -0.0091],
+    [0.0899, 0.1432, 1.0376, -0.0023],
+];
+/// The mission whose pages are recoloured.
+const RECOLOURED: &str = "M2C";
 
 /// An on/off setting: a REG_DWORD in the game's key (default on), an environment variable
 /// over it; 0 off, 1 on, 2 not read yet.
@@ -84,7 +96,7 @@ impl Setting {
 }
 
 static COLORING: Setting = Setting::new("TextureColoring", "FCOP_COLORING");
-static PS_LIGHTING: Setting = Setting::new("PlayStationLighting", "FCOP_PS_LIGHTING");
+static PS_COLORS: Setting = Setting::new("PlayStationColors", "FCOP_PS_COLORS");
 
 pub fn coloring() -> bool {
     COLORING.get()
@@ -94,17 +106,53 @@ pub fn set_coloring(on: bool) {
     COLORING.set(on);
 }
 
-pub fn ps_lighting() -> bool {
-    PS_LIGHTING.get()
+pub fn ps_colors() -> bool {
+    PS_COLORS.get()
 }
 
-pub fn set_ps_lighting(on: bool) {
-    PS_LIGHTING.set(on);
+pub fn set_ps_colors(on: bool) {
+    PS_COLORS.set(on);
 }
 
-/// The gamma to show a Glide frame with, from the one the game set.
-pub fn gamma(game: f32) -> f32 {
-    if ps_lighting() { (game - (GAME_GAMMA_MIN - PS_GAMMA)).max(0.1) } else { game }
+/// The hashes of the recoloured mission's pages (`hd::hash` of a whole download).
+fn recoloured_pages() -> &'static HashSet<u64> {
+    static PAGES: OnceLock<HashSet<u64>> = OnceLock::new();
+    PAGES.get_or_init(|| {
+        let file = std::fs::read_dir(super::game_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .find(|e| e.file_name().eq_ignore_ascii_case("missions"))
+            .and_then(|d| std::fs::read_dir(d.path()).ok())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .find(|e| e.file_name().eq_ignore_ascii_case(RECOLOURED));
+        let Some(data) = file.and_then(|f| std::fs::read(f.path()).ok()) else { return HashSet::new() };
+        crate::mission::load(&data)
+            .pages
+            .values()
+            .map(|texels| super::hd::hash(0xb, 256, 256, &texels.iter().flat_map(|t| t.to_le_bytes()).collect::<Vec<u8>>()))
+            .collect()
+    })
+}
+
+/// A download's texels (RGBA8, `key` its hash) in the PlayStation's colours, where they differ.
+pub fn recolour(key: u64, rgba: &mut [u8]) {
+    if !ps_colors() || !recoloured_pages().contains(&key) {
+        return;
+    }
+    for p in rgba.chunks_mut(4) {
+        if p[..3] == [0, 0, 0] {
+            continue;
+        }
+        let c = [p[0], p[1], p[2]].map(|v| v as f32 / 255.0);
+        let out = M2C_TO_PS.map(|m| ((m[0] * c[0] + m[1] * c[1] + m[2] * c[2] + m[3]).clamp(0.0, 1.0) * 255.0).round() as u8);
+        // black would be keyed out
+        if out != [0, 0, 0] {
+            p[..3].copy_from_slice(&out);
+        }
+    }
 }
 
 /// What `begin` changed in the records.
