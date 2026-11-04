@@ -23,6 +23,7 @@ pub mod gl;
 pub mod glide;
 pub mod hd;
 pub mod kernel32;
+pub mod light;
 pub mod menupad;
 pub mod misc;
 pub mod record;

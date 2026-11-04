@@ -31,6 +31,8 @@
 0x411490  display_buckets_clear
 0x4393e0  glide_walker            display list to Glide triangles (hooked: walker.rs)
 0x4393d0  glide_swap              grBufferSwap(1)
+0x456270  thrash_walker           display list to THRASH (D3D) primitives; colours doubled and clamped at 255 as in glide_walker
+0x50dc20  textures                pointers by record +7 (page); +0x30 the base its shade-table pointers (record +0x10) count from (light.rs)
 0x42dd90  objects_draw            effects (effects_draw), lists at 0x4a1380 / 0x4a1378, animated objects
 0x4532f0  actors_draw             sends message 3 (draw) to every actor
 0x4280a0  model_draw              (record: +0 model, +4 matrix 3x3, +0x28 position; flags; mode)

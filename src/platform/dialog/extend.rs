@@ -84,6 +84,9 @@ const PAD_PROFILES: [u32; 2] = [1131, GRAVIS];
 /// Our "Gamepad" buttons (Preferences, beside Controller Configuration; the pause bar, beside
 /// Controls): the Controller dialog on the gamepad's own bindings (`gamepad.rs`).
 const GAMEPAD: u32 = FIRST_OURS + 15;
+/// Below the gamma slider in the 3DFX Options group (`light.rs`).
+const LIGHTING: u32 = FIRST_OURS + 16;
+const LIGHTING_ROW: i32 = 12;
 /// The Controller dialog's "Player1" / "Player2 " titles.
 const PLAYER_TITLES: [u32; 2] = [1025, 1154];
 
@@ -195,12 +198,24 @@ pub fn adjust(template: u32, t: &mut Template) {
                 t.items.push(item);
             }
         }
+        // the 3DFX Options group a row taller for our lighting box, OK and Cancel down
+        if t.items.iter().any(|i| i.id == GAMMA) {
+            for i in t.items.iter_mut() {
+                if i.id == OPTIONS_GROUP {
+                    i.rect[3] += LIGHTING_ROW;
+                } else if i.id == OK || i.id == CANCEL {
+                    i.rect[1] += LIGHTING_ROW;
+                }
+            }
+            t.rect[3] += LIGHTING_ROW;
+        }
         let place = |id: u32| t.items.iter().find(|i| i.id == id).map(|i| i.rect);
         let (Some(label), Some(combo)) = (place(PROCESSOR_LABEL), place(PROCESSOR_COMBO)) else { return };
         let filtering = place(FILTERING);
         let display_mode = place(DISPLAY_MODE);
         let game_fullscreen = place(GAME_FULLSCREEN);
         let group = place(OPTIONS_GROUP);
+        let gamma = place(GAMMA);
         // wider than the game's label: up to the 3DFX Options group (x 132)
         if !paused {
             t.items.push(Item { class: Class::Static, id: RENDERER_LABEL, text: "Renderer (needs restart)".into(), style: VISIBLE, ex_style: 0, rect: [label[0], label[1], 122, label[3]] });
@@ -220,6 +235,11 @@ pub fn adjust(template: u32, t: &mut Template) {
             // an auto check box (BS_AUTOCHECKBOX) right of Filtering
             let rect = [f[0] + 58, f[1], 70, f[3]];
             t.items.push(Item { class: Class::Button, id: WIDESCREEN, text: "Widescreen".into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect });
+        }
+        if let Some(g) = gamma {
+            // below the gamma slider and its Min/Max, in the group's new row
+            let rect = [g[0], g[1] + g[3] + LIGHTING_ROW - 1, 128, 9];
+            t.items.push(Item { class: Class::Button, id: LIGHTING, text: "PlayStation Lighting".into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect });
         }
         if let Some(g) = group {
             // between the group and the OK button's row, the combos up to the group's right
@@ -292,6 +312,10 @@ pub fn init(d: &mut Dialog) {
         let glide = d.control(FILTERING).is_some_and(|c| c.visible);
         if let Some(c) = d.control(WIDESCREEN) {
             c.check = crate::platform::wide::enabled() as u32;
+            c.visible = glide;
+        }
+        if let Some(c) = d.control(LIGHTING) {
+            c.check = crate::platform::light::enabled() as u32;
             c.visible = glide;
         }
         // with Glide the game's resolution does not matter (we draw at ours): its list makes way
@@ -450,6 +474,9 @@ pub fn ok(d: &mut Dialog) {
         }
         if let Some(on) = d.control(WIDESCREEN).map(|c| c.check != 0) {
             crate::platform::wide::set_enabled(on);
+        }
+        if let Some(on) = d.control(LIGHTING).filter(|c| c.visible).map(|c| c.check != 0) {
+            crate::platform::light::set_enabled(on);
         }
         // the game's gamma takes effect at once (the game sets it only when Glide starts)
         let gamma = d.control(GAMMA).filter(|c| c.visible).and_then(|c| match c.kind {

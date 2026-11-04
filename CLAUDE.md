@@ -252,6 +252,16 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   header). Precise mode points the resolution's jump table entry (0x43a168) at the plain
   path 0x4397cd, so vertices arrive in 2560x1920 units; text (type 6, game pixels) is drawn in
   its own calls; `glide::set_space` tells the renderer which space. `FCOP_PRECISE=0` off.
+- `light.rs`: PlayStation lighting (REG_DWORD `Lighting`, default on; `FCOP_LIGHT=0/1`; box
+  "PlayStation Lighting" below the gamma slider, the 3DFX Options group a row taller). A
+  textured polygon's colour byte 0x80 = texture as it is, up to 2x brighter; the Glide walker
+  clamped at 1.0. For the 3D picture's walk (pass 0, not the HUD) the four `cmp eax, 0xff` of
+  the Gouraud colours (0x439826 ...; code fields in `smc.rs`, immediate 0x7fffffff while on)
+  let up to 2.0 through to the shader (texture times colour, clamped after), and flat grey
+  textured records (kinds 0x00/0x10/0x20: brightness from the shade-table pointer +0x10 less
+  [[0x50dc20 + 4 * page] + 0x30], >> 6) become Gouraud records (0x40) with it; put back after.
+  Record colours: 4 bytes per vertex at +0x18 (grey, r, g, b); kind = type & 0x70, 0x80
+  textured.
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
   projections (0x453740 terrain vertex, 0x457340 object points, 0x457140 sprites) and the
   sphere view tests (0x452fd0 terrain cells, 0x4572a0 objects); target markers (0x435330,
