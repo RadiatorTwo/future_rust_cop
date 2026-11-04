@@ -149,12 +149,16 @@ pub fn draw_glide(c: &mut Cpu) {
             }
             m.wr32(last, 0);
             let mut first = first.at;
+            // the x the plain path adds to the units (a quarter of the origin it reads, which
+            // is 4 times the record's): the view's origin
+            let mut origin = 0.0;
             for k in ctls.iter().rev() {
                 m.wr32(k.at, first);
                 first = k.at;
                 if m.rd8(k.at + 4) & 0x10 != 0 {
                     let x = if text { k.x as i32 * gw as i32 / 640 } else { k.x as i32 * 4 };
                     m.wr16(k.at + 0x28, x as u16);
+                    origin = x as f32;
                 }
             }
             glide::set_space(Some(if text { (gw, gh) } else { (2560, 1920) }));
@@ -163,12 +167,21 @@ pub fn draw_glide(c: &mut Cpu) {
                 let mine = recs.iter().filter(|r| r.pass == 0 && !r.text);
                 light::begin(mine.map(|r| (r.at, if r.kind >= 5 { 4 } else { r.kind as u32 })))
             });
+            // the 3D picture writes the depth for the ambient occlusion, applied before the HUD
+            let world = pass == 0 && !text;
+            if world {
+                glide::set_gbuffer(Some(origin));
+            }
             // each call pushes the return address back (the walker's ret popped it)
             c.r[ESP] = sp;
             m.wr32(sp + 4, first);
             call_original(c, GLIDE_WALKER.at());
             if let Some(Some(l)) = lit {
                 light::end(l);
+            }
+            if world {
+                glide::set_gbuffer(None);
+                glide::post_3d();
             }
             if c.stop != 0 {
                 break 'passes;
