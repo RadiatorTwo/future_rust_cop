@@ -87,8 +87,9 @@ const GAMEPAD: u32 = FIRST_OURS + 15;
 /// Below the gamma slider in the 3DFX Options group, a row each (`light.rs`).
 const COLORING: u32 = FIRST_OURS + 16;
 const PS_COLORS: u32 = FIRST_OURS + 17;
+const SW_SHADING: u32 = FIRST_OURS + 18;
 const LIGHT_ROW: i32 = 12;
-const LIGHT_ROWS: i32 = 2 * LIGHT_ROW;
+const LIGHT_ROWS: i32 = 3 * LIGHT_ROW;
 /// The Controller dialog's "Player1" / "Player2 " titles.
 const PLAYER_TITLES: [u32; 2] = [1025, 1154];
 
@@ -200,7 +201,7 @@ pub fn adjust(template: u32, t: &mut Template) {
                 t.items.push(item);
             }
         }
-        // the 3DFX Options group two rows taller for our lighting boxes, OK and Cancel down
+        // the 3DFX Options group three rows taller for our lighting boxes, OK and Cancel down
         if t.items.iter().any(|i| i.id == GAMMA) {
             for i in t.items.iter_mut() {
                 if i.id == OPTIONS_GROUP {
@@ -240,7 +241,7 @@ pub fn adjust(template: u32, t: &mut Template) {
         }
         if let Some(g) = gamma {
             // below the gamma slider and its Min/Max, in the group's new rows
-            for (k, (id, text)) in [(COLORING, "Texture Coloring"), (PS_COLORS, "PlayStation Colors")].into_iter().enumerate() {
+            for (k, (id, text)) in [(COLORING, "Texture Coloring"), (PS_COLORS, "PlayStation Colors"), (SW_SHADING, "Software Shading")].into_iter().enumerate() {
                 let rect = [g[0], g[1] + g[3] + LIGHT_ROW - 1 + LIGHT_ROW * k as i32, 128, 9];
                 t.items.push(Item { class: Class::Button, id, text: text.into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect });
             }
@@ -318,7 +319,7 @@ pub fn init(d: &mut Dialog) {
             c.check = crate::platform::wide::enabled() as u32;
             c.visible = glide;
         }
-        for (id, on) in [(COLORING, crate::platform::light::coloring()), (PS_COLORS, crate::platform::light::ps_colors())] {
+        for (id, on) in [(COLORING, crate::platform::light::coloring()), (PS_COLORS, crate::platform::light::ps_colors()), (SW_SHADING, crate::platform::light::software_shading())] {
             if let Some(c) = d.control(id) {
                 c.check = on as u32;
                 c.visible = glide;
@@ -486,6 +487,9 @@ pub fn ok(d: &mut Dialog) {
         }
         if let Some(on) = d.control(PS_COLORS).filter(|c| c.visible).map(|c| c.check != 0) {
             crate::platform::light::set_ps_colors(on);
+        }
+        if let Some(on) = d.control(SW_SHADING).filter(|c| c.visible).map(|c| c.check != 0) {
+            crate::platform::light::set_software_shading(on);
         }
         // the game's gamma takes effect at once (the game sets it only when Glide starts)
         let gamma = d.control(GAMMA).filter(|c| c.visible).and_then(|c| match c.kind {

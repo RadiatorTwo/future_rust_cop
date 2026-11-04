@@ -98,6 +98,11 @@ Next:
     compared with the user's PS1 screenshot and disc): only M2C's textures were recoloured
     for the PC; a fitted colour matrix gives them the PS1's colours (mean 65, 64, 47 against
     the PS1's 62, 60, 47 at M2C's start; the floor still a little brighter than the PS1's)
+  - Software Shading: the software renderer's contrast (the user: it looks right, 3Dfx
+    "not remotely"). The game's Glide gamma starts at 1.25; shown 0.25 lower, Glide's blocks
+    are the software renderer's brightness in dark and bright places alike. Left: texture
+    filtering (block contrast 8.7 against 10.2, 9.8 with the game's Filtering box off). The
+    robot's shadow (solid in software, a soft blob in Glide) was not it (user)
 - [x] Split screen (Crime War): both players share one health bar and die together: the
       original's design (Precinct Assault has separate bars; checked by the user)
 - [ ] Widescreen with the software renderer (not planned yet: Glide is the default)

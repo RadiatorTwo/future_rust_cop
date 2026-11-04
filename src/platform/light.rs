@@ -33,8 +33,19 @@
 //! `M2C_TO_PS`. Its pages are known by their hashes, computed from the player's `missions/M2C`
 //! when Glide first downloads; whole downloads of them are recoloured (black stays black: it
 //! is keyed out). Seen from the next mission start on. REG_DWORD `PlayStationColors` (default
-//! on), `FCOP_PS_COLORS=0/1`. With them the game's own gamma (slider * 0.01 + 1.25) matches the
-//! PlayStation's brightness (measured at M2C's start: mean 63, 63, 48 against 62, 60, 47).
+//! on), `FCOP_PS_COLORS=0/1`. With PS1 textures and the game's own gamma the mean brightness was
+//! the user's PS1 screenshot's (63, 63, 48 against 62, 60, 47), but the user finds the
+//! software renderer's contrast right (Software Shading below).
+
+//! Software Shading: the software renderer's contrast. The game shows Glide with gamma =
+//! slider * 0.01 + 1.25 (0x43a540, [0x484678], [0x484680]), so 1.25 even at Min; the software
+//! renderer has none (1.0), and its shadows and dark places are that much darker (measured at
+//! M2C's start, 32x32 blocks against the software renderer's: with 1.25 the software one has
+//! 0.55 of Glide's brightness in the dark ones, 0.75 in the bright ones; with 1.0 0.9...1.0
+//! throughout, mean 39.2 against 36.8). On, the shown gamma is 0.25 lower (Min = 1.0), the
+//! slider brightens from there. REG_DWORD `SoftwareShading` (default on),
+//! `FCOP_SW_SHADING=0/1`. The rest of the difference is texture filtering (block contrast 8.7
+//! against 10.2; 9.8 with the game's Filtering box off).
 
 use crate::ver::Us;
 use super::{advapi32, mem};
@@ -97,6 +108,7 @@ impl Setting {
 
 static COLORING: Setting = Setting::new("TextureColoring", "FCOP_COLORING");
 static PS_COLORS: Setting = Setting::new("PlayStationColors", "FCOP_PS_COLORS");
+static SW_SHADING: Setting = Setting::new("SoftwareShading", "FCOP_SW_SHADING");
 
 pub fn coloring() -> bool {
     COLORING.get()
@@ -104,6 +116,23 @@ pub fn coloring() -> bool {
 
 pub fn set_coloring(on: bool) {
     COLORING.set(on);
+}
+
+pub fn software_shading() -> bool {
+    SW_SHADING.get()
+}
+
+pub fn set_software_shading(on: bool) {
+    SW_SHADING.set(on);
+}
+
+/// The game's lowest Glide gamma (slider at Min) and the software renderer's.
+const GAME_GAMMA_MIN: f32 = 1.25;
+const SOFTWARE_GAMMA: f32 = 1.0;
+
+/// The gamma to show a Glide frame with, from the one the game set.
+pub fn gamma(game: f32) -> f32 {
+    if software_shading() { (game - (GAME_GAMMA_MIN - SOFTWARE_GAMMA)).max(0.1) } else { game }
 }
 
 pub fn ps_colors() -> bool {

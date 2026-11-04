@@ -252,7 +252,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   header). Precise mode points the resolution's jump table entry (0x43a168) at the plain
   path 0x4397cd, so vertices arrive in 2560x1920 units; text (type 6, game pixels) is drawn in
   its own calls; `glide::set_space` tells the renderer which space. `FCOP_PRECISE=0` off.
-- `light.rs`: two settings, boxes below the gamma slider (the 3DFX Options group two rows
+- `light.rs`: three settings, boxes below the gamma slider (the 3DFX Options group three rows
   taller). Texture Coloring (REG_DWORD `TextureColoring`, default on; `FCOP_COLORING=0/1`):
   a textured polygon's colour byte 0x80 = texture as it is, up to 2x brighter; the Glide
   walker clamped at 1.0. For the 3D picture's walk (pass 0, not the HUD) the four
@@ -266,9 +266,12 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   first mission's (M2C) 10 texture pages (darker, yellower; every other mission's pages are
   the PlayStation's within rounding, ConFt pages 6/10 differ in content); `M2C_TO_PS`, a
   3x3 matrix + offset fitted to PC/PS1 texels, recolours whole downloads whose hash is one of
-  M2C's pages (hashed from the player's `missions/M2C`), black kept. The game's own gamma
-  then matches the PS1's brightness (an earlier "PlayStation Lighting" that lowered the gamma
-  made it darker than the PS1: dropped). PS1 disc: `CW/*.MIS`, `PA/*.MIS`, same chunk
+  M2C's pages (hashed from the player's `missions/M2C`), black kept. Software Shading (REG_DWORD `SoftwareShading`, default on;
+  `FCOP_SW_SHADING=0/1`): the game's Glide gamma is slider * 0.01 + 1.25 (1.25 at Min), the
+  software renderer has none; frames shown 0.25 lower match its contrast (measured in 32x32
+  blocks: dark and bright alike within 0.9...1.0, before 0.55 dark / 0.75 bright). The
+  user's reference is the software renderer. Comparing with it: `Group` in registry.txt (the
+  user switches it) decides which renderer a test runs, set it and put it back. PS1 disc: `CW/*.MIS`, `PA/*.MIS`, same chunk
   format; its `Cbmp` holds `PDAT` (256x256 8-bit indices) and `PLUT` (12-byte header, 256
   PS1 colours, red in the low bits) instead of `PX16`.
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
