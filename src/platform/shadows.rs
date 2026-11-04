@@ -84,9 +84,10 @@ pub fn next_view() -> [f32; 3] {
 }
 
 /// GLSL after `ao::COMMON`: how much of the way from p (normal n) toward `dir` (view space,
-/// unit) over `len` units is blocked, 0...1; `j` a jitter 0...1.
+/// unit) over `len` units is blocked, 0...1; `j` a jitter 0...1; blockers past `fade` of the way
+/// block less toward its end (1: never less).
 pub const GLSL: &str = r#"
-float shadow(vec3 p, vec3 n, vec3 dir, float len, float j, int steps) {
+float shadow(vec3 p, vec3 n, vec3 dir, float len, float j, int steps, float fade) {
     float ndl = dot(n, dir);
     // faces turned away are the game's own shading
     if (ndl <= 0.02) return 0.0;
@@ -106,7 +107,7 @@ float shadow(vec3 p, vec3 n, vec3 dir, float len, float j, int steps) {
         float dz = s.z - zs;
         if (dz > 0.003 * s.z + 2.0 && dz < thick) {
             // softer toward the shadow's end
-            return 1.0 - smoothstep(0.6, 1.0, f);
+            return f < fade ? 1.0 : 1.0 - smoothstep(fade, 1.0, f);
         }
     }
     return 0.0;

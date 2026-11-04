@@ -330,7 +330,7 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
 
 - [x] Done 2026-11-04 (`shadows.rs`): sun shadows in the AO's half-resolution pass (16 steps,
       900 units, thickness max(220, 2% of z), 45% darker, blurred and applied with the AO), the
-      strongest 4 dynamic lights blocked in the lights' pass (12 steps). Sun toward (0.45, 1,
+      strongest 8 dynamic lights blocked in the lights' pass (16 steps, fully, not faded toward the light). Sun toward (0.45, 1,
       -0.3) in the world, turned by the camera's matrix +0x58 (rows right / up / forward,
       16.16), noted per view by the projection hooks. One box "Shadows" (REG_DWORD `Shadows`,
       default off, `FCOP_SHADOWS=0/1`, `FCOP_GBUFFER=shadows`). Checked at the M2C start: the

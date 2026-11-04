@@ -41,7 +41,7 @@ const STRENGTH: f32 = 1.6;
 /// And plus this much of it, as if every surface were at least this bright.
 const ADDED: f32 = 0.12;
 /// With shadows on: the strongest this many lights cast them.
-const SHADOWED: i32 = 4;
+const SHADOWED: i32 = 8;
 
 /// A light: where (target pixels from the bottom left, z), its colour (0...1, times its
 /// strength) and its size in the world (object units).
@@ -194,7 +194,7 @@ void main() {
             // mostly by the angle, a little all round (the normals are rough)
             float ndl = d > 0.0 ? max(dot(n, l / d), 0.0) : 1.0;
             // blocked on its way (not near the light: what holds it)
-            if (i < shadowed && d > 0.15 * r) a *= 1.0 - 0.85 * shadow(p, n, l / d, d - 0.12 * r, ign, 12);
+            if (i < shadowed && d > 0.1 * r) a *= 1.0 - shadow(p, n, l / d, d - 0.08 * r, ign, 16, 1.0);
             sum += lcol[i] * a * (0.2 + 0.8 * ndl);
         }
         sum *= strength * (1.0 - clamp(g.g, 0.0, 1.0));
