@@ -252,6 +252,28 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   header). Precise mode points the resolution's jump table entry (0x43a168) at the plain
   path 0x4397cd, so vertices arrive in 2560x1920 units; text (type 6, game pixels) is drawn in
   its own calls; `glide::set_space` tells the renderer which space. `FCOP_PRECISE=0` off.
+- `light.rs`: three settings, boxes below the gamma slider (the 3DFX Options group three rows
+  taller). Texture Coloring (REG_DWORD `TextureColoring`, default on; `FCOP_COLORING=0/1`):
+  a textured polygon's colour byte 0x80 = texture as it is, up to 2x brighter; the Glide
+  walker clamped at 1.0. For the 3D picture's walk (pass 0, not the HUD) the four
+  `cmp eax, 0xff` of the Gouraud colours (0x439826 ...; code fields in `smc.rs`, immediate
+  0x7fffffff while on) let up to 2.0 through to the shader (texture times colour, clamped
+  after), and flat grey textured records (kinds 0x00/0x10/0x20: brightness from the
+  shade-table pointer +0x10 less [[0x50dc20 + 4 * page] + 0x30], >> 6) become Gouraud records
+  (0x40) with it; put back after. Record colours: 4 bytes per vertex at +0x18 (grey, r, g,
+  b); kind = type & 0x70, 0x80 textured. PlayStation Colors (REG_DWORD
+  `PlayStationColors`, default on; `FCOP_PS_COLORS=0/1`): the PC version recoloured only the
+  first mission's (M2C) 10 texture pages (darker, yellower; every other mission's pages are
+  the PlayStation's within rounding, ConFt pages 6/10 differ in content); `M2C_TO_PS`, a
+  cubic polynomial in r, g, b fitted to PC/PS1 texels (mean error 5.2 of 255; a matrix 6.2), recolours whole downloads whose hash is one of
+  M2C's pages (hashed from the player's `missions/M2C`), black kept. PlayStation Shading (REG_DWORD `PlayStationShading`, default on;
+  `FCOP_PS_SHADING=0/1`): the game's Glide gamma is slider * 0.01 + 1.25 (1.25 at Min), the
+  software renderer has none; frames shown 0.25 lower match its contrast (measured in 32x32
+  blocks: dark and bright alike within 0.9...1.0, before 0.55 dark / 0.75 bright). The
+  user's reference is the software renderer. Comparing with it: `Group` in registry.txt (the
+  user switches it) decides which renderer a test runs, set it and put it back. PS1 disc: `CW/*.MIS`, `PA/*.MIS`, same chunk
+  format; its `Cbmp` holds `PDAT` (256x256 8-bit indices) and `PLUT` (12-byte header, 256
+  PS1 colours, red in the low bits) instead of `PX16`.
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
   projections (0x453740 terrain vertex, 0x457340 object points, 0x457140 sprites) and the
   sphere view tests (0x452fd0 terrain cells, 0x4572a0 objects); target markers (0x435330,

@@ -81,6 +81,19 @@ impl Smc {
             }
         }
 
+        // ours: the Glide walker's colour clamps, opened for PlayStation lighting (`light.rs`)
+        // (not in the tests' snippets)
+        for c in crate::platform::light::CLAMPS {
+            let a = c.at();
+            if starts.binary_search(&a).is_err() {
+                continue;
+            }
+            let i = code.at(a).unwrap();
+            let co = offsets(code, a);
+            assert!(i.mnemonic() == Mnemonic::Cmp && i.immediate32() == 0xff && co.immediate_size() == 4, "no colour clamp at {a:#x}");
+            smc.imm.insert(a, Field { at: a + co.immediate_offset() as u32, size: 4 });
+        }
+
         // the code as each pixel format's table values leave it
         let images: Vec<HashMap<u32, u8>> = (0..2)
             .map(|k| {

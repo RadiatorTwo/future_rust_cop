@@ -84,6 +84,12 @@ const PAD_PROFILES: [u32; 2] = [1131, GRAVIS];
 /// Our "Gamepad" buttons (Preferences, beside Controller Configuration; the pause bar, beside
 /// Controls): the Controller dialog on the gamepad's own bindings (`gamepad.rs`).
 const GAMEPAD: u32 = FIRST_OURS + 15;
+/// Below the gamma slider in the 3DFX Options group, a row each (`light.rs`).
+const COLORING: u32 = FIRST_OURS + 16;
+const PS_COLORS: u32 = FIRST_OURS + 17;
+const PS_SHADING: u32 = FIRST_OURS + 18;
+const LIGHT_ROW: i32 = 12;
+const LIGHT_ROWS: i32 = 3 * LIGHT_ROW;
 /// The Controller dialog's "Player1" / "Player2 " titles.
 const PLAYER_TITLES: [u32; 2] = [1025, 1154];
 
@@ -195,12 +201,24 @@ pub fn adjust(template: u32, t: &mut Template) {
                 t.items.push(item);
             }
         }
+        // the 3DFX Options group three rows taller for our lighting boxes, OK and Cancel down
+        if t.items.iter().any(|i| i.id == GAMMA) {
+            for i in t.items.iter_mut() {
+                if i.id == OPTIONS_GROUP {
+                    i.rect[3] += LIGHT_ROWS;
+                } else if i.id == OK || i.id == CANCEL {
+                    i.rect[1] += LIGHT_ROWS;
+                }
+            }
+            t.rect[3] += LIGHT_ROWS;
+        }
         let place = |id: u32| t.items.iter().find(|i| i.id == id).map(|i| i.rect);
         let (Some(label), Some(combo)) = (place(PROCESSOR_LABEL), place(PROCESSOR_COMBO)) else { return };
         let filtering = place(FILTERING);
         let display_mode = place(DISPLAY_MODE);
         let game_fullscreen = place(GAME_FULLSCREEN);
         let group = place(OPTIONS_GROUP);
+        let gamma = place(GAMMA);
         // wider than the game's label: up to the 3DFX Options group (x 132)
         if !paused {
             t.items.push(Item { class: Class::Static, id: RENDERER_LABEL, text: "Renderer (needs restart)".into(), style: VISIBLE, ex_style: 0, rect: [label[0], label[1], 122, label[3]] });
@@ -220,6 +238,13 @@ pub fn adjust(template: u32, t: &mut Template) {
             // an auto check box (BS_AUTOCHECKBOX) right of Filtering
             let rect = [f[0] + 58, f[1], 70, f[3]];
             t.items.push(Item { class: Class::Button, id: WIDESCREEN, text: "Widescreen".into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect });
+        }
+        if let Some(g) = gamma {
+            // below the gamma slider and its Min/Max, in the group's new rows
+            for (k, (id, text)) in [(COLORING, "Texture Coloring"), (PS_COLORS, "PlayStation Colors"), (PS_SHADING, "PlayStation Shading")].into_iter().enumerate() {
+                let rect = [g[0], g[1] + g[3] + LIGHT_ROW - 1 + LIGHT_ROW * k as i32, 128, 9];
+                t.items.push(Item { class: Class::Button, id, text: text.into(), style: VISIBLE | TABSTOP | 3, ex_style: 0, rect });
+            }
         }
         if let Some(g) = group {
             // between the group and the OK button's row, the combos up to the group's right
@@ -293,6 +318,12 @@ pub fn init(d: &mut Dialog) {
         if let Some(c) = d.control(WIDESCREEN) {
             c.check = crate::platform::wide::enabled() as u32;
             c.visible = glide;
+        }
+        for (id, on) in [(COLORING, crate::platform::light::coloring()), (PS_COLORS, crate::platform::light::ps_colors()), (PS_SHADING, crate::platform::light::ps_shading())] {
+            if let Some(c) = d.control(id) {
+                c.check = on as u32;
+                c.visible = glide;
+            }
         }
         // with Glide the game's resolution does not matter (we draw at ours): its list makes way
         if let Some(c) = d.control(DISPLAY_MODE) {
@@ -450,6 +481,15 @@ pub fn ok(d: &mut Dialog) {
         }
         if let Some(on) = d.control(WIDESCREEN).map(|c| c.check != 0) {
             crate::platform::wide::set_enabled(on);
+        }
+        if let Some(on) = d.control(COLORING).filter(|c| c.visible).map(|c| c.check != 0) {
+            crate::platform::light::set_coloring(on);
+        }
+        if let Some(on) = d.control(PS_COLORS).filter(|c| c.visible).map(|c| c.check != 0) {
+            crate::platform::light::set_ps_colors(on);
+        }
+        if let Some(on) = d.control(PS_SHADING).filter(|c| c.visible).map(|c| c.check != 0) {
+            crate::platform::light::set_ps_shading(on);
         }
         // the game's gamma takes effect at once (the game sets it only when Glide starts)
         let gamma = d.control(GAMMA).filter(|c| c.visible).and_then(|c| match c.kind {

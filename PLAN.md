@@ -88,6 +88,21 @@ Next:
 - [x] "Widescreen" box in Preferences (3DFX Options, `dialog/extend.rs`): REG_DWORD
       `Widescreen` in the game's key (default on), applies at OK
 - [x] Widescreen checked by the user: split screen, fullscreen, fast movement (2026-10-26)
+- [ ] PlayStation look in Glide (`light.rs`, 2026-11-04; to be checked by the user):
+  - Texture Coloring: light above the texture's own brightness (byte 0x80 = 1.0, up to
+    2.0: lamps, flashes) as the software renderer and the PlayStation show it; the game's
+    Glide walker (and its THRASH/D3D one, 0x456270) clamped it at 1.0. The lamp's warm pool
+    on the wall at the first mission's start comes back; flat RGB (0x30) and untextured
+    records left as they are (the game's flat untextured colours wrap above 0x7f)
+  - PlayStation Colors (instead of a lowered gamma, which made it darker than the PS1;
+    compared with the user's PS1 screenshot and disc): only M2C's textures were recoloured
+    for the PC; a fitted colour polynomial (cubic; a matrix dulled saturated colours) gives them the PS1's colours (mean 65, 64, 47 against
+    the PS1's 62, 60, 47 at M2C's start; the floor still a little brighter than the PS1's)
+  - PlayStation Shading: the software renderer's contrast (the user: it looks right, 3Dfx
+    "not remotely"). The game's Glide gamma starts at 1.25; shown 0.25 lower, Glide's blocks
+    are the software renderer's brightness in dark and bright places alike. Left: texture
+    filtering (block contrast 8.7 against 10.2, 9.8 with the game's Filtering box off). The
+    robot's shadow (solid in software, a soft blob in Glide) was not it (user)
 - [x] Split screen (Crime War): both players share one health bar and die together: the
       original's design (Precinct Assault has separate bars; checked by the user)
 - [ ] Widescreen with the software renderer (not planned yet: Glide is the default)

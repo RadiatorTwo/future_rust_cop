@@ -28,7 +28,7 @@
 
 use crate::ver::Us;
 use super::glide::{self, View};
-use super::{mem, wide};
+use super::{light, mem, wide};
 use crate::rt::{Cpu, ESP, call_original};
 use std::sync::OnceLock;
 
@@ -158,10 +158,18 @@ pub fn draw_glide(c: &mut Cpu) {
                 }
             }
             glide::set_space(Some(if text { (gw, gh) } else { (2560, 1920) }));
+            // the 3D picture in PlayStation lighting (the HUD as the game draws it)
+            let lit = (pass == 0 && !text).then(|| {
+                let mine = recs.iter().filter(|r| r.pass == 0 && !r.text);
+                light::begin(mine.map(|r| (r.at, if r.kind >= 5 { 4 } else { r.kind as u32 })))
+            });
             // each call pushes the return address back (the walker's ret popped it)
             c.r[ESP] = sp;
             m.wr32(sp + 4, first);
             call_original(c, GLIDE_WALKER.at());
+            if let Some(Some(l)) = lit {
+                light::end(l);
+            }
             if c.stop != 0 {
                 break 'passes;
             }
