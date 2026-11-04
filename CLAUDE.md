@@ -294,7 +294,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   Cost ~0.4 ms a frame at 1920x1080 with MSAA 4x. Sprites (0x457140, centre, z at +4, size
   at +8) are kept as rectangles: a primitive none of whose corners is a projected point takes
   the z of the sprite holding its centre. The depth is made when AO or the lights want it
-  (`ao::depth_wanted`). The AO's GLSL has a normal function `N`: no other name N in the passes.
+  (`ao::depth_wanted`; shadows too). The AO's GLSL has a normal function `N`: no other name N in the passes.
 - `lights.rs`: dynamic lights (PLAN.md 2a step 2; REG_DWORD `DynamicLights`, default off,
   `FCOP_LIGHTS=0/1`, box in Advanced Graphics, `FCOP_GBUFFER=lights`). Every additive primitive
   of the 3D picture (blend SRC_ALPHA or ONE, ONE) becomes a light in `glide::add`: centre and z,
@@ -314,6 +314,17 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `ao::depth_near`, the nearest point's z within 160 units) are `lights::trail`, size at least
   150, a share each (0.15 / 0.4), merged to a few lights along it. Lights are merged only with
   a like hue (red and blue apart).
+- `shadows.rs`: screen-space shadows (PLAN.md 2a step 3; REG_DWORD `Shadows`, default off,
+  `FCOP_SHADOWS=0/1`, box in Advanced Graphics, `FCOP_GBUFFER=shadows`). A ray march per pixel
+  through the depth toward the light (GLSL `shadow()`, after `ao::COMMON`): a step behind the
+  depth there by less than a thickness is shadowed. The sun (world direction `SUN`, y up) in
+  view space by the camera's matrix [0x511f48] + 0x58 (3x3 i32 16.16, rows right / up /
+  forward; view space = game camera space, x right, y up, z ahead), noted by the projection
+  hooks 0x457340 / 0x452fd0 per view (`camera`), taken in order by `glide::post_3d`
+  (`next_view`); its shadow is multiplied into the AO's half-resolution result (blurred and
+  applied with it, also with the AO off). The 4 strongest dynamic lights are marched in the
+  lights' pass. The game's round shadows under objects (blend (0, 5): ZERO, 1 - SRC_ALPHA) are
+  not drawn in the 3D picture while it is on (`glide::add`).
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
   projections (0x453740 terrain vertex, 0x457340 object points, 0x457140 sprites) and the
   sphere view tests (0x452fd0 terrain cells, 0x4572a0 objects); target markers (0x435330,

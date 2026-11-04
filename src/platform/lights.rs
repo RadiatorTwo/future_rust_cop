@@ -40,6 +40,8 @@ const MAX: usize = 32;
 const STRENGTH: f32 = 1.6;
 /// And plus this much of it, as if every surface were at least this bright.
 const ADDED: f32 = 0.12;
+/// With shadows on: the strongest this many lights cast them.
+const SHADOWED: i32 = 4;
 
 /// A light: where (target pixels from the bottom left, z), its colour (0...1, times its
 /// strength) and its size in the world (object units).
@@ -170,6 +172,7 @@ uniform vec3 lcol[MAX];
 uniform float strength;
 uniform int show;         // 0 the light as a factor, 3 the light alone
 uniform float added;      // this much of the light is added (dark surfaces get some too)
+uniform int shadowed;     // the first this many lights cast shadows (shadows.rs)
 out vec4 o;
 void main() {
     ivec2 q = ivec2(gl_FragCoord.xy);
@@ -179,6 +182,7 @@ void main() {
     if (z > 0.0) {
         vec3 p = P(vec2(q), z);
         vec3 n = N(q, z, p, 1);
+        float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
         for (int i = 0; i < count; i++) {
             vec3 l = lpos[i].xyz - p;
             float d = length(l);
@@ -189,6 +193,8 @@ void main() {
             a *= a * mix(0.3, 1.0, smoothstep(0.0, 0.2 * r, d));
             // mostly by the angle, a little all round (the normals are rough)
             float ndl = d > 0.0 ? max(dot(n, l / d), 0.0) : 1.0;
+            // blocked on its way (not near the light: what holds it)
+            if (i < shadowed && d > 0.15 * r) a *= 1.0 - 0.85 * shadow(p, n, l / d, d - 0.12 * r, ign, 12);
             sum += lcol[i] * a * (0.2 + 0.8 * ndl);
         }
         sum *= strength * (1.0 - clamp(g.g, 0.0, 1.0));
@@ -205,7 +211,7 @@ pub struct Lighting {
 
 impl Lighting {
     pub fn new(gl: &glow::Context) -> Lighting {
-        let prog = |ms: bool| compile(gl, ao::VS, &format!("{}{}{LIGHT_FS}", if ms { "#define MS\n" } else { "" }, ao::COMMON));
+        let prog = |ms: bool| compile(gl, ao::VS, &format!("{}{}{}{LIGHT_FS}", if ms { "#define MS\n" } else { "" }, ao::COMMON, super::shadows::GLSL));
         let vao = unsafe { gl.create_vertex_array().expect("GL vertex array") };
         Lighting { progs: [prog(false), prog(true)], vao }
     }
@@ -223,7 +229,7 @@ impl Lighting {
     /// framebuffer with only the picture's colour, `clip` the scissor box.
     pub fn run(&mut self, gl: &glow::Context, depth: glow::Texture, ms: bool, target: (u32, u32), out: glow::Framebuffer, clip: [i32; 4], lights: &[Light]) {
         let show = ao::debug_view();
-        if lights.is_empty() && show != 3 || show == 1 || show == 2 {
+        if lights.is_empty() && show != 3 || matches!(show, 1 | 2 | 4) {
             return;
         }
         let (w, h) = (target.0 as i32, target.1 as i32);
@@ -248,6 +254,7 @@ impl Lighting {
             gl.uniform_1_f32(u("strength").as_ref(), STRENGTH);
             gl.uniform_1_i32(u("show").as_ref(), show);
             gl.uniform_1_f32(u("added").as_ref(), 1.0);
+            gl.uniform_1_i32(u("shadowed").as_ref(), if super::shadows::enabled() { SHADOWED } else { 0 });
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(out));
             gl.viewport(0, 0, w, h);
             gl.enable(glow::SCISSOR_TEST);

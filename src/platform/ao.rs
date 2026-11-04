@@ -36,9 +36,9 @@ pub fn enabled() -> bool {
     SETTING.get()
 }
 
-/// Something needs the depth (AO or dynamic lights).
+/// Something needs the depth (AO, dynamic lights or shadows).
 pub fn depth_wanted() -> bool {
-    enabled() || super::lights::enabled()
+    enabled() || super::lights::enabled() || super::shadows::enabled()
 }
 
 /// The Advanced Graphics dialog's OK: saved, and used from the next frame on.
@@ -46,13 +46,15 @@ pub fn set_enabled(on: bool) {
     SETTING.set(on);
 }
 
-/// `FCOP_GBUFFER`: 0 the picture, 1 the depth, 2 the AO, 3 the dynamic lights.
+/// `FCOP_GBUFFER`: 0 the picture, 1 the depth, 2 the AO (with the sun's shadow), 3 the dynamic
+/// lights, 4 the sun's shadow alone.
 pub(super) fn debug_view() -> i32 {
     static V: OnceLock<i32> = OnceLock::new();
     *V.get_or_init(|| match std::env::var("FCOP_GBUFFER").as_deref() {
         Ok("depth") => 1,
         Ok("ao") => 2,
         Ok("lights") => 3,
+        Ok("shadows") => 4,
         _ => 0,
     })
 }
@@ -191,6 +193,11 @@ vec3 N(ivec2 q, float z, vec3 p, int s) {
 const AO_FS: &str = r#"
 uniform float radius;
 uniform float max_px;
+uniform int ao_on;
+uniform int sun_on;       // the sun's shadow too (shadows.rs)
+uniform vec3 sun;         // toward the sun, view space
+uniform float sun_len;
+uniform float sun_strength;
 out vec4 o;
 const int SAMPLES = 12;
 void main() {
@@ -199,10 +206,12 @@ void main() {
     if (z <= 0.0) { o = vec4(1.0); return; }
     vec3 p = P(vec2(q), z);
     vec3 n = N(q, z, p, 2);
-    float rpx = min(radius * focal / z, max_px);
-    if (rpx < 2.0) { o = vec4(1.0); return; }
     // a different turn of the samples at every pixel (interleaved gradient noise), blurred after
-    float a = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float lit = sun_on != 0 ? 1.0 - sun_strength * shadow(p, n, sun, sun_len, ign, 16) : 1.0;
+    float rpx = min(radius * focal / z, max_px);
+    if (ao_on == 0 || rpx < 2.0) { o = vec4(lit); return; }
+    float a = 6.2831853 * ign;
     float occ = 0.0;
     for (int i = 0; i < SAMPLES; i++) {
         float t = (float(i) + 0.5) / float(SAMPLES);
@@ -215,7 +224,7 @@ void main() {
         if (d < 1e-3) continue;
         occ += max(dot(v / d, n) - 0.05, 0.0) * (1.0 - smoothstep(0.5 * radius, radius, d));
     }
-    o = vec4(pow(clamp(1.0 - 4.0 * occ / float(SAMPLES), 0.0, 1.0), 2.0));
+    o = vec4(pow(clamp(1.0 - 4.0 * occ / float(SAMPLES), 0.0, 1.0), 2.0) * lit);
 }
 "#;
 
@@ -287,7 +296,7 @@ pub struct Ssao {
 
 impl Ssao {
     pub fn new(gl: &glow::Context) -> Ssao {
-        let prog = |fs: &str, ms: bool| compile(gl, VS, &format!("{}{COMMON}{fs}", if ms { "#define MS\n" } else { "" }));
+        let prog = |fs: &str, ms: bool| compile(gl, VS, &format!("{}{COMMON}{}{fs}", if ms { "#define MS\n" } else { "" }, super::shadows::GLSL));
         let progs = [AO_FS, BLUR_FS, APPLY_FS].map(|fs| [prog(fs, false), prog(fs, true)]);
         let vao = unsafe { gl.create_vertex_array().expect("GL vertex array") };
         Ssao { progs, vao, half: None }
@@ -334,8 +343,10 @@ impl Ssao {
 
     /// The passes over the 3D picture: `depth` the attachment (multisampled or not), `target`
     /// its size, `out` a framebuffer with only the picture's colour, `clip` the scissor box
-    /// (x, y from below, w, h) the result is limited to.
-    pub fn run(&mut self, gl: &glow::Context, depth: glow::Texture, ms: bool, target: (u32, u32), out: glow::Framebuffer, clip: [i32; 4]) {
+    /// (x, y from below, w, h) the result is limited to; `ao` whether the AO is wanted, `sun`
+    /// toward the sun in view space for its shadow.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run(&mut self, gl: &glow::Context, depth: glow::Texture, ms: bool, target: (u32, u32), out: glow::Framebuffer, clip: [i32; 4], ao: bool, sun: Option<[f32; 3]>) {
         let (w, h) = (target.0 as i32, target.1 as i32);
         let hs = ((w + 1) / 2, (h + 1) / 2);
         let half = self.half(gl, hs);
@@ -362,6 +373,12 @@ impl Ssao {
             let u = common(self.progs[0][v]);
             gl.uniform_1_f32(u("radius").as_ref(), RADIUS);
             gl.uniform_1_f32(u("max_px").as_ref(), h as f32 / 4.0);
+            gl.uniform_1_i32(u("ao_on").as_ref(), ao as i32);
+            gl.uniform_1_i32(u("sun_on").as_ref(), sun.is_some() as i32);
+            let s = sun.unwrap_or([0.0, 1.0, 0.0]);
+            gl.uniform_3_f32(u("sun").as_ref(), s[0], s[1], s[2]);
+            gl.uniform_1_f32(u("sun_len").as_ref(), super::shadows::SUN_LENGTH);
+            gl.uniform_1_f32(u("sun_strength").as_ref(), super::shadows::SUN_STRENGTH);
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
             // blurred across, then down
             gl.active_texture(glow::TEXTURE1);
@@ -378,7 +395,10 @@ impl Ssao {
             gl.viewport(0, 0, w, h);
             gl.enable(glow::SCISSOR_TEST);
             gl.scissor(clip[0], clip[1], clip[2], clip[3]);
-            let show = debug_view();
+            let show = match debug_view() {
+                4 => 2,
+                v => v,
+            };
             if show == 0 {
                 gl.enable(glow::BLEND);
                 gl.blend_func(glow::DST_COLOR, glow::ZERO);

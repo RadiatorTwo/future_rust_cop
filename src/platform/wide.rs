@@ -134,6 +134,9 @@ pub fn points(c: &mut Cpu) {
     let (p, flags, n) = (m.rd32(c.r[ESP] + 4), m.rd32(c.r[ESP] + 8), m.rd32(c.r[ESP] + 12) as i32);
     call_original(c, POINTS.at());
     // projected in place: {sx, sy, z}; flag 1 = in front of the near plane (not projected)
+    if super::shadows::enabled() {
+        super::shadows::camera();
+    }
     if super::ao::depth_wanted() {
         for i in 0..n.max(0) as u32 {
             if m.rd8(flags + i) != 1 {
@@ -147,6 +150,9 @@ pub fn points(c: &mut Cpu) {
 /// 0x452fd0(p, r): is the sphere at camera-space p {x, y, z} (s32) with radius r inside the
 /// 4:3 view? Terrain blocks and cells are culled with it (0x452a20).
 pub fn terrain_visible(c: &mut Cpu) {
+    if super::shadows::enabled() {
+        super::shadows::camera();
+    }
     if k() == 1.0 {
         return call_original(c, TERRAIN_VISIBLE.at());
     }

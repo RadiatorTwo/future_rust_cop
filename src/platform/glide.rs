@@ -989,6 +989,11 @@ impl Glide {
 
     /// Add vertices (GrVertex at guest addresses) as primitives of `mode`.
     fn add(&mut self, gl: &glow::Context, mode: u32, verts: &[u32]) {
+        // the game's round shadows under objects (blend ZERO, 1 - SRC_ALPHA: they darken) are
+        // left out of the 3D picture when ours are drawn (`shadows.rs`)
+        if self.state.blend == (0, 5) && self.gbuf.is_some() && super::shadows::enabled() {
+            return;
+        }
         if mode != self.batch_mode {
             self.flush(gl);
             self.batch_mode = mode;
@@ -1350,6 +1355,7 @@ fn buffer_swap(_: &mut Cpu) -> u32 {
         (g.color, g.target, super::light::gamma(g.gamma))
     });
     super::ao::clear();
+    super::shadows::clear();
     if let Some((tex, (w, h), gamma)) = shown {
         super::window::show_texture(tex, w, h, gamma);
         super::fps::frame_shown();
@@ -1393,8 +1399,12 @@ pub fn post_3d() {
         let (tex, ms, colour) = (d.tex, d.ms, d.colour);
         let clip = g.scissor_box(g.state.clip);
         let target = g.target;
-        if super::ao::enabled() {
-            g.ssao.get_or_insert_with(|| super::ao::Ssao::new(gl)).run(gl, tex, ms, target, colour, clip);
+        let sun = super::shadows::next_view();
+        let sun = super::shadows::enabled().then_some(sun);
+        // FCOP_GBUFFER=shadows: the sun's shadow alone
+        let ao = super::ao::enabled() && super::ao::debug_view() != 4;
+        if ao || sun.is_some() {
+            g.ssao.get_or_insert_with(|| super::ao::Ssao::new(gl)).run(gl, tex, ms, target, colour, clip, ao, sun);
         }
         if super::lights::enabled() {
             g.lighting.get_or_insert_with(|| super::lights::Lighting::new(gl)).run(gl, tex, ms, target, colour, clip, &lights);

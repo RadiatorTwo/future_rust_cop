@@ -328,7 +328,16 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
 
 #### Step 3: dynamic shadows
 
-- [ ] First: screen-space shadows. Per pixel a short ray march in view space toward the
+- [x] Done 2026-11-04 (`shadows.rs`): sun shadows in the AO's half-resolution pass (16 steps,
+      900 units, thickness max(220, 2% of z), 45% darker, blurred and applied with the AO), the
+      strongest 4 dynamic lights blocked in the lights' pass (12 steps). Sun toward (0.45, 1,
+      -0.3) in the world, turned by the camera's matrix +0x58 (rows right / up / forward,
+      16.16), noted per view by the projection hooks. One box "Shadows" (REG_DWORD `Shadows`,
+      default off, `FCOP_SHADOWS=0/1`, `FCOP_GBUFFER=shadows`). Checked at the M2C start: the
+      robot's shadow, the ramp's and walls' on the ground; 300 fps held at 1920x1080 with AO,
+      lights and shadows. Open: the user's look (direction, length, strength), a sun per
+      mission, the keyed trees are speckled (as with the AO), split screen.
+      Planned: screen-space shadows. Per pixel a short ray march in view space toward the
       light through the depth texture (16 steps, a thickness assumed); shadowed: colour *=
       1 - strength. For a sun (a direction per mission, a table with a default from above;
       the camera's matrix turns it into view space) and for the 2-4 strongest dynamic
@@ -343,9 +352,9 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
   - or our own: terrain (`Ctil`) and models (`Cobj`, placed by the actors' matrix +0x2c and
     position +0x50) drawn by us into a shadow map; independent of the game's renderer, but
     animated models (several vertex lists) and every kind of object have to be right
-- [ ] The game's own shadows under objects (blend mode 0,5) stay, or are turned off when
-      shadow maps are on.
-- [ ] Setting: Shadows Off / Contact / Full; `FCOP_SHADOWS=0/1/2`.
+- [x] The game's own round shadows under objects (blend ZERO, 1 - SRC_ALPHA, one texture)
+      are left out of the 3D picture while Shadows is on (`glide::add`, 2026-11-04).
+- [ ] Setting: Shadows Off / Contact / Full; `FCOP_SHADOWS=0/1/2` (now a box: Off / Contact).
 
 #### Step 4: knowing the effects (needed by steps 5-9)
 
