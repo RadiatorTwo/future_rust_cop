@@ -214,13 +214,16 @@ layout(location = 3) in vec4 kc;
 layout(location = 4) in uvec4 mode;
 layout(location = 5) in vec4 box;
 layout(location = 6) in float z;
+layout(location = 7) in uint effect;
 out vec4 vcol;
 noperspective out float vinvz;
 noperspective out vec2 st;
 flat out vec4 konst;
 flat out uvec4 vmode;
 flat out vec4 st_box;
+flat out uint veffect;
 void main() {
+    veffect = effect;
     vcol = col / 255.0;
     konst = kc;
     st_box = box;
@@ -248,6 +251,8 @@ noperspective in vec2 st;
 flat in vec4 konst;    // the constant colour
 flat in uvec4 vmode;   // combine units and texture, packed by `add`
 flat in vec4 st_box;   // the primitive's texture rectangle
+flat in uint veffect;  // what effect it is (`effects::Effect`), 0 none
+uniform int show_effects;  // FCOP_GBUFFER=effects: each kind in a colour of its own
 layout(location = 0) out vec4 color;
 layout(location = 1) out vec4 gbuf;
 
@@ -387,13 +392,21 @@ void main() {
     if (edge == 3) c *= cover;
     if (cover <= 0.0) discard;
     color = vec4(c, a);
+    if (show_effects != 0) {
+        const vec3 kinds[8] = vec3[8](vec3(0.0), vec3(0.6), vec3(1.0, 0.4, 0.0), vec3(1.0, 1.0, 0.0),
+            vec3(1.0, 0.0, 1.0), vec3(0.0, 1.0, 1.0), vec3(0.0, 0.3, 1.0), vec3(0.0, 1.0, 0.0));
+        float grey = dot(color.rgb, vec3(0.3, 0.5, 0.2)) * 0.35;
+        color.rgb = veffect == 0u ? vec3(grey) : kinds[min(veffect, 7u)];
+    }
     if (gmode == 1) gbuf = vec4(vinvz > 0.0 ? 1.0 / vinvz : 0.0, 0.0, 0.0, step(0.5, a));
     else gbuf = vec4(0.0, clamp(2.0 * (gmode == 3 ? max(c.r, max(c.g, c.b)) : a), 0.0, 1.0), 0.0, 0.0);
 }
 "#;
 
 /// Words per batched vertex.
-const VERTEX: usize = 21;
+const VERTEX: usize = 22;
+
+use super::effects::Effect;
 
 /// The shaders' uniforms, looked up once.
 struct Uniforms {
@@ -408,6 +421,7 @@ struct Uniforms {
     linear_filter: Option<glow::UniformLocation>,
     edge: Option<glow::UniformLocation>,
     gmode: Option<glow::UniformLocation>,
+    show_effects: Option<glow::UniformLocation>,
 }
 
 impl Uniforms {
@@ -425,6 +439,7 @@ impl Uniforms {
             linear_filter: u("linear_filter"),
             edge: u("edge"),
             gmode: u("gmode"),
+            show_effects: u("show_effects"),
         }
     }
 }
@@ -515,6 +530,19 @@ impl Texture {
         }
         sum.map(|v| v as f32 / (N * N) as f32 / 255.0)
     }
+
+    /// A texture rectangle's texels (rgb, black keyed out; wrapping) and its size.
+    fn cut(&self, r: [u32; 4]) -> (Vec<u8>, u32, u32) {
+        let (w, h) = (r[2].saturating_sub(r[0]).max(1), r[3].saturating_sub(r[1]).max(1));
+        let mut px = Vec::with_capacity((w * h * 3) as usize);
+        for y in r[1]..r[1] + h {
+            for x in r[0]..r[0] + w {
+                let p = 3 * ((y % self.h) * self.w + x % self.w) as usize;
+                px.extend_from_slice(&self.rgb[p..p + 3]);
+            }
+        }
+        (px, w, h)
+    }
 }
 
 impl Hd {
@@ -602,6 +630,8 @@ impl Glide {
             gl.vertex_attrib_pointer_f32(5, 4, glow::FLOAT, false, 4 * VERTEX as i32, 64);
             gl.enable_vertex_attrib_array(6);
             gl.vertex_attrib_pointer_f32(6, 1, glow::FLOAT, false, 4 * VERTEX as i32, 80);
+            gl.enable_vertex_attrib_array(7);
+            gl.vertex_attrib_pointer_i32(7, 1, glow::UNSIGNED_INT, 4 * VERTEX as i32, 84);
             let aniso_max = if gl.supported_extensions().iter().any(|e| e.ends_with("texture_filter_anisotropic")) {
                 gl.get_parameter_f32(glow::MAX_TEXTURE_MAX_ANISOTROPY_EXT)
             } else {
@@ -957,6 +987,7 @@ impl Glide {
                 _ => 0,
             };
             gl.uniform_1_i32(u.gmode.as_ref(), gmode);
+            gl.uniform_1_i32(u.show_effects.as_ref(), (self.gbuf.is_some() && super::effects::showing()) as i32);
             if self.gdepth.is_some() {
                 match gmode {
                     1 => gl.color_mask_draw_buffer(1, true, true, false, false),
@@ -1033,6 +1064,14 @@ impl Glide {
             (true, Some(dx)) => super::ao::depths(&verts.iter().map(|&v| (xy(v).0 - dx, xy(v).1)).collect::<Vec<_>>()),
             _ => vec![0.0; verts.len()],
         };
+        // the display list record it comes from (`effects.rs`), in the 3D picture
+        let rec = match (self.gbuf, verts.first()) {
+            (Some(dx), Some(&v)) => super::effects::record_of(xy(v).0 - dx, xy(v).1),
+            _ => None,
+        };
+        if let (Some(r), true) = (rec, super::effects::logging()) {
+            self.census(r, verts, st_box);
+        }
         // a glow of the 3D picture (additive): a dynamic light
         // (not lines: the laser sight would light the ground along it)
         if self.gbuf.is_some() && self.gdepth.is_some() && super::lights::enabled() && verts.len() >= 3 && self.state.blend.1 == 4 && matches!(self.state.blend.0, 1 | 4) {
@@ -1070,6 +1109,7 @@ impl Glide {
                 self.lights.push(if smoke { super::lights::trail(l, 0.4) } else { l });
             }
         }
+        let effect = rec.map_or(Effect::None, |r| self.effect(r, verts, st_box)) as u32;
         let mut put = |v: u32, (x, y): (f32, f32), z: f32| {
             let (s, t) = st(v);
             self.batch.extend([x.to_bits(), y.to_bits(), m.rd32(v + 0xc), m.rd32(v + 0x10), m.rd32(v + 0x14), m.rd32(v + 0x1c), s.to_bits(), t.to_bits()]);
@@ -1077,6 +1117,7 @@ impl Glide {
             self.batch.extend(mode);
             self.batch.extend(b);
             self.batch.push(z.to_bits());
+            self.batch.push(effect);
         };
         if let (Some([n0, n1, n2, n3]), &[v0, v1]) = (quad, verts) {
             put(v0, n0, z[0]);
@@ -1090,6 +1131,42 @@ impl Glide {
                 put(v, xy(v), z);
             }
         }
+    }
+
+    /// What effect a primitive of record `rec` is: by its record's blend (+6: 2 additive,
+    /// 3 darkening), its vertices, and the mean colour of its texture rectangle.
+    fn effect(&self, rec: super::effects::Record, verts: &[u32], st: [f32; 4]) -> Effect {
+        if !matches!(rec[2], 2 | 3) {
+            return Effect::None;
+        }
+        if verts.len() == 2 {
+            return Effect::Laser;
+        }
+        let tex = self.tex.filter(|_| self.cc[0] != 1 && self.cc[3] == 1).and_then(|a| self.textures.get(&a));
+        let Some(t) = tex else { return Effect::Glow };
+        let [r, g, b] = t.average(st);
+        let (hi, lo) = (r.max(g).max(b), r.min(g).min(b));
+        if rec[2] == 3 || hi - lo < 0.3 * hi {
+            Effect::Smoke
+        } else if b > r {
+            Effect::Energy
+        } else {
+            Effect::Fire
+        }
+    }
+
+    /// `FCOP_EFFECT_LOG`: a primitive of the 3D picture to `effects::census`: its record, its
+    /// texture rectangle's texels, blend and colour.
+    fn census(&self, rec: super::effects::Record, verts: &[u32], st: [f32; 4]) {
+        let m = mem();
+        let n = verts.len().max(1) as f32;
+        let avg = |o: u32| (verts.iter().map(|&v| f32::from_bits(m.rd32(v + o))).sum::<f32>() / n) as u8;
+        let colour = if self.cc[2] == 0 { [avg(0xc), avg(0x10), avg(0x14), avg(0x1c)] } else { self.constant.rotate_left(8).to_be_bytes() };
+        let rect = st.map(|v| v.round().max(0.0) as u32);
+        // the texture, when the colour combine takes it ("other" 1, not the local colour alone)
+        let textured = self.cc[0] != 1 && self.cc[3] == 1;
+        let cut = self.tex.filter(|_| textured).and_then(|a| self.textures.get(&a)).map(|t| t.cut(rect));
+        super::effects::census(rec, rect, self.state.blend, colour, cut);
     }
 
     /// The colour a glowing primitive adds (0...1): its local colour (the vertices' or the

@@ -162,6 +162,10 @@ pub fn draw_glide(c: &mut Cpu) {
                 }
             }
             glide::set_space(Some(if text { (gw, gh) } else { (2560, 1920) }));
+            // the records the 3D picture's primitives come from (before `light` changes them)
+            if pass == 0 && !text && super::effects::wanted() {
+                super::effects::begin(recs.iter().filter(|r| r.pass == 0 && !r.text).map(|r| r.at));
+            }
             // the 3D picture in PlayStation lighting (the HUD as the game draws it)
             let lit = (pass == 0 && !text).then(|| {
                 let mine = recs.iter().filter(|r| r.pass == 0 && !r.text);
@@ -180,6 +184,7 @@ pub fn draw_glide(c: &mut Cpu) {
                 light::end(l);
             }
             if world {
+                super::effects::end();
                 glide::set_gbuffer(None);
                 glide::post_3d();
             }

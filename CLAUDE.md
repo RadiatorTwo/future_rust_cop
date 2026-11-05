@@ -314,6 +314,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `ao::depth_near`, the nearest point's z within 160 units) are `lights::trail`, size at least
   150, a share each (0.15 / 0.4), merged to a few lights along it. Lights are merged only with
   a like hue (red and blue apart).
+- `effects.rs`: which primitive is an effect (PLAN.md 2a step 4). The walker hands the 3D
+  picture's display list records over in order (`effects::begin`, only when `wanted`); in
+  precise mode their x/y (+0x28) are the vertices `glide::add` gets, so each primitive finds
+  its record by its first vertex (`record_of`, a few ahead). Record byte +6 = blend (0 opaque,
+  1 alpha, 2 additive, 3 darkening); `glide::effect`: 2/3 lines = Laser, untextured = Glow,
+  textured by the mean colour of the texture rectangle Smoke / Fire / Energy (muzzle flashes,
+  shock wave). A flat vertex attribute (location 7) to the shader. `FCOP_GBUFFER=effects`
+  colours each kind; `FCOP_EFFECT_LOG=1` logs blended records and writes their texture
+  rectangles to `Textures/effects/`.
 - `shadows.rs`: screen-space shadows (PLAN.md 2a step 3; REG_DWORD `Shadows`, default off,
   `FCOP_SHADOWS=0/1`, box in Advanced Graphics, `FCOP_GBUFFER=shadows`). A ray march per pixel
   through the depth toward the light (GLSL `shadow()`, after `ao::COMMON`): a step behind the
