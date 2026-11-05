@@ -28,7 +28,8 @@ use super::gl::compile;
 use super::light::Setting;
 use glow::HasContext;
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::cell::RefCell;
+use std::sync::OnceLock;
 
 static SETTING: Setting = Setting::with_default("AmbientOcclusion", "FCOP_SSAO", false);
 
@@ -59,12 +60,60 @@ pub(super) fn debug_view() -> i32 {
     })
 }
 
-/// The projected points of this frame: screen position (x | y << 16, 2560x1920 units) ->
-/// up to two z (0: none).
-static POINTS: Mutex<Option<HashMap<u32, [i16; 2]>>> = Mutex::new(None);
+/// A fast hash for the points' keys (std's SipHash cost most of the time spent here).
+#[derive(Default, Clone, Copy)]
+struct KeyHash(u64);
+
+impl std::hash::Hasher for KeyHash {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u32(b as u32);
+        }
+    }
+    fn write_u32(&mut self, k: u32) {
+        self.0 = (self.0.rotate_left(5) ^ k as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+type KeyMap<V> = HashMap<u32, V, std::hash::BuildHasherDefault<KeyHash>>;
+
+/// The cells `depth_near` looks in: this many units square.
+const CELL: f32 = 160.0;
+
+/// This frame's projections. The projection hooks and the renderer run on one thread (the
+/// game's), so no lock; cleared by length, not freed.
+#[derive(Default)]
+struct Frame {
+    /// screen position (x | y << 16, 2560x1920 units) -> up to two z (0: none)
+    points: KeyMap<[i16; 2]>,
+    /// sprites: their rectangle (x0, y0, x1, y1 in 2560x1920 units) and z; their corners are
+    /// not projected points
+    sprites: Vec<([i16; 4], i16)>,
+    /// the points by `CELL` (made at the first `depth_near` of a frame): cell -> (x, y, z)
+    cells: KeyMap<Vec<(i16, i16, i16)>>,
+    cells_made: bool,
+    /// `depths`' scratch
+    found: Vec<[i16; 2]>,
+    sure: Vec<i16>,
+}
+
+thread_local! {
+    static FRAME: RefCell<Frame> = RefCell::new(Frame::default());
+}
 
 fn key(x: i16, y: i16) -> u32 {
     x as u16 as u32 | (y as u16 as u32) << 16
+}
+
+fn cell_of(x: f32, y: f32) -> (i32, i32) {
+    ((x / CELL).floor() as i32, (y / CELL).floor() as i32)
+}
+
+fn cell_key((cx, cy): (i32, i32)) -> u32 {
+    cx as u16 as u32 | (cy as u16 as u32) << 16
 }
 
 /// A point the game projected to (x, y) at depth z.
@@ -72,18 +121,17 @@ pub fn point(x: i16, y: i16, z: i16) {
     if z <= 0 {
         return;
     }
-    let mut p = POINTS.lock().unwrap();
-    let e = p.get_or_insert_with(HashMap::new).entry(key(x, y)).or_insert([0, 0]);
-    if e[0] == 0 || e[0] == z {
-        e[0] = z;
-    } else if e[1] == 0 {
-        e[1] = z;
-    }
+    let _t = super::fps::timer(super::fps::Phase::Points);
+    FRAME.with_borrow_mut(|f| {
+        let e = f.points.entry(key(x, y)).or_insert([0, 0]);
+        if e[0] == 0 || e[0] == z {
+            e[0] = z;
+        } else if e[1] == 0 {
+            e[1] = z;
+        }
+        f.cells_made = false;
+    });
 }
-
-/// The projected sprites of this frame: their rectangle (x0, y0, x1, y1 in 2560x1920 units)
-/// and z. Their corners are not projected points.
-static SPRITES: Mutex<Vec<([i16; 4], i16)>> = Mutex::new(Vec::new());
 
 /// A sprite the game projected to the centre (x, y), half size (w, h), at depth z.
 pub fn sprite(x: i16, y: i16, w: i16, h: i16, z: i16) {
@@ -91,65 +139,84 @@ pub fn sprite(x: i16, y: i16, w: i16, h: i16, z: i16) {
         return;
     }
     let (w, h) = (w.saturating_abs().max(1), h.saturating_abs().max(1));
-    SPRITES.lock().unwrap().push(([x.saturating_sub(w), y.saturating_sub(h), x.saturating_add(w), y.saturating_add(h)], z));
+    FRAME.with_borrow_mut(|f| f.sprites.push(([x.saturating_sub(w), y.saturating_sub(h), x.saturating_add(w), y.saturating_add(h)], z)));
 }
 
 /// The z of the nearest sprite whose rectangle holds (x, y).
-fn sprite_at(x: f32, y: f32) -> Option<i16> {
+fn sprite_at(sprites: &[([i16; 4], i16)], x: f32, y: f32) -> Option<i16> {
     let (x, y) = (x as i32, y as i32);
-    SPRITES
-        .lock()
-        .unwrap()
+    sprites
         .iter()
         .filter(|(r, _)| (r[0] as i32..=r[2] as i32).contains(&x) && (r[1] as i32..=r[3] as i32).contains(&y))
         .map(|(_, z)| *z)
         .min()
 }
 
-/// The z of the projected point nearest to (x, y) within `reach` units (a glow the game
-/// placed without projecting a point or a sprite there: a rocket's smoke trail).
+/// The z of the projected point nearest to (x, y) within `reach` units (at most `CELL`; a glow
+/// the game placed without projecting a point or a sprite there: a rocket's smoke trail).
 pub fn depth_near(x: f32, y: f32, reach: f32) -> Option<f32> {
-    let p = POINTS.lock().unwrap();
-    p.as_ref()?
-        .iter()
-        .map(|(&k, z)| ((k as u16 as i16 as f32 - x).hypot((k >> 16) as u16 as i16 as f32 - y), z[0]))
-        .filter(|&(d, _)| d <= reach)
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, z)| z as f32)
+    let reach = reach.min(CELL);
+    FRAME.with_borrow_mut(|f| {
+        if !f.cells_made {
+            let Frame { points, cells, .. } = f;
+            cells.values_mut().for_each(Vec::clear);
+            for (&k, z) in points.iter() {
+                let (px, py) = (k as u16 as i16, (k >> 16) as u16 as i16);
+                cells.entry(cell_key(cell_of(px as f32, py as f32))).or_default().push((px, py, z[0]));
+            }
+            f.cells_made = true;
+        }
+        let (cx, cy) = cell_of(x, y);
+        (cy - 1..=cy + 1)
+            .flat_map(|j| (cx - 1..=cx + 1).map(move |i| (i, j)))
+            .filter_map(|c| f.cells.get(&cell_key(c)))
+            .flatten()
+            .map(|&(px, py, z)| ((px as f32 - x).hypot(py as f32 - y), z))
+            .filter(|&(d, _)| d <= reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, z)| z as f32)
+    })
 }
 
 /// At every frame shown: the next frame projects anew.
 pub fn clear() {
-    if let Some(p) = POINTS.lock().unwrap().as_mut() {
-        p.clear();
-    }
-    SPRITES.lock().unwrap().clear();
+    FRAME.with_borrow_mut(|f| {
+        f.points.clear();
+        f.sprites.clear();
+        f.cells_made = false;
+    });
 }
 
-/// The z of a primitive's vertices (x, y in 2560x1920 units), 0 where none is known.
-pub fn depths(verts: &[(f32, f32)]) -> Vec<f32> {
-    let p = POINTS.lock().unwrap();
-    let Some(p) = p.as_ref() else { return vec![0.0; verts.len()] };
-    let found: Vec<[i16; 2]> = verts.iter().map(|&(x, y)| p.get(&key(x.round() as i16, y.round() as i16)).copied().unwrap_or([0, 0])).collect();
-    // a reference: the vertices with one candidate (their median), else any candidate
-    let mut sure: Vec<i16> = found.iter().filter(|f| f[0] != 0 && f[1] == 0).map(|f| f[0]).collect();
-    sure.sort_unstable();
-    let reference = sure.get(sure.len() / 2).copied().or_else(|| found.iter().find(|f| f[0] != 0).map(|f| f[0]));
-    // none of its corners is a projected point: a sprite's, by its centre
-    let reference = reference.or_else(|| {
-        let n = verts.len().max(1) as f32;
-        let (cx, cy) = verts.iter().fold((0.0, 0.0), |a, v| (a.0 + v.0 / n, a.1 + v.1 / n));
-        sprite_at(cx, cy)
-    });
-    let Some(r) = reference else { return vec![0.0; verts.len()] };
-    found
-        .iter()
-        .map(|f| match *f {
+/// The z of a primitive's vertices (x, y in 2560x1920 units) into `out`, 0 where none is known.
+pub fn depths(verts: impl ExactSizeIterator<Item = (f32, f32)> + Clone, out: &mut Vec<f32>) {
+    let _t = super::fps::timer(super::fps::Phase::Depths);
+    out.clear();
+    let n = verts.len();
+    FRAME.with_borrow_mut(|f| {
+        let Frame { points, sprites, found, sure, .. } = f;
+        found.clear();
+        found.extend(verts.clone().map(|(x, y)| points.get(&key(x.round() as i16, y.round() as i16)).copied().unwrap_or([0, 0])));
+        // a reference: the vertices with one candidate (their median), else any candidate
+        sure.clear();
+        sure.extend(found.iter().filter(|f| f[0] != 0 && f[1] == 0).map(|f| f[0]));
+        sure.sort_unstable();
+        let reference = sure.get(sure.len() / 2).copied().or_else(|| found.iter().find(|f| f[0] != 0).map(|f| f[0]));
+        // none of its corners is a projected point: a sprite's, by its centre
+        let reference = reference.or_else(|| {
+            let k = n.max(1) as f32;
+            let (cx, cy) = verts.clone().fold((0.0, 0.0), |a, v| (a.0 + v.0 / k, a.1 + v.1 / k));
+            sprite_at(sprites, cx, cy)
+        });
+        let Some(r) = reference else {
+            out.resize(n, 0.0);
+            return;
+        };
+        out.extend(found.iter().map(|f| match *f {
             [0, _] => r,
             [a, 0] => a,
             [a, b] => if (a - r).abs() <= (b - r).abs() { a } else { b },
-        } as f32)
-        .collect()
+        } as f32));
+    });
 }
 
 /// The occlusion's reach in object units, and how strong it darkens (0...1).
@@ -305,7 +372,7 @@ impl Ssao {
     pub fn delete(&mut self, gl: &glow::Context) {
         unsafe {
             for p in self.progs.iter().flatten() {
-                gl.delete_program(*p);
+                super::gl::delete_program(gl, *p);
             }
             gl.delete_vertex_array(self.vao);
         }
@@ -360,7 +427,7 @@ impl Ssao {
             gl.bind_texture(if ms { glow::TEXTURE_2D_MULTISAMPLE } else { glow::TEXTURE_2D }, Some(depth));
             let common = |p: glow::Program| {
                 gl.use_program(Some(p));
-                let u = move |n: &str| gl.get_uniform_location(p, n);
+                let u = move |n: &'static str| super::gl::uniform(gl, p, n);
                 gl.uniform_1_i32(u("gdepth").as_ref(), 0);
                 gl.uniform_1_i32(u("ao").as_ref(), 1);
                 gl.uniform_2_i32(u("size").as_ref(), w, h);

@@ -278,7 +278,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   off, `FCOP_SSAO=0/1`, box in Advanced Graphics). Depth without a depth buffer: the hooks of
   0x457340 (object points, in place {sx, sy, z}, flag 1 = before the near plane) and 0x453740
   (terrain, out {sx, sy, z / 16}: both in object units) keep each projected point's z by its
-  screen position in 2560x1920 units (`ao::point`, cleared at grBufferSwap); `glide::add`
+  screen position in 2560x1920 units (`ao::point`, a thread-local table with a fast hash, cleared at grBufferSwap); `glide::add`
   finds each 3D vertex's z by its x/y (precise mode passes the units on; split screen: less the
   view's origin, `glide::set_gbuffer(Some(dx))` from the walker); ~97% are found, the rest (near
   plane clipping) take the primitive's others. A vertex attribute, interpolated as 1/z, into a
@@ -383,7 +383,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   shows 0x405cb0 instead of the world. Only with Glide, playing ([0x511fb8] = 4), not paused. Choices 60 ... 300 and unlimited (REG_DWORD
   `FrameRate`, 0 = original 37.5, 0xffffffff unlimited: ~950 fps in the first mission; our combo below the 3DFX Options group in Preferences).
   Between frames it sleeps (turn handed over) until 2 ms before the next picture or frame.
-  `FCOP_FPS=1` logs the frames shown per second (Glide).
+  `FCOP_FPS=1` logs the frames shown per second (Glide); with `FCOP_PHASES=1` also µs a
+  frame spent in the effects' phases (`fps::timer`: projected points, `glide::add`, `ao::depths`,
+  lights, `post_3d`).
 - Imports not implemented yet are listed at start and stop the game when called.
   Switches: `FCOP_TRACE_API=1` (every import call with its caller), `FCOP_TRACE_MSG=1`
   (window messages), `FCOP_TRACE_REG=1`, `FCOP_DD_LOG=1` (surfaces and blits),

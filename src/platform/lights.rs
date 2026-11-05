@@ -219,7 +219,7 @@ impl Lighting {
     pub fn delete(&mut self, gl: &glow::Context) {
         unsafe {
             for p in self.progs {
-                gl.delete_program(p);
+                super::gl::delete_program(gl, p);
             }
             gl.delete_vertex_array(self.vao);
         }
@@ -240,7 +240,7 @@ impl Lighting {
         unsafe {
             let p = self.progs[ms as usize];
             gl.use_program(Some(p));
-            let u = |n: &str| gl.get_uniform_location(p, n);
+            let u = |n: &'static str| super::gl::uniform(gl, p, n);
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(if ms { glow::TEXTURE_2D_MULTISAMPLE } else { glow::TEXTURE_2D }, Some(depth));
             gl.uniform_1_i32(u("gdepth").as_ref(), 0);

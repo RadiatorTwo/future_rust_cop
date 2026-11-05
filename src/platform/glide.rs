@@ -70,6 +70,8 @@ struct Texture {
     hd: Option<u32>,
     /// its texels' colour (rgb, black where keyed out), for the dynamic lights' colours
     rgb: Vec<u8>,
+    /// `average`'s results by texture rectangle, until the next download
+    means: std::cell::RefCell<std::collections::HashMap<[u32; 4], [f32; 3]>>,
 }
 
 /// Layers of the texture array: TMU memory holds 64 textures of 256x256 at 8 bits.
@@ -190,6 +192,8 @@ struct Glide {
     ssao: Option<super::ao::Ssao>,
     /// the dynamic lights of the view being drawn (`lights.rs`), and their pass
     lights: Vec<super::lights::Light>,
+    /// `add`'s vertices' depths, kept between primitives
+    zbuf: Vec<f32>,
     lighting: Option<super::lights::Lighting>,
 }
 
@@ -514,6 +518,22 @@ fn bytes_per_texel(format: u32) -> u32 {
 impl Texture {
     /// The mean colour of a texture rectangle (texels, keyed out ones count as black).
     fn average(&self, st: [f32; 4]) -> [f32; 3] {
+        let key = st.map(f32::to_bits);
+        if let Some(&m) = self.means.borrow().get(&key) {
+            return m;
+        }
+        let m = self.sample(st);
+        let mut means = self.means.borrow_mut();
+        // rectangles of a texture are few; bounded all the same
+        if means.len() >= 4096 {
+            means.clear();
+        }
+        means.insert(key, m);
+        m
+    }
+
+    /// `average` from 6x6 texels spread over the rectangle.
+    fn sample(&self, st: [f32; 4]) -> [f32; 3] {
         const N: u32 = 6;
         let mut sum = [0u32; 3];
         for j in 0..N {
@@ -690,6 +710,7 @@ impl Glide {
                 gbuf: None,
                 ssao: None,
                 lights: Vec::new(),
+                zbuf: Vec::new(),
                 lighting: None,
             }
         }
@@ -1020,6 +1041,7 @@ impl Glide {
 
     /// Add vertices (GrVertex at guest addresses) as primitives of `mode`.
     fn add(&mut self, gl: &glow::Context, mode: u32, verts: &[u32]) {
+        let _t = super::fps::timer(super::fps::Phase::Add);
         // the game's round shadows under objects (blend ZERO, 1 - SRC_ALPHA: they darken) are
         // left out of the 3D picture when ours are drawn (`shadows.rs`)
         if self.state.blend == (0, 5) && self.gbuf.is_some() && super::shadows::enabled() {
@@ -1060,10 +1082,14 @@ impl Glide {
         // a line: a quad as wide as the game's line at its resolution
         let quad = if let [v0, v1] = *verts { Some(self.line_offsets(xy(v0), xy(v1))) } else { None };
         // the view-space depth of each vertex (3D picture, AO on), by its place in the units
-        let z: Vec<f32> = match (self.gdepth.is_some(), self.gbuf) {
-            (true, Some(dx)) => super::ao::depths(&verts.iter().map(|&v| (xy(v).0 - dx, xy(v).1)).collect::<Vec<_>>()),
-            _ => vec![0.0; verts.len()],
-        };
+        let mut z = std::mem::take(&mut self.zbuf);
+        match (self.gdepth.is_some(), self.gbuf) {
+            (true, Some(dx)) => super::ao::depths(verts.iter().map(|&v| (xy(v).0 - dx, xy(v).1)), &mut z),
+            _ => {
+                z.clear();
+                z.resize(verts.len(), 0.0);
+            }
+        }
         // the display list record it comes from (`effects.rs`), in the 3D picture
         let rec = match (self.gbuf, verts.first()) {
             (Some(dx), Some(&v)) => super::effects::record_of(xy(v).0 - dx, xy(v).1),
@@ -1075,6 +1101,7 @@ impl Glide {
         // a glow of the 3D picture (additive): a dynamic light
         // (not lines: the laser sight would light the ground along it)
         if self.gbuf.is_some() && self.gdepth.is_some() && super::lights::enabled() && verts.len() >= 3 && self.state.blend.1 == 4 && matches!(self.state.blend.0, 1 | 4) {
+            let _t = super::fps::timer(super::fps::Phase::Lights);
             let colour = self.glow_colour(verts, st_box);
             let (tw, th) = (self.target.0 as f32, self.target.1 as f32);
             let (sw, sh) = (self.space.0 as f32, self.space.1 as f32);
@@ -1131,6 +1158,7 @@ impl Glide {
                 put(v, xy(v), z);
             }
         }
+        self.zbuf = z;
     }
 
     /// What effect a primitive of record `rec` is: by its record's blend (+6: 2 additive,
@@ -1233,7 +1261,7 @@ impl Glide {
                     self.textures.remove(&a);
                     l
                 });
-                self.textures.insert(addr, Texture { layer, w, h, bytes, stamp, hd: None, rgb: vec![0; (w * h * 3) as usize] });
+                self.textures.insert(addr, Texture { layer, w, h, bytes, stamp, hd: None, rgb: vec![0; (w * h * 3) as usize], means: Default::default() });
                 layer
             }
         };
@@ -1261,6 +1289,7 @@ impl Glide {
             }
             if let Some(t) = self.textures.get_mut(&addr) {
                 let at = (r0 * w * 3) as usize;
+                t.means.get_mut().clear();
                 for (k, p) in px.chunks(4).enumerate() {
                     t.rgb[at + 3 * k..at + 3 * k + 3].copy_from_slice(&p[..3]);
                 }
@@ -1471,6 +1500,7 @@ pub fn set_gbuffer(on: Option<f32>) {
 pub fn post_3d() {
     with(|g, gl| {
         g.flush(gl);
+        let _t = super::fps::timer(super::fps::Phase::Post);
         let lights = std::mem::take(&mut g.lights);
         let Some(d) = &g.gdepth else { return };
         let (tex, ms, colour) = (d.tex, d.ms, d.colour);
