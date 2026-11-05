@@ -458,28 +458,31 @@ gamma at the frame shown.
 
 #### Performance of the effects (the user, 2026-11-05: the CPU is overloaded)
 
-With AO, lights and shadows on, the CPU side costs far more than the GPU passes (~0.6 ms).
-Measure first (a sampling profiler on the release build, e.g. `samply` or VS's profiler; a
-frame time per phase under `FCOP_FPS=1`), then fix what shows. Suspects, all per primitive or
-per projected point, and paid again for every picture `fps.rs` draws between game frames:
-- [ ] `ao::point` / `ao::depths`: a Mutex lock and a HashMap insert or lookup per projected
-      point and per vertex (thousands a frame). Instead: a flat grid or sorted Vec owned by
-      the render thread (no Mutex; the hooks and `glide::add` run on the same thread), cleared
-      by length, not freed.
-- [ ] `ao::depth_near`: a linear scan over all points for every primitive without a depth
-      (smoke trails): O(points x primitives). A coarse grid (cells of 160 units) makes it local.
-- [ ] `ao::sprite_at`: a linear scan over the frame's sprites per primitive without a
-      projected corner; same grid.
-- [ ] `glide::add`: `Vec` allocations per primitive (the points for `depths`, the corners for
-      lights); reuse buffers. `glow_colour` samples 36 texels per glow: cache the mean per
-      texture rectangle.
-- [ ] Lights: merging is O(lights²) per view; with many glows (explosions) bound it (a grid,
-      or merge as they come).
+With AO, lights and shadows on, the CPU side cost far more than the GPU passes.
+Measured 2026-11-05 (`FCOP_FPS=1 FCOP_PHASES=1`: µs a frame per phase; first mission at
+1920x1080, unlimited frame rate, walking and shooting rockets): projected points kept ~130,
+`glide::add` ~480 of which `ao::depths` ~240, `post_3d` (CPU side of the passes) ~260, lights
+from glows up to ~180 in explosions; ~0.9 ms a picture in all. After the fixes below ~0.55 ms
+(timers included); standing still 640-670 fps with the effects (was ~625), 750 without (the
+rest of the gap is the GPU's passes).
+- [x] `ao::point` / `ao::depths`: one thread-local table (the hooks and `glide::add` run on
+      the game's thread), a fast hash instead of SipHash, no Mutex; `depths` writes into a
+      buffer kept by `Glide` (no Vec per primitive).
+- [x] `ao::depth_near`: the points sorted into cells of 160 units at the first call of a
+      frame; it looks in the 3x3 cells around.
+- [x] `ao::sprite_at`: the same table, no lock (sprites are few).
+- [x] Uniform locations asked once per program (`gl::uniform`; ~37 driver calls a picture).
+- [x] `glow_colour` / `Texture::average`: the mean per texture rectangle cached until the
+      texture's next download.
+- [ ] `post_3d` still ~190 µs: the driver's work for 5 draws with framebuffer switches.
+- [ ] Projected points still ~100 µs (thousands of hook calls a frame, the hook overhead
+      included).
+- [ ] Lights: merging is bounded by 32 kept lights (O(n * 32)); fine so far.
 - [ ] Pictures between frames (`fps.rs`): the projected points of the game's frame could be
       kept and moved instead of recomputed, or the effects' CPU work skipped for pictures
       when the frame rate is high (above the refresh rate the extra pictures are not seen).
-- [ ] Effects (step 4): classify once per display list record, not per primitive, and only
-      when a later step needs it.
+- [x] Effects (step 4): classified only when `effects::wanted` (the walker hands records
+      over only then).
 
 #### Ideas after these (the user: "more to come")
 

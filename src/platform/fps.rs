@@ -632,18 +632,74 @@ pub fn clock(c: &mut Cpu) {
     }
 }
 
-/// `FCOP_FPS=1`: log the frames shown per second (called at every frame shown).
-pub fn frame_shown() {
+fn logging() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FCOP_FPS").is_some_and(|v| v != "0"))
+}
+
+/// `FCOP_PHASES=1` (with `FCOP_FPS=1`): time the phases below (the timers cost a little
+/// themselves, so plain fps are measured without).
+fn timing() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| logging() && std::env::var_os("FCOP_PHASES").is_some_and(|v| v != "0"))
+}
+
+/// Parts of the effects' CPU work timed under `FCOP_PHASES=1`.
+#[derive(Clone, Copy)]
+pub enum Phase {
+    /// `ao::point` / `ao::sprite`: the projected points kept
+    Points,
+    /// `glide::add`: a primitive into the batch, all of it
+    Add,
+    /// `ao::depths`: a primitive's vertices' z
+    Depths,
+    /// `glide::add`: a glow made a light
+    Lights,
+    /// `glide::post_3d`: the passes after the 3D picture (CPU side)
+    Post,
+}
+
+const PHASES: [&str; 5] = ["points", "add", "depths", "lights", "post"];
+static NS: [std::sync::atomic::AtomicU64; 5] = [const { std::sync::atomic::AtomicU64::new(0) }; 5];
+
+/// Times its scope as `Phase` (only under `FCOP_PHASES=1`).
+pub struct Timer(Phase, Option<std::time::Instant>);
+
+pub fn timer(p: Phase) -> Timer {
+    Timer(p, timing().then(std::time::Instant::now))
+}
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        if let Some(t) = self.1 {
+            NS[self.0 as usize].fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+/// `FCOP_FPS=1`: log the frames shown per second (with `FCOP_PHASES=1` the timed phases' µs
+/// per frame; called at every frame shown).
+pub fn frame_shown() {
     static COUNT: Mutex<Option<(std::time::Instant, u32)>> = Mutex::new(None);
-    if !*ON.get_or_init(|| std::env::var_os("FCOP_FPS").is_some_and(|v| v != "0")) {
+    if !logging() {
         return;
     }
     let mut c = COUNT.lock().unwrap();
     let (t0, n) = c.get_or_insert_with(|| (std::time::Instant::now(), 0));
     *n += 1;
     if t0.elapsed().as_secs_f32() >= 1.0 {
-        eprintln!("fps: {:.1}", *n as f32 / t0.elapsed().as_secs_f32());
+        let n = *n;
+        let phases: Vec<String> = PHASES
+            .iter()
+            .zip(&NS)
+            .map(|(name, ns)| format!("{name} {:.0}", ns.swap(0, std::sync::atomic::Ordering::Relaxed) as f64 / 1000.0 / n as f64))
+            .collect();
+        let fps = n as f32 / t0.elapsed().as_secs_f32();
+        if timing() {
+            eprintln!("fps: {fps:.1} (µs a frame: {})", phases.join(", "));
+        } else {
+            eprintln!("fps: {fps:.1}");
+        }
         *c = None;
     }
 }

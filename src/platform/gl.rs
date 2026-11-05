@@ -33,6 +33,22 @@ pub struct Gl {
     pub shown: (glow::Texture, u32, u32, bool, f32),
 }
 
+thread_local! {
+    static UNIFORMS: std::cell::RefCell<std::collections::HashMap<(glow::Program, &'static str), Option<glow::UniformLocation>>> = Default::default();
+}
+
+/// A uniform's location in program `p`, asked of the driver once (asking for each in every
+/// picture cost the effects' passes ~0.2 ms).
+pub fn uniform(gl: &glow::Context, p: glow::Program, name: &'static str) -> Option<glow::UniformLocation> {
+    UNIFORMS.with_borrow_mut(|u| u.entry((p, name)).or_insert_with(|| unsafe { gl.get_uniform_location(p, name) }).clone())
+}
+
+/// Deletes program `p` and forgets its uniforms (a new program may get its number).
+pub fn delete_program(gl: &glow::Context, p: glow::Program) {
+    UNIFORMS.with_borrow_mut(|u| u.retain(|k, _| k.0 != p));
+    unsafe { gl.delete_program(p) };
+}
+
 pub fn compile(gl: &glow::Context, vs: &str, fs: &str) -> glow::Program {
     unsafe {
         let p = gl.create_program().expect("GL program");
