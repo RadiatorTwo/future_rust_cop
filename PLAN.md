@@ -410,7 +410,7 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
       REG_DWORD `LitSmoke` default on, `FCOP_LIT_SMOKE=0/1`, works only with Dynamic Lights):
       the game's smoke is additive (blend SRC_ALPHA, ONE; the alpha-blended textured records
       are level geometry: windows, railings, signs), so "lit" means tinted: an effect of kind
-      Smoke (`effects.rs`) times 1 + `lights::SMOKE_STRENGTH` (2.0) * the light reaching it, by
+      Smoke (`effects.rs`) times 1 + `lights::SMOKE_STRENGTH` (4.0) * the light reaching it, by
       distance (falloff (1 - d/r)², no normal) plus half as much from lights behind it within
       1.5 reach sideways (forward scattering). The lights are the view's merged list of its
       last picture (`Lighting::run` gives them back, `Glide::smoke_lights` by scissor box), so

@@ -60,7 +60,7 @@ const STRENGTH: f32 = 1.6;
 /// And plus this much of it, as if every surface were at least this bright.
 const ADDED: f32 = 0.12;
 /// Additive smoke times 1 + this much of the light reaching it (`glide`'s fragment shader).
-pub const SMOKE_STRENGTH: f32 = 2.0;
+pub const SMOKE_STRENGTH: f32 = 4.0;
 /// With shadows on: the strongest this many lights cast them.
 const SHADOWED: i32 = 8;
 
