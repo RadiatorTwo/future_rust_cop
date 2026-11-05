@@ -358,16 +358,31 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
 
 #### Step 4: knowing the effects (needed by steps 5-9)
 
-- [ ] Which primitive is which effect: smoke, fire, explosion, rocket trail, muzzle flash,
-      police light, spark. By the texture's hash (as `hd.rs` hashes every download; the
-      pieces seen with `FCOP_DUMP_TEXTURES=1` / `fcop export`), sorted by hand into a small
-      table in the code (only hashes, nothing from the EXE), with the blend mode as a
-      fallback (additive = glowing, alpha-blended grey = smoke). A flat vertex attribute
-      `effect` to the shader.
+- [x] Which primitive is which effect (2026-11-05, `effects.rs`): by its display list record,
+      not by screen heuristics. In precise mode a record's x/y pairs (+0x28) are exactly the
+      vertices `glide::add` gets; the walker hands the 3D picture's records over in order and
+      each primitive finds its own by its first vertex (looking a few records ahead). Byte +6
+      is the blend: 0 opaque, 1 alpha, 2 additive, 3 darkening. Effects are 2 and 3: a line
+      is the laser, untextured ones glows (0x5b/0x5c: muzzle and lamp glows, vertex colours),
+      textured ones by their texture rectangle's mean colour smoke (grey, or darkening:
+      0xbc puffs, 0xdc rocket trail), fire (warm: fireballs) or energy (cool: muzzle flashes,
+      the blue shock wave). A flat vertex attribute `effect` to the shader. No hash table
+      needed so far; police lights still by `lights::police`'s pure red.
+- [ ] Not all opaque / alpha-blended geometry finds its record (up to ~40% in some pictures:
+      drawn split or clipped otherwise); effects did in the tests. Needed only if a later step
+      wants the record of geometry.
 - [ ] Reverse engineering, as far as needed: the game's particle/effect system (who adds the
-      sprite records, 0x457140's callers; the emitter's place, speed, age). Needed for
-      step 5's extra particles and for rockets' direction in step 7.
-- [ ] `FCOP_GBUFFER=effects` colours each kind, to check the table.
+      effect records; the emitter's place, speed, age). Needed for step 5's extra particles
+      and for rockets' direction in step 7.
+- [x] `FCOP_GBUFFER=effects` colours each kind (smoke grey, fire orange, glow yellow, laser
+      magenta, energy cyan; the rest dark grey). Seen in the first mission. Open: the player's
+      robot keeps some colour there (drawn outside the classified pass?).
+- Learned 2026-11-05: a census by texture rectangle caught mostly models drawn again
+  additively and the laser; "no corner is a projected point" caught level geometry. Type 5
+  records (0x35, sprites in 640x480 units) are not the glows. The replay of a recording
+  (`FCOP_INPUT=@file`) drifts (loading times shift the input; the robot gets stuck at
+  walls): test with short scripts standing still, or the user plays with `FCOP_EFFECT_LOG=1`
+  (records, blends and texture rectangles of blended primitives to `Textures/effects/`).
 
 #### Step 5: better particles, soft particles, smoke
 
@@ -440,6 +455,31 @@ While drawing (per fragment): soft particles, lit smoke, height fog. At the HUD'
 the finished 3D picture (blended effects included, so these use step 0's mask to leave them
 alone): SSAO -> dynamic lights -> shadows -> distortion -> bloom. Then the HUD, then the
 gamma at the frame shown.
+
+#### Performance of the effects (the user, 2026-11-05: the CPU is overloaded)
+
+With AO, lights and shadows on, the CPU side costs far more than the GPU passes (~0.6 ms).
+Measure first (a sampling profiler on the release build, e.g. `samply` or VS's profiler; a
+frame time per phase under `FCOP_FPS=1`), then fix what shows. Suspects, all per primitive or
+per projected point, and paid again for every picture `fps.rs` draws between game frames:
+- [ ] `ao::point` / `ao::depths`: a Mutex lock and a HashMap insert or lookup per projected
+      point and per vertex (thousands a frame). Instead: a flat grid or sorted Vec owned by
+      the render thread (no Mutex; the hooks and `glide::add` run on the same thread), cleared
+      by length, not freed.
+- [ ] `ao::depth_near`: a linear scan over all points for every primitive without a depth
+      (smoke trails): O(points x primitives). A coarse grid (cells of 160 units) makes it local.
+- [ ] `ao::sprite_at`: a linear scan over the frame's sprites per primitive without a
+      projected corner; same grid.
+- [ ] `glide::add`: `Vec` allocations per primitive (the points for `depths`, the corners for
+      lights); reuse buffers. `glow_colour` samples 36 texels per glow: cache the mean per
+      texture rectangle.
+- [ ] Lights: merging is O(lights²) per view; with many glows (explosions) bound it (a grid,
+      or merge as they come).
+- [ ] Pictures between frames (`fps.rs`): the projected points of the game's frame could be
+      kept and moved instead of recomputed, or the effects' CPU work skipped for pictures
+      when the frame rate is high (above the refresh rate the extra pictures are not seen).
+- [ ] Effects (step 4): classify once per display list record, not per primitive, and only
+      when a later step needs it.
 
 #### Ideas after these (the user: "more to come")
 
