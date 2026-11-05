@@ -386,10 +386,13 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
 
 #### Step 5: better particles, soft particles, smoke
 
-- [ ] Soft particles: blended sprites fade where they come near the scene behind them
-      (alpha *= clamp((scene z - sprite z) / d, 0, 1), the depth texture of step 0 read in
-      the fragment shader; the sprite's own z from 0x457140's hook). No more hard lines where
-      smoke and explosions cut into the ground and walls.
+- [-] Soft particles: tried 2026-11-05 and dropped (the user agreed). Built with the depth
+      attachment read while drawing (glTextureBarrier), effects faded by
+      clamp((scene z - z) / reach, 0, 1). The game draws without a depth test (far to near), so
+      its effects never cut hard lines into the ground or walls: nothing to soften. Its
+      explosions sit right on the wall they hit, and those faded away nearly whole, even with a
+      reach of 60. (A variant could hide effects the game sorts in front of a wall they are
+      behind; not seen to happen.)
 - [ ] Smoke: the game's smoke sprites drawn softer and fuller: a noise texture of our own
       (generated, no asset) scrolled over them, the edge from it, a slow turn and growth by
       age (needs step 4's age, else by the sprite's size).
@@ -403,16 +406,21 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
 
 #### Step 6: lit smoke
 
-- [ ] Smoke and other alpha-blended (not additive) effects take the lights of step 2 in
-      their own fragment shader (the light list as a uniform buffer), with no normal:
-      light by distance only, plus a little light from behind (forward scattering) so a
-      fire or explosion behind a cloud makes its edge glow. Explosions colour it orange,
-      police lights blue/red.
-- [ ] Police lights as sources: the cars' flashing lights are found by step 4 (texture or
-      colour); if the game draws them only as small sprites, their light gets a larger
-      radius and a flicker that follows the sprite's own blink.
+- [x] Done 2026-11-05 (`glide.rs` fragment shader; box "Lit Smoke" in Advanced Graphics,
+      REG_DWORD `LitSmoke` default on, `FCOP_LIT_SMOKE=0/1`, works only with Dynamic Lights):
+      the game's smoke is additive (blend SRC_ALPHA, ONE; the alpha-blended textured records
+      are level geometry: windows, railings, signs), so "lit" means tinted: an effect of kind
+      Smoke (`effects.rs`) times 1 + `lights::SMOKE_STRENGTH` (4.0) * the light reaching it, by
+      distance (falloff (1 - d/r)², no normal) plus half as much from lights behind it within
+      1.5 reach sideways (forward scattering). The lights are the view's merged list of its
+      last picture (`Lighting::run` gives them back, `Glide::smoke_lights` by scissor box), so
+      a picture late. Seen on rocket trails (their puffs are Smoke: redder near the red
+      ribbon, orange near explosions); grey explosion smoke was rare in the first mission.
+      `effects::wanted` is on with the lights (the records give the kind).
+- [x] Police lights as sources: done in step 2 (`lights::police`).
 - [ ] Strongest in dark missions: a light's strength against the picture's brightness
       (the scene's mean, measured on a small mip of the target).
+- [ ] Check in a mission with burning wrecks / lots of grey smoke.
 
 #### Step 7: heat shimmer / distortion
 

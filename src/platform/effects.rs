@@ -58,7 +58,7 @@ pub fn showing() -> bool {
 
 /// Something needs the primitives' records.
 pub fn wanted() -> bool {
-    logging() || showing()
+    logging() || showing() || super::lights::smoke_enabled()
 }
 
 /// A record's bytes +4 ... +7: type, two more, texture number.

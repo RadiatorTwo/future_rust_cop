@@ -314,6 +314,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `ao::depth_near`, the nearest point's z within 160 units) are `lights::trail`, size at least
   150, a share each (0.15 / 0.4), merged to a few lights along it. Lights are merged only with
   a like hue (red and blue apart).
+  Lit smoke (PLAN.md 2a step 6; REG_DWORD `LitSmoke`, default on, `FCOP_LIT_SMOKE=0/1`, box in
+  Advanced Graphics, only with the lights on): additive effects of kind Smoke (`effects.rs`;
+  `effects::wanted` is on with it) are tinted in `glide`'s fragment shader by the view's
+  merged lights of its last picture (`Lighting::run` returns them, `Glide::smoke_lights` by
+  scissor box): times 1 + `SMOKE_STRENGTH` * light by distance, plus light from behind.
 - `effects.rs`: which primitive is an effect (PLAN.md 2a step 4). The walker hands the 3D
   picture's display list records over in order (`effects::begin`, only when `wanted`); in
   precise mode their x/y (+0x28) are the vertices `glide::add` gets, so each primitive finds

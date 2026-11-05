@@ -99,6 +99,7 @@ const ADVANCED_ROWS: i32 = 16;
 const AMBIENT_OCCLUSION: u32 = FIRST_OURS + 20;
 const DYNAMIC_LIGHTS: u32 = FIRST_OURS + 21;
 const SHADOWS: u32 = FIRST_OURS + 22;
+const LIT_SMOKE: u32 = FIRST_OURS + 23;
 /// The Controller dialog's "Player1" / "Player2 " titles.
 const PLAYER_TITLES: [u32; 2] = [1025, 1154];
 
@@ -156,10 +157,11 @@ pub fn template(id: u32) -> Template {
     add(Class::Button, AMBIENT_OCCLUSION, "Ambient Occlusion", TABSTOP | 3, [7, 10, w - 14, 9]);
     add(Class::Button, DYNAMIC_LIGHTS, "Dynamic Lights", TABSTOP | 3, [7, 22, w - 14, 9]);
     add(Class::Button, SHADOWS, "Shadows", TABSTOP | 3, [7, 34, w - 14, 9]);
+    add(Class::Button, LIT_SMOKE, "Lit Smoke (with Dynamic Lights)", TABSTOP | 3, [7, 46, w - 14, 9]);
     // OK (1, the default) and Cancel (2), bottom right
-    add(Class::Button, 1, "OK", TABSTOP | 1, [w - 116, 54, 50, 14]);
-    add(Class::Button, 2, "Cancel", TABSTOP, [w - 57, 54, 50, 14]);
-    Template { style: 0x00c0_0000, title: "Advanced Graphics".into(), rect: [0, 0, w, 74], font: None, items }
+    add(Class::Button, 1, "OK", TABSTOP | 1, [w - 116, 66, 50, 14]);
+    add(Class::Button, 2, "Cancel", TABSTOP, [w - 57, 66, 50, 14]);
+    Template { style: 0x00c0_0000, title: "Advanced Graphics".into(), rect: [0, 0, w, 86], font: None, items }
 }
 
 fn renderer() -> String {
@@ -331,6 +333,9 @@ pub fn init(d: &mut Dialog) {
         }
         if let Some(c) = d.control(SHADOWS) {
             c.check = crate::platform::shadows::enabled() as u32;
+        }
+        if let Some(c) = d.control(LIT_SMOKE) {
+            c.check = crate::platform::lights::smoke_chosen() as u32;
         }
     }
     if d.template == JOIN {
@@ -558,6 +563,9 @@ pub fn ok(d: &mut Dialog) {
         }
         if let Some(on) = d.control(SHADOWS).map(|c| c.check != 0) {
             crate::platform::shadows::set_enabled(on);
+        }
+        if let Some(on) = d.control(LIT_SMOKE).map(|c| c.check != 0) {
+            crate::platform::lights::set_smoke(on);
         }
     }
 }

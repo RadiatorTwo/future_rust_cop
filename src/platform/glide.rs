@@ -194,6 +194,8 @@ struct Glide {
     lights: Vec<super::lights::Light>,
     /// `add`'s vertices' depths, kept between primitives
     zbuf: Vec<f32>,
+    /// each view's (scissor box) last merged lights (`lpos`, `lcol`): its smoke is lit by them
+    smoke_lights: Vec<([i32; 4], Vec<f32>, Vec<f32>)>,
     lighting: Option<super::lights::Lighting>,
 }
 
@@ -257,6 +259,14 @@ flat in uvec4 vmode;   // combine units and texture, packed by `add`
 flat in vec4 st_box;   // the primitive's texture rectangle
 flat in uint veffect;  // what effect it is (`effects::Effect`), 0 none
 uniform int show_effects;  // FCOP_GBUFFER=effects: each kind in a colour of its own
+// lit smoke (`lights.rs`): the dynamic lights of this view's last picture, as its pass has them
+const int SMOKE_MAX = 32;
+uniform int smoke_count;
+uniform vec4 smoke_lpos[SMOKE_MAX];  // view space, reach
+uniform vec3 smoke_lcol[SMOKE_MAX];
+uniform vec2 smoke_size;   // the target in pixels
+uniform float smoke_focal; // pixels per unit at z = 1
+uniform float smoke_k;     // the smoke times 1 + this much of the light
 layout(location = 0) out vec4 color;
 layout(location = 1) out vec4 gbuf;
 
@@ -395,6 +405,24 @@ void main() {
     if (edge == 2) a *= cover;
     if (edge == 3) c *= cover;
     if (cover <= 0.0) discard;
+    // lit smoke: by distance (no normal), and from behind through it (forward scattering)
+    if (smoke_count > 0 && veffect == 1u && vinvz > 0.0) {
+        float z = 1.0 / vinvz;
+        vec3 p = vec3((gl_FragCoord.xy - 0.5 * smoke_size) * z / smoke_focal, z);
+        vec3 sum = vec3(0.0);
+        for (int i = 0; i < smoke_count; i++) {
+            vec3 l = smoke_lpos[i].xyz - p;
+            float r = smoke_lpos[i].w;
+            float d = length(l);
+            float w = d < r ? (1.0 - d / r) * (1.0 - d / r) : 0.0;
+            if (l.z > 0.0 && l.z < 2.0 * r) {
+                float s = max(1.0 - length(l.xy) / (1.5 * r), 0.0);
+                w += 0.5 * s * s * (1.0 - l.z / (2.0 * r));
+            }
+            sum += smoke_lcol[i] * w;
+        }
+        c = min(c * (1.0 + smoke_k * sum), vec3(1.0));
+    }
     color = vec4(c, a);
     if (show_effects != 0) {
         const vec3 kinds[8] = vec3[8](vec3(0.0), vec3(0.6), vec3(1.0, 0.4, 0.0), vec3(1.0, 1.0, 0.0),
@@ -426,6 +454,12 @@ struct Uniforms {
     edge: Option<glow::UniformLocation>,
     gmode: Option<glow::UniformLocation>,
     show_effects: Option<glow::UniformLocation>,
+    smoke_count: Option<glow::UniformLocation>,
+    smoke_lpos: Option<glow::UniformLocation>,
+    smoke_lcol: Option<glow::UniformLocation>,
+    smoke_size: Option<glow::UniformLocation>,
+    smoke_focal: Option<glow::UniformLocation>,
+    smoke_k: Option<glow::UniformLocation>,
 }
 
 impl Uniforms {
@@ -444,6 +478,12 @@ impl Uniforms {
             edge: u("edge"),
             gmode: u("gmode"),
             show_effects: u("show_effects"),
+            smoke_count: u("smoke_count"),
+            smoke_lpos: u("smoke_lpos"),
+            smoke_lcol: u("smoke_lcol"),
+            smoke_size: u("smoke_size"),
+            smoke_focal: u("smoke_focal"),
+            smoke_k: u("smoke_k"),
         }
     }
 }
@@ -711,6 +751,7 @@ impl Glide {
                 ssao: None,
                 lights: Vec::new(),
                 zbuf: Vec::new(),
+                smoke_lights: Vec::new(),
                 lighting: None,
             }
         }
@@ -1009,6 +1050,23 @@ impl Glide {
             };
             gl.uniform_1_i32(u.gmode.as_ref(), gmode);
             gl.uniform_1_i32(u.show_effects.as_ref(), (self.gbuf.is_some() && super::effects::showing()) as i32);
+            // lit smoke: additive effects of the 3D picture take the view's last lights
+            let lit = match (&self.gdepth, self.gbuf) {
+                (Some(_), Some(_)) if dst == glow::ONE && super::lights::smoke_enabled() => {
+                    let clip = self.scissor_box(s.clip);
+                    self.smoke_lights.iter().find(|l| l.0 == clip).filter(|l| !l.1.is_empty())
+                }
+                _ => None,
+            };
+            gl.uniform_1_i32(u.smoke_count.as_ref(), lit.map_or(0, |l| (l.1.len() / 4) as i32));
+            if let Some((_, pos, col)) = lit {
+                let (tw, th) = (self.target.0 as f32, self.target.1 as f32);
+                gl.uniform_4_f32_slice(u.smoke_lpos.as_ref(), pos);
+                gl.uniform_3_f32_slice(u.smoke_lcol.as_ref(), col);
+                gl.uniform_2_f32(u.smoke_size.as_ref(), tw, th);
+                gl.uniform_1_f32(u.smoke_focal.as_ref(), 4096.0 * th / 1920.0);
+                gl.uniform_1_f32(u.smoke_k.as_ref(), super::lights::SMOKE_STRENGTH);
+            }
             if self.gdepth.is_some() {
                 match gmode {
                     1 => gl.color_mask_draw_buffer(1, true, true, false, false),
@@ -1514,7 +1572,13 @@ pub fn post_3d() {
             g.ssao.get_or_insert_with(|| super::ao::Ssao::new(gl)).run(gl, tex, ms, target, colour, clip, ao, sun);
         }
         if super::lights::enabled() {
-            g.lighting.get_or_insert_with(|| super::lights::Lighting::new(gl)).run(gl, tex, ms, target, colour, clip, &lights);
+            let (pos, col) = g.lighting.get_or_insert_with(|| super::lights::Lighting::new(gl)).run(gl, tex, ms, target, colour, clip, &lights);
+            g.smoke_lights.retain(|l| l.0 != clip);
+            // a view's box changes with the window: the oldest go
+            if g.smoke_lights.len() >= 4 {
+                g.smoke_lights.remove(0);
+            }
+            g.smoke_lights.push((clip, pos, col));
         }
     });
 }
