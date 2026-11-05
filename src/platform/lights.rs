@@ -34,12 +34,33 @@ pub fn set_enabled(on: bool) {
     SETTING.set(on);
 }
 
+/// Lit smoke (PLAN.md 2a step 6): REG_DWORD `LitSmoke` (default on), `FCOP_LIT_SMOKE=0/1`;
+/// works only with the dynamic lights.
+static SMOKE_SETTING: Setting = Setting::with_default("LitSmoke", "FCOP_LIT_SMOKE", true);
+
+/// The setting alone (the dialog's box).
+pub fn smoke_chosen() -> bool {
+    SMOKE_SETTING.get()
+}
+
+/// Smoke takes the lights: chosen, and the lights on.
+pub fn smoke_enabled() -> bool {
+    enabled() && SMOKE_SETTING.get()
+}
+
+/// The Advanced Graphics dialog's OK.
+pub fn set_smoke(on: bool) {
+    SMOKE_SETTING.set(on);
+}
+
 /// The most lights applied to a picture.
 const MAX: usize = 32;
 /// The picture times 1 + this much of the light.
 const STRENGTH: f32 = 1.6;
 /// And plus this much of it, as if every surface were at least this bright.
 const ADDED: f32 = 0.12;
+/// Additive smoke times 1 + this much of the light reaching it (`glide`'s fragment shader).
+pub const SMOKE_STRENGTH: f32 = 2.0;
 /// With shadows on: the strongest this many lights cast them.
 const SHADOWED: i32 = 8;
 
@@ -226,11 +247,12 @@ impl Lighting {
     }
 
     /// The lights over the 3D picture: `depth` the attachment, `target` its size, `out` a
-    /// framebuffer with only the picture's colour, `clip` the scissor box.
-    pub fn run(&mut self, gl: &glow::Context, depth: glow::Texture, ms: bool, target: (u32, u32), out: glow::Framebuffer, clip: [i32; 4], lights: &[Light]) {
+    /// framebuffer with only the picture's colour, `clip` the scissor box. Gives the merged
+    /// lights as the shaders take them (`lpos`, `lcol`), for the smoke of the next picture.
+    pub fn run(&mut self, gl: &glow::Context, depth: glow::Texture, ms: bool, target: (u32, u32), out: glow::Framebuffer, clip: [i32; 4], lights: &[Light]) -> (Vec<f32>, Vec<f32>) {
         let show = ao::debug_view();
         if lights.is_empty() && show != 3 || matches!(show, 1 | 2 | 4) {
-            return;
+            return Default::default();
         }
         let (w, h) = (target.0 as i32, target.1 as i32);
         let focal = 4096.0 * h as f32 / 1920.0;
@@ -278,5 +300,6 @@ impl Lighting {
             gl.disable(glow::SCISSOR_TEST);
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         }
+        (pos, col)
     }
 }
