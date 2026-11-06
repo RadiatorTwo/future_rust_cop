@@ -443,6 +443,20 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   team = robot data +0xc1 as i8; HUD 0x434e34, a pickup adds 200 at 0x44ed7d), only in mode
   +0x5c = 1 (Precinct Assault, its end is the score screen 0x407fe0). (The user's Cheat
   Engine address 0x80FF0344 was guest 0x1000344 with the guest base at 0x7FFF0000.)
+- Savestates (`savestate.rs`, test tool): cheats `save` / `load` (Shift+F7 / F8, FCOP_INPUT
+  "20000:save 30000:load"), one slot: `savestate.bin` in the game folder (kept by `setup`),
+  loadable after a restart. In the frame wait: recompiled code returns through the host stack
+  and reloads every register from `Cpu` after a call, so at the same call chain (same ESP and
+  return address, same mission file: `kernel32::LAST_MISSION`) memory and registers can be put
+  back. `MemoryCopy` (platform/mod.rs, `write`/`read`): EXE pages, main TIB and stack, heap up
+  to its top plus the `Heap` bookkeeping. Also events' state and files' positions. The guest's
+  clocks (QPC, GetTickCount, timeGetTime, `fps::ticks`) are `kernel32::guest_us`, shifted back
+  to the saved time on load; `fps::forget` drops the kept places. Host state (textures, sound
+  buffers, kernel objects, threads) is the running one's: a fingerprint (heap blocks, object
+  handles and kinds, sound buffer addresses, Glide texture addresses) taken at each mission's
+  first frame (hook of the mission loop 0x406820) must equal the saved one, else the load is
+  refused naming the part. Scripted: a fresh start with "8000:click@484,303 16000:load" (and
+  FCOP_NO_VIDEO=1) loads one saved the same way. Sounds playing are not kept.
 - Cameras (`camera.rs`): robot_camera 0x4456a0 (hooked) places the player's camera each
   frame; the camera key counts the robot data's mode +0xa4 (0...6, a table at 0x48c468 /
   presets at 0x48c2a8) and sets a timer +0xae to 900 (a press = that timer going up). Modes 5

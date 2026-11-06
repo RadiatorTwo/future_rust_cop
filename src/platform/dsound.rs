@@ -215,6 +215,11 @@ pub fn stream_stop() {
     mixer().stream = None;
 }
 
+/// For a savestate's fingerprint (`savestate.rs`): the buffers' guest addresses.
+pub fn buffers() -> Vec<u32> {
+    mixer().voices.keys().copied().collect()
+}
+
 fn mixer() -> MutexGuard<'static, Mixer> {
     let mut m = MIX.lock().unwrap_or_else(|e| e.into_inner());
     if !m.started {

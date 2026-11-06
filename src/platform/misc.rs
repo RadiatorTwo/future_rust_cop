@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 fn time_get_time(_: &mut Cpu) -> u32 {
-    super::kernel32::ms_since_start()
+    super::kernel32::guest_ms()
 }
 
 fn time_get_dev_caps(c: &mut Cpu) -> u32 {

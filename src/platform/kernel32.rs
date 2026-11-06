@@ -42,6 +42,43 @@ pub fn objects() -> MutexGuard<'static, Objects> {
     OBJS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// For a savestate's fingerprint (`savestate.rs`): each handle and its kind.
+pub fn object_kinds() -> Vec<(u32, u32)> {
+    objects().map.iter().map(|(&h, o)| (h, match o { Obj::File(_) => 1, Obj::Std(_) => 2, Obj::Event { .. } => 3, Obj::Mutex { .. } => 4, Obj::Thread { .. } => 5, Obj::Heap => 6 })).collect()
+}
+
+/// What a savestate keeps of the objects: events' state, files' positions.
+pub fn object_states() -> Vec<(u32, u64)> {
+    use std::io::Seek;
+    let g = objects();
+    let mut v = Vec::new();
+    for (&h, o) in &g.map {
+        match o {
+            Obj::Event { set, .. } => v.push((h, *set as u64)),
+            Obj::File(f) => v.push((h, f.lock().unwrap().stream_position().unwrap_or(0))),
+            _ => {}
+        }
+    }
+    v
+}
+
+/// A savestate's events and file positions put back.
+pub fn set_object_states(states: &[(u32, u64)]) {
+    use std::io::{Seek, SeekFrom};
+    let mut g = objects();
+    for &(h, s) in states {
+        match g.map.get_mut(&h) {
+            Some(Obj::Event { set, .. }) => *set = s != 0,
+            Some(Obj::File(f)) => {
+                let _ = f.lock().unwrap().seek(SeekFrom::Start(s));
+            }
+            _ => {}
+        }
+    }
+    drop(g);
+    SIGNAL.notify_all();
+}
+
 impl Objects {
     pub fn add(&mut self, o: Obj) -> u32 {
         self.next += 4;
@@ -761,8 +798,26 @@ pub fn ms_since_start() -> u32 {
     start_time().elapsed().as_millis() as u32
 }
 
+/// The guest's clocks (QueryPerformanceCounter, GetTickCount, timeGetTime) are this many
+/// µs ahead of `start_time`: a savestate puts them back to its time (`savestate.rs`).
+static CLOCK_SHIFT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// The guest's clock in µs.
+pub fn guest_us() -> u64 {
+    (start_time().elapsed().as_micros() as i64 + CLOCK_SHIFT.load(Ordering::Relaxed)).max(0) as u64
+}
+
+/// The guest's clock reads `us` now.
+pub fn set_guest_us(us: u64) {
+    CLOCK_SHIFT.store(us as i64 - start_time().elapsed().as_micros() as i64, Ordering::Relaxed);
+}
+
+pub fn guest_ms() -> u32 {
+    (guest_us() / 1000) as u32
+}
+
 fn get_tick_count(_: &mut Cpu) -> u32 {
-    ms_since_start()
+    guest_ms()
 }
 
 fn query_performance_frequency(c: &mut Cpu) -> u32 {
@@ -774,7 +829,7 @@ fn query_performance_frequency(c: &mut Cpu) -> u32 {
 
 fn query_performance_counter(c: &mut Cpu) -> u32 {
     let p = arg(c, 0);
-    let t = start_time().elapsed().as_micros() as u64;
+    let t = guest_us();
     mem().wr32(p, t as u32);
     mem().wr32(p + 4, (t >> 32) as u32);
     1
@@ -787,6 +842,10 @@ fn sleep(c: &mut Cpu) -> u32 {
 }
 
 // ---- files --------------------------------------------------------------------------------------
+
+/// The mission file opened last (lower case): a savestate is only for the mission it was
+/// made in.
+pub static LAST_MISSION: Mutex<String> = Mutex::new(String::new());
 
 fn create_file(c: &mut Cpu) -> u32 {
     let (name, access, disp) = (cstr(arg(c, 0)), arg(c, 1), arg(c, 4));
@@ -805,6 +864,9 @@ fn create_file(c: &mut Cpu) -> u32 {
         Ok(f) => {
             if super::trace_api() {
                 log!("CreateFileA {name} (access {access:#x}, disposition {disp})");
+            }
+            if name.to_ascii_lowercase().contains("missions\\") {
+                *LAST_MISSION.lock().unwrap() = name.to_ascii_lowercase();
             }
             objects().add(Obj::File(Arc::new(Mutex::new(f))))
         }
