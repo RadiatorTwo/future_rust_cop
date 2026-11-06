@@ -452,20 +452,24 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
 
 #### Step 8: height fog
 
-- [ ] Per pixel the world height: the view-space position (step 0) through the camera's
-      inverse ([0x511f48]: matrix and position; y is up). Fog density grows below a height
-      (per mission: from the terrain's height range, `Ctil`, so low streets and trenches get
-      haze and rooftops stay clear), falls off exponentially above, times the distance the
-      view ray runs through it (the closed formula for exponential height fog, no ray
-      march). Colour per mission (a table; default from the sky / clear colour).
-- [ ] In the drawing fragment shader itself (every fragment has its z from step 0), opaque
-      and blended alike, not as a post pass: blended things are drawn between the opaque
-      ones, a post pass would fog a sprite by the wall behind it. Subtle by default.
-- [ ] Setting: Height Fog Off / On (strength later); `FCOP_FOG=0/1`; per-mission table
-      checked in every mission with FCOP_SHOT.
-
+- [-] Tried 2026-11-06 and dropped (the user: looked bad). Built in the drawing fragment
+      shader: world height from the fragment's view-space position, exponential density above
+      the mission's most common terrain height, closed-form integral, colour = the last
+      frame's mean (the game clears to black, little sky). With the game's high camera looking
+      down it was mostly a grey veil over the far half and low places. Learned: the camera's
+      world -> view matrix is +0x58 (column 1 = world up in view space, stays when the camera
+      turns; +0x28 turns with it), view space = world (20.12) >> 4, the camera ~3000 object
+      units above the ground at M2C's start (ground -736).
 #### Step 9: subtle bloom
 
+- [x] First version 2026-11-06 (`bloom.rs`; box "Bloom" in Advanced Graphics, REG_DWORD
+      `Bloom` default off, `FCOP_BLOOM=0/1`, `FCOP_GBUFFER=bloom` the glow alone): without
+      HDR. In `glide::post_3d` after the heat shimmer: the view's picture copied, its bright
+      part at half resolution (soft threshold 0.72, knee 0.2; where the depth attachment's
+      mask says an additive effect was drawn the threshold goes down to 0.5 (0.3: the robot's transformation, drawn with additive effects over it, glowed whole); each pixel
+      weighted 1 / (1 + brightness) against flicker), 6 levels down (13 taps), back up (3x3
+      tent, each larger level weighted 1.45x more (1.6 was too much over all): the glow reaches around a bright thing, at first it stayed on the explosion itself), added at 0.35 of the bright part (0.12 too subtle, 0.6 and 0.45 too strong). Seen at M2C's start: the wall lamp and the robot's police
+      lights glow. Open: the user's look in motion (explosions), strength; cost.
 - [ ] Brightness first: the target in RGBA16F (HDR, Texture Coloring's up to 2x not clipped
       before the end), else bloom has nothing above white to work with.
 - [ ] Source: the bright part of the 3D picture (soft threshold) plus the glowing effects

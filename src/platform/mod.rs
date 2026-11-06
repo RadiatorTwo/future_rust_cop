@@ -9,6 +9,7 @@
 pub mod advapi32;
 pub mod ao;
 pub mod camera;
+pub mod bloom;
 pub mod cheats;
 pub mod ddraw;
 pub mod dialog;

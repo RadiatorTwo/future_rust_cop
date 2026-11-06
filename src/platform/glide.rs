@@ -200,6 +200,8 @@ struct Glide {
     /// the heat shimmer's sources of the view being drawn, and its pass (`heat.rs`)
     heat_sources: Vec<super::heat::Source>,
     heat: Option<super::heat::Heat>,
+    /// the bloom's pass (`bloom.rs`)
+    bloom: Option<super::bloom::Bloom>,
 }
 
 /// The depth attachment, and a framebuffer with only the colour of the one drawn into (the
@@ -765,6 +767,7 @@ impl Glide {
                 lighting: None,
                 heat_sources: Vec::new(),
                 heat: None,
+                bloom: None,
             }
         }
     }
@@ -1519,6 +1522,9 @@ fn sst_win_close(_: &mut Cpu) -> u32 {
         if let Some(mut s) = g.heat.take() {
             s.delete(gl);
         }
+        if let Some(mut s) = g.bloom.take() {
+            s.delete(gl);
+        }
         gl.delete_framebuffer(g.fbo);
         gl.delete_texture(g.color);
         gl.delete_texture(g.array);
@@ -1621,6 +1627,9 @@ pub fn post_3d() {
         }
         if super::heat::enabled() {
             g.heat.get_or_insert_with(|| super::heat::Heat::new(gl)).run(gl, tex, ms, target, colour, clip, &heat);
+        }
+        if super::bloom::enabled() {
+            g.bloom.get_or_insert_with(|| super::bloom::Bloom::new(gl)).run(gl, tex, ms, target, colour, clip);
         }
     });
 }
