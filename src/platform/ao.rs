@@ -37,9 +37,9 @@ pub fn enabled() -> bool {
     SETTING.get()
 }
 
-/// Something needs the depth (AO, dynamic lights or shadows).
+/// Something needs the depth (AO, dynamic lights, shadows or the heat shimmer).
 pub fn depth_wanted() -> bool {
-    enabled() || super::lights::enabled() || super::shadows::enabled()
+    enabled() || super::lights::enabled() || super::shadows::enabled() || super::heat::enabled()
 }
 
 /// The Advanced Graphics dialog's OK: saved, and used from the next frame on.

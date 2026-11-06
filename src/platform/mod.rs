@@ -24,6 +24,7 @@ pub mod gdi32;
 pub mod gl;
 pub mod glide;
 pub mod hd;
+pub mod heat;
 pub mod kernel32;
 pub mod light;
 pub mod lights;
@@ -743,6 +744,7 @@ pub const HOOKS: &[(crate::ver::Us, crate::rt::Hook)] = &[
     (fps::UNPAUSED, fps::unpaused),
     (cheats::FRAME_WAIT, cheats::frame_wait),
     (savestate::MISSION_LOOP, savestate::mission_loop),
+    (effects::GLOW_DRAW, effects::glow_draw),
     (camera::ROBOT_CAMERA, camera::robot_camera),
     (camera::ROBOT_DRAW, camera::robot_draw),
     (camera::RENDER_HUD, camera::render_hud),

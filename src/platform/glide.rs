@@ -197,6 +197,9 @@ struct Glide {
     /// each view's (scissor box) last merged lights (`lpos`, `lcol`): its smoke is lit by them
     smoke_lights: Vec<([i32; 4], Vec<f32>, Vec<f32>)>,
     lighting: Option<super::lights::Lighting>,
+    /// the heat shimmer's sources of the view being drawn, and its pass (`heat.rs`)
+    heat_sources: Vec<super::heat::Source>,
+    heat: Option<super::heat::Heat>,
 }
 
 /// The depth attachment, and a framebuffer with only the colour of the one drawn into (the
@@ -415,9 +418,11 @@ void main() {
             float r = smoke_lpos[i].w;
             float d = length(l);
             float w = d < r ? (1.0 - d / r) * (1.0 - d / r) : 0.0;
+            // from behind: fading in from the smoke's own depth (a hard start at l.z = 0 drew a
+            // line across smoke whose depth changes over the picture: rocket trails)
             if (l.z > 0.0 && l.z < 2.0 * r) {
                 float s = max(1.0 - length(l.xy) / (1.5 * r), 0.0);
-                w += 0.5 * s * s * (1.0 - l.z / (2.0 * r));
+                w += 0.5 * s * s * smoothstep(0.0, 0.5 * r, l.z) * (1.0 - l.z / (2.0 * r));
             }
             sum += smoke_lcol[i] * w;
         }
@@ -758,6 +763,8 @@ impl Glide {
                 zbuf: Vec::new(),
                 smoke_lights: Vec::new(),
                 lighting: None,
+                heat_sources: Vec::new(),
+                heat: None,
             }
         }
     }
@@ -1154,9 +1161,10 @@ impl Glide {
             }
         }
         // the display list record it comes from (`effects.rs`), in the 3D picture
-        let rec = match (self.gbuf, verts.first()) {
-            (Some(dx), Some(&v)) => super::effects::record_of(xy(v).0 - dx, xy(v).1),
-            _ => None,
+        // (and whether it is a model's light)
+        let (rec, model_light) = match (self.gbuf, verts.first()) {
+            (Some(dx), Some(&v)) => super::effects::record_of(xy(v).0 - dx, xy(v).1).map_or((None, false), |(r, l)| (Some(r), l)),
+            _ => (None, false),
         };
         if let (Some(r), true) = (rec, super::effects::logging()) {
             self.census(r, verts, st_box);
@@ -1199,7 +1207,29 @@ impl Glide {
                 self.lights.push(if smoke { super::lights::trail(l, 0.4) } else { l });
             }
         }
-        let effect = rec.map_or(Effect::None, |r| self.effect(r, verts, st_box)) as u32;
+        let effect = rec.map_or(Effect::None, |r| self.effect(r, verts, st_box));
+        // fire, explosions and rocket trails make the picture shimmer (`heat.rs`); an
+        // explosion's fireball is a glow (untextured), told from muzzle flashes and police
+        // lights by its warm vertex colours; lamps' glows are models' lights (`effects.rs`)
+        let warm = || {
+            let n = verts.len().max(1) as f32;
+            let avg = |o: u32| verts.iter().map(|&v| f32::from_bits(m.rd32(v + o))).sum::<f32>() / n;
+            let (r, g, b) = (avg(0xc), avg(0x10), avg(0x14));
+            r > 60.0 && g > 0.35 * r && b < 0.7 * r
+        };
+        let hot = effect == Effect::Fire || effect == Effect::Glow && self.cc[2] == 0 && !model_light && warm();
+        // of the smoke only a rocket's trail (records 0xd_, 3D ribbons): grey clouds and fog
+        // are not hot (sprites 0xbc)
+        let trail = effect == Effect::Smoke && rec.is_some_and(|r| r[0] & 0xf0 == 0xd0);
+        if (hot || trail) && super::heat::enabled() {
+            let (tw, th) = (self.target.0 as f32, self.target.1 as f32);
+            let (sw, sh) = (self.space.0 as f32, self.space.1 as f32);
+            let corners: Vec<_> = verts.iter().map(|&v| (xy(v).0 / sw * tw, th - xy(v).1 / sh * th)).collect();
+            if let Some(s) = super::heat::source(&corners, &z, hot, 4096.0 * th / 1920.0) {
+                self.heat_sources.push(s);
+            }
+        }
+        let effect = effect as u32;
         let mut put = |v: u32, (x, y): (f32, f32), z: f32| {
             let (s, t) = st(v);
             self.batch.extend([x.to_bits(), y.to_bits(), m.rd32(v + 0xc), m.rd32(v + 0x10), m.rd32(v + 0x14), m.rd32(v + 0x1c), s.to_bits(), t.to_bits()]);
@@ -1486,6 +1516,9 @@ fn sst_win_close(_: &mut Cpu) -> u32 {
         if let Some(mut s) = g.lighting.take() {
             s.delete(gl);
         }
+        if let Some(mut s) = g.heat.take() {
+            s.delete(gl);
+        }
         gl.delete_framebuffer(g.fbo);
         gl.delete_texture(g.color);
         gl.delete_texture(g.array);
@@ -1565,6 +1598,7 @@ pub fn post_3d() {
         g.flush(gl);
         let _t = super::fps::timer(super::fps::Phase::Post);
         let lights = std::mem::take(&mut g.lights);
+        let heat = std::mem::take(&mut g.heat_sources);
         let Some(d) = &g.gdepth else { return };
         let (tex, ms, colour) = (d.tex, d.ms, d.colour);
         let clip = g.scissor_box(g.state.clip);
@@ -1584,6 +1618,9 @@ pub fn post_3d() {
                 g.smoke_lights.remove(0);
             }
             g.smoke_lights.push((clip, pos, col));
+        }
+        if super::heat::enabled() {
+            g.heat.get_or_insert_with(|| super::heat::Heat::new(gl)).run(gl, tex, ms, target, colour, clip, &heat);
         }
     });
 }

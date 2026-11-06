@@ -35,9 +35,11 @@
 0x50dc20  textures                pointers by record +7 (page); +0x30 the base its shade-table pointers (record +0x10) count from (light.rs)
 0x42dd90  objects_draw            effects (effects_draw), lists at 0x4a1380 / 0x4a1378, animated objects
 0x4532f0  actors_draw             sends message 3 (draw) to every actor
+0x4271c0  glow_draw               adds a glow's records to the display list (models' lights, explosions, muzzle flashes...); hooked: effects.rs marks models' (lamps)
 0x4280a0  model_draw              (record: +0 model, +4 matrix 3x3, +0x28 position; flags; mode)
 0x4280f0  model_visible
 0x4284b0  model_draw_polygons
+0x428690  model_face_draw?        one face primitive of a model by its kind (word >> 8 & 0xf, 3...8); its glow (a lamp's light) calls glow_draw, returning to 0x428be7
 0x4274b0  line_draw?              a line between two points relative to the camera (the muzzle flash's; the laser sight is drawn by 0x435330)
 0x429830  model_point?            a point of a model in world space (the lights' glow)
 0x453740  project_terrain_vertex  (hooked: wide.rs)
