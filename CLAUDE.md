@@ -339,6 +339,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   applied with it, also with the AO off). The 8 strongest dynamic lights are marched (fully blocked, no fade) in the
   lights' pass. The game's round shadows under objects (blend (0, 5): ZERO, 1 - SRC_ALPHA) are
   not drawn in the 3D picture while it is on (`glide::add`).
+- `heat.rs`: heat shimmer (PLAN.md 2a step 7; REG_DWORD `HeatDistortion`, default off,
+  `FCOP_HEAT=0/1`, box in Advanced Graphics). Sources: effects of kind Fire, warm Glow (explosions'
+  fireballs; not lamps: models' lights, the glow 0x4271c0 called by a model's face primitive
+  0x428690 (return 0x428be7), marked by the hook `effects::glow_draw`) or a rocket trail's Smoke (records 0xd_; not
+  clouds / fog) with a depth
+  (`glide::add`, radius capped at 120 world units), merged when nearly at one place. Pass in
+  `glide::post_3d` after the lights: the view's picture blitted into a copy, pixels near a
+  source read it a few pixels off (scrolling sines, rising above fire), not where the pixel is
+  in front of the source or the sample nearer than the pixel; no offset: discarded.
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
   projections (0x453740 terrain vertex, 0x457340 object points, 0x457140 sprites) and the
   sphere view tests (0x452fd0 terrain cells, 0x4572a0 objects); target markers (0x435330,

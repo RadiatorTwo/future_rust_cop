@@ -18,12 +18,36 @@
 //! primitive whose first vertex is not found (some of the opaque and alpha-blended geometry,
 //! drawn split or clipped otherwise) is no effect.
 //!
+//! A model's glows (street lamps' lights: the glow primitive of its faces, 0x428690 calling
+//! the glow 0x4271c0) are marked (`glow_draw`): untextured warm glows like an explosion's
+//! (0x43cbc0, 0x418080, 0x418de0... call it too), but lights, not heat.
+//!
 //! `FCOP_EFFECT_LOG=1`: every blended primitive's record kind (type, +5, +6, texture number)
 //! and blend not seen before is logged, its texture rectangle written to `Textures/effects/`.
 
+use crate::rt::{Cpu, ESP, call_original};
+use crate::ver::Us;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
+
+/// (position, size, colour...): adds a glow's records to the display list.
+pub const GLOW_DRAW: Us = Us(0x4271c0);
+/// Where a model's face primitive (0x428690) returns to from it.
+const MODEL_GLOW: Us = Us(0x428be7);
+/// The display list's end.
+const LIST_END: Us = Us(0x511dc0);
+
+/// Hook of the glow: a model's are marked as lights.
+pub fn glow_draw(c: &mut Cpu) {
+    let m = super::mem();
+    let (ret, from) = (m.rd32(c.r[ESP]), m.rd32(LIST_END.at()));
+    call_original(c, GLOW_DRAW.at());
+    if ret == MODEL_GLOW.at() && wanted() {
+        let to = m.rd32(LIST_END.at());
+        MODEL_LIGHTS.with_borrow_mut(|s| s.extend((from..to).step_by(0x38)));
+    }
+}
 
 /// What a primitive of the 3D picture is (a vertex attribute; `FCOP_GBUFFER=effects` shows
 /// each in a colour of its own: the shader's `kinds`).
@@ -58,7 +82,7 @@ pub fn showing() -> bool {
 
 /// Something needs the primitives' records.
 pub fn wanted() -> bool {
-    logging() || showing() || super::lights::smoke_enabled()
+    logging() || showing() || super::lights::smoke_enabled() || super::heat::enabled()
 }
 
 /// A record's bytes +4 ... +7: type, two more, texture number.
@@ -68,6 +92,8 @@ pub type Record = [u8; 4];
 /// one expected. The walker and the renderer run on one thread.
 struct List {
     recs: Vec<((i16, i16), Record)>,
+    /// each record's: a model's light (`glow_draw`)
+    lights: Vec<bool>,
     next: usize,
     /// `FCOP_EFFECT_LOG`: primitives with and without their record found, pictures
     found: [u32; 2],
@@ -75,7 +101,9 @@ struct List {
 }
 
 thread_local! {
-    static LIST: RefCell<List> = const { RefCell::new(List { recs: Vec::new(), next: 0, found: [0; 2], pictures: 0 }) };
+    /// the records of models' lights added since the last picture (`glow_draw`)
+    static MODEL_LIGHTS: RefCell<HashSet<u32>> = RefCell::new(HashSet::new());
+    static LIST: RefCell<List> = const { RefCell::new(List { recs: Vec::new(), lights: Vec::new(), next: 0, found: [0; 2], pictures: 0 }) };
 }
 
 /// How far ahead a primitive's record is looked for.
@@ -86,8 +114,13 @@ pub fn begin(recs: impl Iterator<Item = u32>) {
     let m = super::mem();
     LIST.with_borrow_mut(|l| {
         l.recs.clear();
+        l.lights.clear();
         l.next = 0;
-        l.recs.extend(recs.map(|r| ((m.rd16(r + 0x28) as i16, m.rd16(r + 0x2a) as i16), m.rd32(r + 4).to_le_bytes())));
+        let lights = MODEL_LIGHTS.take();
+        for r in recs {
+            l.recs.push(((m.rd16(r + 0x28) as i16, m.rd16(r + 0x2a) as i16), m.rd32(r + 4).to_le_bytes()));
+            l.lights.push(lights.contains(&r));
+        }
     });
 }
 
@@ -105,7 +138,8 @@ pub fn end() {
 
 /// The record of a primitive whose first vertex is at (x, y) (2560x1920 units, the view's
 /// origin taken off).
-pub fn record_of(x: f32, y: f32) -> Option<Record> {
+/// And whether it is a model's light.
+pub fn record_of(x: f32, y: f32) -> Option<(Record, bool)> {
     let v = (x.round() as i16, y.round() as i16);
     LIST.with_borrow_mut(|l| {
         let end = (l.next + AHEAD).min(l.recs.len());
@@ -115,7 +149,7 @@ pub fn record_of(x: f32, y: f32) -> Option<Record> {
         l.found[k.is_none() as usize] += 1;
         let k = k?;
         l.next = k + 1;
-        Some(l.recs[k].1)
+        Some((l.recs[k].1, l.lights[k]))
     })
 }
 

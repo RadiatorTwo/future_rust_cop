@@ -424,14 +424,31 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
 
 #### Step 7: heat shimmer / distortion
 
-- [ ] A distortion buffer (RG16F, screen offsets) written by the sources: behind rockets
-      (along their trail, from step 4; direction from consecutive positions), above fire
-      (rising, slow), short rings at explosions (a shock ring growing for ~0.3 s, then a
-      fading shimmer). Offsets from a scrolling noise, weaker with distance, zero on the HUD.
-- [ ] Pass at the HUD's start: the 3D picture copied, read back at pixel + offset (only
-      from things behind the source: depth of step 0 compared, else foreground objects
-      bleed into the shimmer).
-- [ ] Setting: Heat Distortion Off / On; `FCOP_DISTORT=0/1`.
+- [x] Done 2026-11-05 (`heat.rs`; box "Heat Distortion" in Advanced Graphics, REG_DWORD
+      `HeatDistortion` default off, `FCOP_HEAT=0/1`). No buffer of its own: the sources are
+      a list, like the lights. Every effect of kind Fire, warm Glow (explosions' fireballs are
+      untextured glows: yellow to orange vertex colours: not muzzle flashes, police lights, or
+      lamps. A size limit (110 units) failed: lamps' glows measure 62 ... 121 units, a young
+      fireball 18; telling them by colour (a lamp's stays, a fireball's fades) the user did
+      not want. By where they come from: every glow is drawn by 0x4271c0; lamps' by a model's
+      face primitive 0x428690 (a lamp post's light), explosions' by 0x43cbc0, 0x418080,
+      0x418de0... (found by hooking every function that adds display list records). The hook
+      `effects::glow_draw` marks the records a model's call adds: lights, not heat)
+      or Smoke of a rocket's trail (records 0xd_, its 3D ribbon; grey clouds and fog, sprites
+      0xbc, shimmered too: the user saw fog waver) with a depth gives one in `glide::add` (centre, z, radius 0.4 x its diagonal, at most 120
+      units in the world: large smoke clouds shimmer only around their middle); ones at nearly
+      the same place are one, the largest 32 kept (merging into one larger circle grew to
+      half the screen). Pass at the HUD's start after the lights: the view's part of the
+      picture copied (blit, resolved with MSAA), each pixel near a source reads the copy up to
+      1/130 of the target's height off (two scrolling sine waves per axis, about 1.5 Hz, placed
+      relative to the source's centre: fixed on the screen they ran past a moving source and
+      looked faster in motion, and a phase by the source's place in the sorted list jumped;
+      above fire the shimmer sits higher, is taller and rises), weight (1 - d/r)², not where the pixel's
+      geometry is in front of the source, not from a sample much nearer than the pixel;
+      pixels with less than 0.3 px offset are discarded (MSAA kept there).
+- [ ] Explosion rings (a shock ring growing for ~0.3 s, then a fading shimmer): needs an
+      explosion's age (a fire source appearing where none was, kept in world space).
+- [ ] The user checks it in motion (stills show little); strength and size tuned then.
 
 #### Step 8: height fog
 
