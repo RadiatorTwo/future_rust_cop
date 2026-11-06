@@ -353,6 +353,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   view's picture copied, bright part at half resolution (soft threshold, lower where the depth
   attachment's mask G has an additive effect), a chain of 6 RGBA16F levels down (13 taps) and up
   (tent, ONE/ONE, larger levels weighted `SPREAD` more), added to the picture at `STRENGTH`. No HDR target yet.
+- Perspective-correct textures (`glide::perspective`; REG_DWORD `PerspectiveTextures`, default
+  off, `FCOP_PERSPECTIVE=0/1`, box in Advanced Graphics; PLAN.md 2a step 0): the game's are
+  affine (oow = 1.0). With the depth (`ao::depths`, which returns whether every vertex is a
+  projected point) the shader interpolates s/z, t/z, 1/z and divides; primitives with a
+  borrowed z stay affine (vertex mode bit 3).
 - `wide.rs`: widescreen (Hor+). k = (4/3) / aspect scales camera-space x before the
   projections (0x453740 terrain vertex, 0x457340 object points, 0x457140 sprites) and the
   sphere view tests (0x452fd0 terrain cells, 0x4572a0 objects); target markers (0x435330,

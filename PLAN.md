@@ -281,8 +281,15 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
       walker reaches bucket 0, `walker.rs` draws it in its own calls), once per view (split
       screen: each half by its clip window), in `fps.rs`'s pictures too. A
       `glide::post_3d()` runs the passes on the target, the HUD is drawn over the result.
-- [ ] Bonus that comes almost free: with z, perspective-correct textures (an option; the
-      affine warping is part of the PS1 look, so off by default)
+- [x] Bonus: perspective-correct textures (2026-11-06; box "Perspective-Correct Textures" in
+      Advanced Graphics, REG_DWORD `PerspectiveTextures` default off: the affine warping is
+      part of the PS1 look; `FCOP_PERSPECTIVE=0/1`). The vertex shader passes s/z, t/z, 1/z
+      (noperspective), the fragment shader divides; only for textured primitives of the 3D
+      picture whose vertices are all projected points (`ao::depths` says so; a clipped
+      vertex borrows its z from the others and would warp the texture), flagged in the
+      vertex mode (bit 3 of `vmode.z`). Seen at M2C's start: walls, trees, boxes and fences
+      shift by a texel or so (the high camera makes the affine error small); no warping.
+      Open: the user's look in motion, near the camera (walls, ramps).
 
 #### Step 1: ambient occlusion (SSAO)
 

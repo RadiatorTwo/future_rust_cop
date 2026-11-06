@@ -39,7 +39,7 @@ pub fn enabled() -> bool {
 
 /// Something needs the depth (AO, dynamic lights, shadows or the heat shimmer).
 pub fn depth_wanted() -> bool {
-    enabled() || super::lights::enabled() || super::shadows::enabled() || super::heat::enabled() || super::bloom::enabled()
+    enabled() || super::lights::enabled() || super::shadows::enabled() || super::heat::enabled() || super::bloom::enabled() || super::glide::perspective()
 }
 
 /// The Advanced Graphics dialog's OK: saved, and used from the next frame on.
@@ -188,7 +188,8 @@ pub fn clear() {
 }
 
 /// The z of a primitive's vertices (x, y in 2560x1920 units) into `out`, 0 where none is known.
-pub fn depths(verts: impl ExactSizeIterator<Item = (f32, f32)> + Clone, out: &mut Vec<f32>) {
+/// True when every vertex is a projected point (none taken from the others or a sprite).
+pub fn depths(verts: impl ExactSizeIterator<Item = (f32, f32)> + Clone, out: &mut Vec<f32>) -> bool {
     let _t = super::fps::timer(super::fps::Phase::Depths);
     out.clear();
     let n = verts.len();
@@ -209,14 +210,15 @@ pub fn depths(verts: impl ExactSizeIterator<Item = (f32, f32)> + Clone, out: &mu
         });
         let Some(r) = reference else {
             out.resize(n, 0.0);
-            return;
+            return false;
         };
         out.extend(found.iter().map(|f| match *f {
             [0, _] => r,
             [a, 0] => a,
             [a, b] => if (a - r).abs() <= (b - r).abs() { a } else { b },
         } as f32));
-    });
+        found.iter().all(|f| f[0] != 0)
+    })
 }
 
 /// The occlusion's reach in object units, and how strong it darkens (0...1).

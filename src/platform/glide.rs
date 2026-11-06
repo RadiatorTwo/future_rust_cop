@@ -96,6 +96,23 @@ struct Hd {
 pub const FILTER_CHOICES: &[u32] = &[0, 1, 2, 4, 8, 16];
 static FILTER: AtomicU32 = AtomicU32::new(16);
 
+/// Perspective-correct textures (PLAN.md 2a step 0): the game's are affine, as on the
+/// PlayStation (every vertex oow = 1.0, 0x439456). With each vertex's view-space z (`ao.rs`)
+/// the shader interpolates s/z, t/z and 1/z instead, for primitives of the 3D picture whose
+/// vertices are all projected points (a clipped vertex's z is borrowed: it would warp).
+/// REG_DWORD `PerspectiveTextures` (default off: the warping is part of the PS1 look),
+/// `FCOP_PERSPECTIVE=0/1`; in the Advanced Graphics dialog.
+static PERSPECTIVE: super::light::Setting = super::light::Setting::with_default("PerspectiveTextures", "FCOP_PERSPECTIVE", false);
+
+pub fn perspective() -> bool {
+    PERSPECTIVE.get()
+}
+
+/// The Advanced Graphics dialog's OK: saved, and used from the next frame on.
+pub fn set_perspective(on: bool) {
+    PERSPECTIVE.set(on);
+}
+
 /// The saved choice (default: anisotropic 16x); `FCOP_FILTER=<n>` overrides it.
 pub fn filtering() -> u32 {
     if let Some(n) = std::env::var("FCOP_FILTER").ok().and_then(|v| v.parse().ok()) {
@@ -228,7 +245,8 @@ layout(location = 6) in float z;
 layout(location = 7) in uint effect;
 out vec4 vcol;
 noperspective out float vinvz;
-noperspective out vec2 st;
+noperspective out vec2 st_affine;
+noperspective out vec3 stq;
 flat out vec4 konst;
 flat out uvec4 vmode;
 flat out vec4 st_box;
@@ -239,8 +257,10 @@ void main() {
     konst = kc;
     st_box = box;
     vmode = mode;
-    st = tc;
+    st_affine = tc;
     vinvz = z > 0.0 ? 1.0 / z : 0.0;
+    // perspective-correct: s/z, t/z, 1/z interpolated linearly on the screen
+    stq = vec3(tc * vinvz, vinvz);
     gl_Position = vec4(pos.x / space.x * 2.0 - 1.0, 1.0 - pos.y / space.y * 2.0, 0.0, 1.0);
 }
 "#;
@@ -258,7 +278,9 @@ uniform int edge;      // how the chroma key's soft edge is applied (see `flush`
 uniform int gmode;     // the depth attachment: 0 not written, 1 depth, 2/3 mask (blended/additive)
 in vec4 vcol;
 noperspective in float vinvz;
-noperspective in vec2 st;
+noperspective in vec2 st_affine;
+noperspective in vec3 stq;
+vec2 st;               // the texture coordinate: affine or perspective-correct (`vmode.z` bit 3)
 flat in vec4 konst;    // the constant colour
 flat in uvec4 vmode;   // combine units and texture, packed by `add`
 flat in vec4 st_box;   // the primitive's texture rectangle
@@ -386,6 +408,7 @@ void main() {
     cc_inv = int(vmode.z & 1u);
     ac_inv = int((vmode.z >> 1) & 1u);
     use_tex = int((vmode.z >> 2) & 1u);
+    st = (vmode.z & 8u) != 0u && stq.z > 0.0 ? stq.xy / stq.z : st_affine;
     layer = int((vmode.z >> 8) & 255u);
     hd_layer = int(vmode.z >> 16) - 1;
     tex_size = ivec2(vmode.w & 0xffffu, vmode.w >> 16);
@@ -1156,12 +1179,18 @@ impl Glide {
         let quad = if let [v0, v1] = *verts { Some(self.line_offsets(xy(v0), xy(v1))) } else { None };
         // the view-space depth of each vertex (3D picture, AO on), by its place in the units
         let mut z = std::mem::take(&mut self.zbuf);
-        match (self.gdepth.is_some(), self.gbuf) {
+        let exact = match (self.gdepth.is_some(), self.gbuf) {
             (true, Some(dx)) => super::ao::depths(verts.iter().map(|&v| (xy(v).0 - dx, xy(v).1)), &mut z),
             _ => {
                 z.clear();
                 z.resize(verts.len(), 0.0);
+                false
             }
+        };
+        // perspective-correct textures: only with every vertex's own depth
+        let mut mode = mode;
+        if exact && tex.is_some() && verts.len() >= 3 && perspective() {
+            mode[2] |= 8;
         }
         // the display list record it comes from (`effects.rs`), in the 3D picture
         // (and whether it is a model's light)
