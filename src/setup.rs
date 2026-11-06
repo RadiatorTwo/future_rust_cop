@@ -23,7 +23,9 @@ const VIDEO: &str = "Video";
 /// replacement textures (`platform::hd`), the player's
 const TEXTURES: &str = "Textures";
 /// what stays in the game folder: the game's files and ours
-const GAME_FILES: [&str; 8] = ["FCopLAPD.exe", "febmp.bin", "missions", "registry.txt", "controls.txt", "gamepad.txt", "save.cfg", COMPILED];
+const GAME_FILES: [&str; 9] = ["FCopLAPD.exe", "febmp.bin", "missions", "registry.txt", "controls.txt", "gamepad.txt", "save.cfg", COMPILED, SAVESTATE];
+/// our savestate (`platform::savestate`)
+pub const SAVESTATE: &str = "savestate.bin";
 /// the game's compiled code, kept for the next start (`jit::compile_cached`)
 pub const COMPILED: &str = "compiled.bin";
 /// our note in `game_files` (in the release)

@@ -157,7 +157,7 @@ fn f64_at(a: u32) -> f64 {
 /// own frame that may be a while ago, and the picture showed an earlier time than the one
 /// before: things moved back and forth).
 fn ticks() -> f64 {
-    let time = super::kernel32::start_time().elapsed().as_micros() as f64 * f64_at(PER_COUNT.at());
+    let time = super::kernel32::guest_us() as f64 * f64_at(PER_COUNT.at());
     (time - f64_at(START.at())) * f64_at(SCALE[0].at()) * f64_at(SCALE[1].at())
 }
 
@@ -354,6 +354,13 @@ static UNPAUSED_DRAWN: AtomicU32 = AtomicU32::new(0);
 static VIEWS_KEPT: Mutex<Option<Vec<Vec<u8>>>> = Mutex::new(None);
 /// When the next picture is due (ticks).
 static NEXT: Mutex<f64> = Mutex::new(0.0);
+
+/// A savestate was loaded: the places and times kept are of another time.
+pub fn forget() {
+    HISTORY.lock().unwrap().clear();
+    *BEHIND.lock().unwrap() = None;
+    *NEXT.lock().unwrap() = 0.0;
+}
 
 /// The ticks between pictures.
 fn period() -> f64 {

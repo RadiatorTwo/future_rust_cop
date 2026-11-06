@@ -30,6 +30,7 @@ pub mod lights;
 pub mod menupad;
 pub mod misc;
 pub mod record;
+pub mod savestate;
 pub mod shadows;
 pub mod user32;
 pub mod walker;
@@ -111,6 +112,7 @@ pub fn new_cstr(s: &str) -> u32 {
 // ---- guest heap -------------------------------------------------------------------------------
 
 /// Blocks from one arena, 16-byte aligned; free blocks are merged with their neighbours.
+#[derive(Clone)]
 struct Heap {
     top: u32,
     mapped: u32,
@@ -201,6 +203,113 @@ pub fn alloc_aligned(size: u32, align: u32) -> u32 {
         mem().slice(p, size as usize).fill(0);
     }
     p
+}
+
+/// The guest memory a savestate keeps besides the heap: the EXE's pages, the main thread's
+/// TIB and stack.
+static FIXED: OnceLock<Vec<(u32, u32)>> = OnceLock::new();
+
+/// A copy of the guest's memory (`savestate.rs`): the fixed ranges, the heap's used part and
+/// its bookkeeping.
+pub struct MemoryCopy {
+    heap: Heap,
+    parts: Vec<(u32, Vec<u8>)>,
+}
+
+impl MemoryCopy {
+    pub fn take() -> MemoryCopy {
+        let h = lock(&HEAP);
+        let m = mem();
+        let mut ranges = FIXED.get().cloned().unwrap_or_default();
+        ranges.push((ARENA_LO, h.top));
+        let parts = ranges.into_iter().map(|(lo, hi)| (lo, m.slice(lo, (hi - lo) as usize).to_vec())).collect();
+        MemoryCopy { heap: h.clone(), parts }
+    }
+
+    /// Put the copy back (the arena stays mapped as far as it is now).
+    pub fn restore(&self) {
+        let mut h = lock(&HEAP);
+        let m = mem();
+        if self.heap.mapped > h.mapped {
+            m.map(h.mapped, self.heap.mapped);
+        }
+        let mapped = h.mapped.max(self.heap.mapped);
+        *h = self.heap.clone();
+        h.mapped = mapped;
+        for (lo, bytes) in &self.parts {
+            m.slice(*lo, bytes.len()).copy_from_slice(bytes);
+        }
+    }
+
+    /// A dword of the copy (0 outside it).
+    pub fn rd32(&self, a: u32) -> u32 {
+        self.parts
+            .iter()
+            .find(|(lo, b)| a >= *lo && (a - lo) as usize + 4 <= b.len())
+            .map_or(0, |(lo, b)| u32::from_le_bytes(b[(a - lo) as usize..][..4].try_into().unwrap()))
+    }
+
+    pub fn bytes(&self) -> usize {
+        self.parts.iter().map(|p| p.1.len()).sum()
+    }
+
+    pub fn write(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        let h = &self.heap;
+        let pairs = |w: &mut dyn std::io::Write, m: &BTreeMap<u32, u32>| -> std::io::Result<()> {
+            w.write_all(&(m.len() as u32).to_le_bytes())?;
+            for (&a, &b) in m {
+                w.write_all(&a.to_le_bytes())?;
+                w.write_all(&b.to_le_bytes())?;
+            }
+            Ok(())
+        };
+        w.write_all(&h.top.to_le_bytes())?;
+        w.write_all(&h.mapped.to_le_bytes())?;
+        pairs(w, &h.used)?;
+        pairs(w, &h.free_at)?;
+        w.write_all(&(self.parts.len() as u32).to_le_bytes())?;
+        for (lo, b) in &self.parts {
+            w.write_all(&lo.to_le_bytes())?;
+            w.write_all(&(b.len() as u32).to_le_bytes())?;
+            w.write_all(b)?;
+        }
+        Ok(())
+    }
+
+    pub fn read(r: &mut impl std::io::Read) -> std::io::Result<MemoryCopy> {
+        fn u(r: &mut impl std::io::Read) -> std::io::Result<u32> {
+            let mut b = [0; 4];
+            r.read_exact(&mut b)?;
+            Ok(u32::from_le_bytes(b))
+        }
+        let (top, mapped) = (u(r)?, u(r)?);
+        let mut used = BTreeMap::new();
+        for _ in 0..u(r)? {
+            used.insert(u(r)?, u(r)?);
+        }
+        let mut free_at = BTreeMap::new();
+        for _ in 0..u(r)? {
+            free_at.insert(u(r)?, u(r)?);
+        }
+        let free_size = free_at.iter().map(|(&a, &s)| ((s, a), ())).collect();
+        let n = u(r)?;
+        let mut parts = Vec::new();
+        for _ in 0..n {
+            let (lo, len) = (u(r)?, u(r)?);
+            if lo as u64 + len as u64 > ARENA_HI as u64 {
+                return Err(std::io::Error::other("a part outside guest memory"));
+            }
+            let mut b = vec![0; len as usize];
+            r.read_exact(&mut b)?;
+            parts.push((lo, b));
+        }
+        Ok(MemoryCopy { heap: Heap { top, mapped, used, free_at, free_size }, parts })
+    }
+}
+
+/// For a savestate's fingerprint: the heap's blocks.
+pub fn heap_blocks() -> Vec<(u32, u32)> {
+    lock(&HEAP).used.iter().map(|(&a, &s)| (a, s)).collect()
 }
 
 /// Free a block from `alloc`; anything else is ignored (returns false).
@@ -633,6 +742,7 @@ pub const HOOKS: &[(crate::ver::Us, crate::rt::Hook)] = &[
     (fps::RENDER_END, fps::render_end),
     (fps::UNPAUSED, fps::unpaused),
     (cheats::FRAME_WAIT, cheats::frame_wait),
+    (savestate::MISSION_LOOP, savestate::mission_loop),
     (camera::ROBOT_CAMERA, camera::robot_camera),
     (camera::ROBOT_DRAW, camera::robot_draw),
     (camera::RENDER_HUD, camera::render_hud),
@@ -658,12 +768,15 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
     m.map(IMAGE_BASE, IMAGE_BASE + 0x1000);
     let hdr = &img.data[..0x1000.min(img.data.len())];
     m.slice(IMAGE_BASE, hdr.len()).copy_from_slice(hdr);
+    let mut ranges = vec![(IMAGE_BASE, IMAGE_BASE + 0x1000), (TIB, TIB + 0x1000), (STACK_LO, STACK_HI)];
     for sec in &img.sections {
         let size = sec.vsize.max(sec.rsize);
         m.map(sec.va, sec.va + size);
+        ranges.push((sec.va & !0xfff, (sec.va + size + 0xfff) & !0xfff));
         let bytes = img.read(sec.va, size as usize).unwrap();
         m.slice(sec.va, bytes.len()).copy_from_slice(&bytes);
     }
+    let _ = FIXED.set(ranges);
     user32::single_player_keys();
     fps::init();
     glide::init();

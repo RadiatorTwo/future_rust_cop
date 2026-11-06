@@ -503,6 +503,18 @@ textures), wet streets / reflections in dark missions.
 - [x] Debug cheats (`cheats.rs`, 2026-10-27): `win`, `lose`, `health`, `ammo` by name in
       FCOP_INPUT and on Shift+F1...F4 with `FCOP_CHEATS=1`. Ideas: invulnerable, all missions
       open, mission choice
+- [x] Savestates, stage 1 (`savestate.rs`, 2026-11-06; test tool): cheats `save` / `load`
+      (Shift+F7 / F8, or by name in FCOP_INPUT), one slot in memory, same mission and run.
+      Guest memory (EXE pages, main stack and TIB, heap with its bookkeeping: 22 MB in the first
+      mission, 3 ms / 1 ms), registers, the guest's clock; in the frame wait, where the host's
+      call chain is the same each frame. Checked by script: the robot is back where saved,
+      twice, and plays on. Not kept: Glide's textures, sounds playing, kernel objects, files.
+      Stage 2 (2026-11-06): written to `savestate.bin` in the game folder, loads after a
+      restart when the mission started the same way: a fingerprint of the host's state at the
+      mission's first frame (heap blocks, kernel objects, sound buffers, Glide textures) must
+      match. Checked by script: saved in one run, loaded in a fresh one (twice). Not yet tried:
+      a mission reached another way (another menu path, a save game loaded): refused if the
+      fingerprint differs; textures uploaded again would lift that
 
 - [x] Bug (user, 2026-10-27): after a won level the menu was not drawn again (the mission's
       loading bar stayed on it; seen by the user as the pause menu's purple background too).
