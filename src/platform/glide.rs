@@ -493,6 +493,11 @@ impl Uniforms {
     }
 }
 
+/// For a savestate's fingerprint (`savestate.rs`): the textures' TMU addresses.
+pub fn texture_addresses() -> Vec<u32> {
+    with(|g, _| g.textures.keys().copied().collect()).unwrap_or_default()
+}
+
 fn with<R>(f: impl FnOnce(&mut Glide, &glow::Context) -> R) -> Option<R> {
     GLIDE.with(|g| {
         let mut g = g.borrow_mut();

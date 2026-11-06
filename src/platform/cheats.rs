@@ -61,6 +61,8 @@ pub const CHEATS: &[Cheat] = &[
     Cheat { name: "health", key: 3, what: "full health", solo: true, run: health },
     Cheat { name: "ammo", key: 4, what: "ammunition as at the mission's start", solo: true, run: ammo },
     Cheat { name: "hurt", key: 5, what: "a quarter of the health lost (the game's damage)", solo: true, run: hurt },
+    Cheat { name: "save", key: 7, what: "savestate: the game as it is now, in memory", solo: false, run: super::savestate::save },
+    Cheat { name: "load", key: 8, what: "savestate: back to the one saved (same mission, this run)", solo: false, run: super::savestate::load },
     // test-only: compiled in only with `--features cheats`, never in a release build
     #[cfg(feature = "cheats")]
     Cheat { name: "points", key: 6, what: "Precinct Assault: +1000 points for the players' teams", solo: false, run: points },
@@ -118,6 +120,7 @@ fn values(actor: u32) -> [u32; 4] {
 }
 
 pub fn frame_wait(c: &mut Cpu) {
+    super::savestate::frame();
     if mem().rd32(GAME_STATE.at()) == 4 {
         let run = {
             let mut s = STATE.lock().unwrap();
