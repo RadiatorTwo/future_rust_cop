@@ -400,9 +400,13 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
       explosions sit right on the wall they hit, and those faded away nearly whole, even with a
       reach of 60. (A variant could hide effects the game sorts in front of a wall they are
       behind; not seen to happen.)
-- [ ] Smoke: the game's smoke sprites drawn softer and fuller: a noise texture of our own
-      (generated, no asset) scrolled over them, the edge from it, a slow turn and growth by
-      age (needs step 4's age, else by the sprite's size).
+- [-] Smoke: tried 2026-11-07 and dropped (the user: it brings nothing). Effects of kind
+      Smoke times a value-noise fbm made in the fragment shader, in their texture rectangle,
+      turning and drifting. Learned: the game's smoke is small on the screen and already
+      blotchy, so noise over it is hardly seen; a seed from the depth changed with every move
+      (it flickered: seed by something that stays); octaves finer than ~2 pixels flicker on
+      small puffs; a round edge of our own took away too much smoke, the large fog sprites
+      most.
 - [ ] More particles: our own extra smoke and sparks at the game's emitters (explosions,
       burning wrecks, rocket trails), simulated in Rust per game frame (`fps.rs` timing:
       by game time, so pictures in between move them evenly), drawn as sprites with the
