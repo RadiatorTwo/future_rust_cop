@@ -523,6 +523,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   (166) gets a "Display" button: Preferences (101) with the game's procedure 0x402030 (not
   its caller 0x402000, which resets the game state), without Renderer, Display Mode,
   FullScreen, Controller and Audio, our rows in the left column.
+  The game never saves its Filtering box (byte [0x48c154], 1 at start) or gamma slider (dword
+  [0x511fc8], 0 at start; issue #19): `ok` saves them as REG_DWORD `Filtering` / `Gamma`,
+  `extend::restore` writes them back into memory before the game runs.
   Advanced Graphics (`extend::ADVANCED`): our own dialog, not from the EXE (`extend::template`,
   no game procedure: its push buttons end it, OK (id 1) runs `extend::ok` first), opened by
   the "Advanced Graphics..." button below the lighting boxes (3DFX Options, Glide only;
