@@ -781,6 +781,7 @@ pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
     }
     let _ = FIXED.set(ranges);
     user32::single_player_keys();
+    dialog::extend::restore();
     fps::init();
     glide::init();
     cheats::by_key(0);

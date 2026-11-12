@@ -43,6 +43,21 @@ const GAMMA: u32 = 1118;
 /// The game's gamma: slider position * [GAMMA_SCALE] - [GAMMA_BASE] (doubles, as 0x43a540).
 const GAMMA_SCALE: Us = Us(0x484678);
 const GAMMA_BASE: Us = Us(0x484680);
+/// Where the game keeps the Filtering box (byte, 1 at start) and the gamma slider's position
+/// (dword, 0 at start). It never saves them: we do, as REG_DWORD `Filtering` / `Gamma`.
+const FILTERING_ON: Us = Us(0x48c154);
+const GAMMA_POS: Us = Us(0x511fc8);
+
+/// At start, before the game runs: the saved Filtering and gamma back into the game's memory.
+pub fn restore() {
+    let dword = |name| advapi32::value("", name).and_then(|(_, d)| Some(u32::from_le_bytes(d.get(..4)?.try_into().ok()?)));
+    if let Some(on) = dword("Filtering") {
+        mem().wr8(FILTERING_ON.at(), (on != 0) as u8);
+    }
+    if let Some(pos) = dword("Gamma") {
+        mem().wr32(GAMMA_POS.at(), pos);
+    }
+}
 
 const RENDERER_LABEL: u32 = FIRST_OURS;
 const RENDERER: u32 = FIRST_OURS + 1;
@@ -564,7 +579,11 @@ pub fn ok(d: &mut Dialog) {
             Kind::Track { pos, .. } => Some(pos),
             _ => None,
         });
+        if let Some(on) = d.control(FILTERING).filter(|c| c.visible).map(|c| c.check != 0) {
+            advapi32::set_value("", "Filtering", 4, &(on as u32).to_le_bytes());
+        }
         if let Some(pos) = gamma {
+            advapi32::set_value("", "Gamma", 4, &(pos as u32).to_le_bytes());
             let at = |a: u32| f64::from_bits(mem().rd32(a) as u64 | (mem().rd32(a + 4) as u64) << 32);
             crate::platform::glide::set_gamma((pos as f64 * at(GAMMA_SCALE.at()) - at(GAMMA_BASE.at())) as f32);
         }
