@@ -524,6 +524,23 @@ rest of the gap is the GPU's passes).
 - [x] Effects (step 4): classified only when `effects::wanted` (the walker hands records
       over only then).
 
+#### Speed of the game thread (2026-11-13, tools and first steps from recomp_kit)
+
+Measured with `FCOP_SAMPLE=1` (where the game thread spends its time) and `FCOP_STATS=1` (frames
+a second and frame times in the window). The frame rate varies by about 10% from run to run:
+small gains are measured with timers in the code, not by fps.
+- [x] Sampler and frame time display (`sample.rs`, `stats.rs`).
+- [x] Display list walker 0x4393e0 in Rust (`walk.rs`): the game's took ~25% of the game
+      thread; ~490 -> ~645 fps standing in the first mission; `FCOP_WALK=check` compared 65536
+      lists without a difference.
+- [x] Glide vertices in one buffer filled through unsynchronized maps: `flush` ~185 -> ~155 µs
+      a picture.
+- [-] Present thread from recomp_kit (pictures shown by a thread of ours): slower here (692 ->
+      638 fps), dropped.
+- [ ] Left: SwapBuffers ~11% (try NVIDIA's "OpenGL present method: DXGI swapchain"), `flush`'s
+      state ~57 µs a picture (unchanged state sent again), the game's own code ~15-20% (the kit's
+      fixed memory base and x87 work).
+
 #### Ideas after these (the user: "more to come")
 
 Tone mapping (with step 9's HDR target), FXAA/SMAA as an alternative to MSAA, colour grading,

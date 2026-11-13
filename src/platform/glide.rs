@@ -171,6 +171,9 @@ struct Glide {
     prog: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
+    /// where the next batch goes in `vbo` (bytes): batches are appended, the buffer is only
+    /// made anew (orphaned) when full, so the driver does not allocate at every flush
+    vbo_at: usize,
     /// every texture, 256x256 at most, in one array: rgb premultiplied by coverage and the
     /// coverage, with mipmaps (see the module)
     array: glow::Texture,
@@ -467,6 +470,8 @@ void main() {
 
 /// Words per batched vertex.
 const VERTEX: usize = 22;
+/// The vertex buffer's size: some 40 pictures of the game's ~4000 vertices.
+const VBO_SIZE: usize = 16 << 20;
 
 use super::effects::Effect;
 
@@ -715,6 +720,7 @@ impl Glide {
             let vbo = gl.create_buffer().expect("GL buffer");
             gl.bind_vertex_array(Some(vao));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+            gl.buffer_data_size(glow::ARRAY_BUFFER, VBO_SIZE as i32, glow::STREAM_DRAW);
             for (loc, n, off) in [(0, 2, 0), (1, 4, 8), (2, 2, 24), (3, 4, 32)] {
                 gl.enable_vertex_attrib_array(loc);
                 gl.vertex_attrib_pointer_f32(loc, n, glow::FLOAT, false, 4 * VERTEX as i32, off);
@@ -757,6 +763,7 @@ impl Glide {
                 prog,
                 vao,
                 vbo,
+                vbo_at: 0,
                 array,
                 alpha,
                 stale: false,
@@ -1117,8 +1124,17 @@ impl Glide {
             }
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
             let bytes = std::slice::from_raw_parts(self.batch.as_ptr() as *const u8, self.batch.len() * 4);
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
-            gl.draw_arrays(self.batch_mode, 0, (self.batch.len() / VERTEX) as i32);
+            if self.vbo_at + bytes.len() > VBO_SIZE {
+                gl.buffer_data_size(glow::ARRAY_BUFFER, VBO_SIZE.max(bytes.len()) as i32, glow::STREAM_DRAW);
+                self.vbo_at = 0;
+            }
+            // the part written was never drawn from since the buffer was made: no wait
+            let flags = glow::MAP_WRITE_BIT | glow::MAP_UNSYNCHRONIZED_BIT | glow::MAP_INVALIDATE_RANGE_BIT;
+            let p = gl.map_buffer_range(glow::ARRAY_BUFFER, self.vbo_at as i32, bytes.len() as i32, flags);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+            gl.unmap_buffer(glow::ARRAY_BUFFER);
+            gl.draw_arrays(self.batch_mode, (self.vbo_at / (4 * VERTEX)) as i32, (self.batch.len() / VERTEX) as i32);
+            self.vbo_at += bytes.len();
             gl.disable(glow::SCISSOR_TEST);
             gl.disable(glow::BLEND);
         }
@@ -1585,6 +1601,7 @@ fn buffer_clear(c: &mut Cpu) -> u32 {
 }
 
 fn buffer_swap(_: &mut Cpu) -> u32 {
+    super::sample::start();
     let shown = with(|g, gl| {
         g.flush(gl);
         g.resolve(gl);
@@ -1674,26 +1691,22 @@ pub fn set_view(view: View) {
 }
 
 fn draw_triangle(c: &mut Cpu) -> u32 {
-    let v = [arg(c, 0), arg(c, 1), arg(c, 2)];
-    with(|g, gl| g.add(gl, glow::TRIANGLES, &v));
+    draw(glow::TRIANGLES, &[arg(c, 0), arg(c, 1), arg(c, 2)]);
     0
 }
 
 fn draw_line(c: &mut Cpu) -> u32 {
-    let v = [arg(c, 0), arg(c, 1)];
-    with(|g, gl| g.add(gl, glow::TRIANGLES, &v));
+    draw(glow::TRIANGLES, &[arg(c, 0), arg(c, 1)]);
     0
 }
 
 fn draw_point(c: &mut Cpu) -> u32 {
-    let v = [arg(c, 0)];
-    with(|g, gl| g.add(gl, glow::POINTS, &v));
+    draw(glow::POINTS, &[arg(c, 0)]);
     0
 }
 
 fn clip_window(c: &mut Cpu) -> u32 {
-    let r = [arg(c, 0) as i32, arg(c, 1) as i32, arg(c, 2) as i32, arg(c, 3) as i32];
-    with(|g, gl| g.set(gl, |s| s.clip = r));
+    set_clip([arg(c, 0) as i32, arg(c, 1) as i32, arg(c, 2) as i32, arg(c, 3) as i32]);
     0
 }
 
@@ -1702,14 +1715,12 @@ fn combine(c: &Cpu) -> [u32; 5] {
 }
 
 fn color_combine(c: &mut Cpu) -> u32 {
-    let v = combine(c);
-    with(|g, _| g.cc = v);
+    set_color_combine(combine(c));
     0
 }
 
 fn alpha_combine(c: &mut Cpu) -> u32 {
-    let v = combine(c);
-    with(|g, _| g.ac = v);
+    set_alpha_combine(combine(c));
     0
 }
 
@@ -1724,15 +1735,109 @@ fn tex_combine(c: &mut Cpu) -> u32 {
 }
 
 fn constant_color(c: &mut Cpu) -> u32 {
-    let v = arg(c, 0);
-    with(|g, _| g.constant = v);
+    set_constant(arg(c, 0));
     0
 }
 
 fn alpha_blend(c: &mut Cpu) -> u32 {
-    let b = (arg(c, 0), arg(c, 1));
-    with(|g, gl| g.set(gl, |s| s.blend = b));
+    set_blend((arg(c, 0), arg(c, 1)));
     0
+}
+
+// ---- the calls the display list walker makes (the imports above and `walk.rs`) ----------------
+
+/// Draws the guest vertices (Glide 2 GrVertex) at `verts`: a point, a line or a triangle.
+pub fn draw(mode: u32, verts: &[u32]) {
+    if traced(|| Call::Draw(mode, verts.iter().map(|&v| std::array::from_fn(|k| mem().rd32(v + 4 * k as u32))).collect())) {
+        return;
+    }
+    with(|g, gl| g.add(gl, mode, verts));
+}
+
+pub fn set_clip(r: [i32; 4]) {
+    if traced(|| Call::Clip(r)) {
+        return;
+    }
+    with(|g, gl| g.set(gl, |s| s.clip = r));
+}
+
+pub fn set_color_combine(v: [u32; 5]) {
+    if traced(|| Call::ColorCombine(v)) {
+        return;
+    }
+    with(|g, _| g.cc = v);
+}
+
+pub fn set_alpha_combine(v: [u32; 5]) {
+    if traced(|| Call::AlphaCombine(v)) {
+        return;
+    }
+    with(|g, _| g.ac = v);
+}
+
+pub fn set_constant(v: u32) {
+    if traced(|| Call::Constant(v)) {
+        return;
+    }
+    with(|g, _| g.constant = v);
+}
+
+pub fn set_blend(b: (u32, u32)) {
+    if traced(|| Call::Blend(b)) {
+        return;
+    }
+    with(|g, gl| g.set(gl, |s| s.blend = b));
+}
+
+/// grTexSource with the texture's TMU address.
+pub fn set_tex(addr: u32) {
+    if traced(|| Call::Tex(addr)) {
+        return;
+    }
+    with(|g, _| g.tex = Some(addr));
+}
+
+/// A call above, kept while tracing (`FCOP_WALK=check`: the original walker's calls and ours
+/// compared); a draw keeps its vertices' 15 words.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Call {
+    Draw(u32, Vec<[u32; 15]>),
+    Clip([i32; 4]),
+    ColorCombine([u32; 5]),
+    AlphaCombine([u32; 5]),
+    Constant(u32),
+    Blend((u32, u32)),
+    Tex(u32),
+}
+
+static TRACING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+thread_local! {
+    /// the calls kept, and whether they only are kept (not done)
+    static TRACE: std::cell::RefCell<(Vec<Call>, bool)> = const { std::cell::RefCell::new((Vec::new(), false)) };
+}
+
+/// Keeps the calls from now on; with `dry` they are not done.
+pub fn trace_begin(dry: bool) {
+    TRACE.with_borrow_mut(|t| *t = (Vec::new(), dry));
+    TRACING.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The calls kept since `trace_begin`.
+pub fn trace_end() -> Vec<Call> {
+    TRACING.store(false, std::sync::atomic::Ordering::Relaxed);
+    TRACE.with_borrow_mut(|t| std::mem::take(&mut t.0))
+}
+
+/// Keeps the call while tracing; true when it must not be done.
+fn traced(call: impl FnOnce() -> Call) -> bool {
+    if !TRACING.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    TRACE.with_borrow_mut(|t| {
+        t.0.push(call());
+        t.1
+    })
 }
 
 fn chromakey_mode(c: &mut Cpu) -> u32 {
@@ -1825,8 +1930,7 @@ fn tex_download_mipmap_level_partial(c: &mut Cpu) -> u32 {
 }
 
 fn tex_source(c: &mut Cpu) -> u32 {
-    let addr = arg(c, 1);
-    with(|g, _| g.tex = Some(addr));
+    set_tex(arg(c, 1));
     0
 }
 

@@ -179,7 +179,7 @@ pub fn draw_glide(c: &mut Cpu) {
             // each call pushes the return address back (the walker's ret popped it)
             c.r[ESP] = sp;
             m.wr32(sp + 4, first);
-            call_original(c, GLIDE_WALKER.at());
+            super::walk::call(c, GLIDE_WALKER.at());
             if let Some(Some(l)) = lit {
                 light::end(l);
             }

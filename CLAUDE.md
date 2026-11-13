@@ -252,6 +252,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   header). Precise mode points the resolution's jump table entry (0x43a168) at the plain
   path 0x4397cd, so vertices arrive in 2560x1920 units; text (type 6, game pixels) is drawn in
   its own calls; `glide::set_space` tells the renderer which space. `FCOP_PRECISE=0` off.
+- `walk.rs`: the walker itself in Rust (precise mode; the game's took ~25% of the game thread,
+  ~490 -> ~645 fps standing in the first mission), the same Glide calls in the same order; its
+  locals in the game's stack frame. `FCOP_WALK=0` the game's, `FCOP_WALK=check` runs both and
+  logs where the Glide calls differ (`glide::trace_begin`; 65536 lists the same, 2026-11-13).
 - `light.rs`: three settings, boxes below the gamma slider (the 3DFX Options group three rows
   taller). Texture Coloring (REG_DWORD `TextureColoring`, default on; `FCOP_COLORING=0/1`):
   a textured polygon's colour byte 0x80 = texture as it is, up to 2x brighter; the Glide
@@ -407,6 +411,9 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   shows 0x405cb0 instead of the world. Only with Glide, playing ([0x511fb8] = 4), not paused. Choices 60 ... 300 and unlimited (REG_DWORD
   `FrameRate`, 0 = original 37.5, 0xffffffff unlimited: ~950 fps in the first mission; our combo below the 3DFX Options group in Preferences).
   Between frames it sleeps (turn handed over) until 2 ms before the next picture or frame.
+  `FCOP_STATS=1` draws frames a second and a frame time graph in the window's corner
+  (`stats.rs`, no RivaTuner needed); `FCOP_SAMPLE=1` (`sample.rs`, shows the stats too) logs
+  every 2 s where the game thread spends its time (functions by name, system code unwound).
   `FCOP_FPS=1` logs the frames shown per second (Glide); with `FCOP_PHASES=1` also µs a
   frame spent in the effects' phases (`fps::timer`: projected points, `glide::add`, `ao::depths`,
   lights, `post_3d`).

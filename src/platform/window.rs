@@ -387,6 +387,7 @@ pub fn show_texture(tex: glow::Texture, w: u32, h: u32, gamma: f32) {
     }
     with_host(|host| {
         if let Some(gl) = &mut host.app.gl {
+            super::stats::picture();
             gl.shown = (tex, w, h, false, gamma);
             host.app.draw();
         }
@@ -570,6 +571,7 @@ impl App {
     fn frame(&mut self, px: &[u32], w: u32, h: u32) {
         match &mut self.gl {
             Some(gl) => {
+                super::stats::picture();
                 gl.frame(px, w, h);
                 self.draw();
             }
