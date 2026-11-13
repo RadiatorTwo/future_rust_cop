@@ -129,8 +129,10 @@ pub struct Bloom {
     down: glow::Program,
     up: glow::Program,
     vao: glow::VertexArray,
-    /// for the target's size: the picture's copy, and the levels (half resolution first)
-    copy: Option<((u32, u32), glow::Texture, glow::Framebuffer, Vec<(glow::Texture, glow::Framebuffer, (i32, i32))>)>,
+    /// for the target's size: the picture's copy, and the levels (half resolution first) with one
+    /// framebuffer they are attached to in turn (a framebuffer of their own each: every switch
+    /// cost the driver some 7 µs of the game thread)
+    copy: Option<((u32, u32), glow::Texture, glow::Framebuffer, Vec<(glow::Texture, (i32, i32))>, glow::Framebuffer)>,
 }
 
 impl Bloom {
@@ -141,12 +143,12 @@ impl Bloom {
     }
 
     fn drop_targets(&mut self, gl: &glow::Context) {
-        if let Some((_, t, f, levels)) = self.copy.take() {
+        if let Some((_, t, f, levels, chain)) = self.copy.take() {
             unsafe {
                 gl.delete_framebuffer(f);
                 gl.delete_texture(t);
-                for (t, f, _) in levels {
-                    gl.delete_framebuffer(f);
+                gl.delete_framebuffer(chain);
+                for (t, _) in levels {
                     gl.delete_texture(t);
                 }
             }
@@ -184,11 +186,13 @@ impl Bloom {
                 w = (w / 2).max(1);
                 h = (h / 2).max(1);
                 let (lt, lf) = make(w, h, glow::RGBA16F, glow::HALF_FLOAT);
-                levels.push((lt, lf, (w, h)));
+                gl.delete_framebuffer(lf);
+                levels.push((lt, (w, h)));
             }
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
             gl.bind_texture(glow::TEXTURE_2D, None);
-            self.copy = Some((target, t, f, levels));
+            let chain = gl.create_framebuffer().expect("GL framebuffer");
+            self.copy = Some((target, t, f, levels, chain));
         }
     }
 
@@ -199,7 +203,11 @@ impl Bloom {
             return;
         }
         self.targets(gl, target);
-        let Some((_, copy, copy_fbo, levels)) = &self.copy else { return };
+        let Some((_, copy, copy_fbo, levels, chain)) = &self.copy else { return };
+        // a level as the chain's target
+        let target_level = |t: glow::Texture| unsafe {
+            gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(t), 0);
+        };
         let (w, h) = (target.0 as i32, target.1 as i32);
         let [x, y, cw, ch] = clip;
         unsafe {
@@ -211,8 +219,9 @@ impl Bloom {
             gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(*copy_fbo));
             gl.blit_framebuffer(x, y, x + cw, y + ch, x, y, x + cw, y + ch, glow::COLOR_BUFFER_BIT, glow::NEAREST);
             // the bright part at half resolution, only inside the view
-            let (l0, l0f, (w0, h0)) = levels[0];
-            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(l0f));
+            let (l0, (w0, h0)) = levels[0];
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(*chain));
+            target_level(l0);
             gl.viewport(0, 0, w0, h0);
             gl.clear_color(0.0, 0.0, 0.0, 0.0);
             gl.clear(glow::COLOR_BUFFER_BIT);
@@ -237,10 +246,10 @@ impl Bloom {
             gl.use_program(Some(self.down));
             gl.uniform_1_i32(u(self.down, "src").as_ref(), 1);
             for i in 1..levels.len() {
-                let (src, _, (sw, sh)) = levels[i - 1];
-                let (_, f, (dw, dh)) = levels[i];
+                let (src, (sw, sh)) = levels[i - 1];
+                let (dst, (dw, dh)) = levels[i];
                 gl.bind_texture(glow::TEXTURE_2D, Some(src));
-                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(f));
+                target_level(dst);
                 gl.viewport(0, 0, dw, dh);
                 gl.uniform_2_f32(u(self.down, "texel").as_ref(), 1.0 / sw as f32, 1.0 / sh as f32);
                 gl.draw_arrays(glow::TRIANGLES, 0, 3);
@@ -251,10 +260,10 @@ impl Bloom {
             gl.enable(glow::BLEND);
             gl.blend_func(glow::ONE, glow::ONE);
             for i in (0..levels.len() - 1).rev() {
-                let (src, _, (sw, sh)) = levels[i + 1];
-                let (_, f, (dw, dh)) = levels[i];
+                let (src, (sw, sh)) = levels[i + 1];
+                let (dst, (dw, dh)) = levels[i];
                 gl.bind_texture(glow::TEXTURE_2D, Some(src));
-                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(f));
+                target_level(dst);
                 gl.viewport(0, 0, dw, dh);
                 gl.uniform_2_f32(u(self.up, "texel").as_ref(), 1.0 / sw as f32, 1.0 / sh as f32);
                 gl.uniform_2_f32(u(self.up, "dst_size").as_ref(), dw as f32, dh as f32);

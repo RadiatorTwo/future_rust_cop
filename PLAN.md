@@ -539,6 +539,8 @@ small gains are measured with timers in the code, not by fps.
       from recomp_kit: ~657 -> ~688 fps.
 - [x] Terrain pass in Rust (`terrain.rs`: 0x4534f0, 0x453740, 0x4537f0, 0x453930, 0x453e90):
       ~675 -> ~729 fps; `FCOP_TERRAIN=check` compared 524288 groups without a difference.
+- [x] Bloom's levels attached in turn to one framebuffer (a framebuffer each: ~7 µs of the
+      driver per switch): ~135 -> ~114 µs a picture.
 - [-] The kit's x87 work (rounding inline, register cache): `rt_fpu_round` is not among the
       top 25 of the profile; not worth the lifter's changes here.
 - [-] Present thread from recomp_kit (pictures shown by a thread of ours): slower here (692 ->
