@@ -38,6 +38,7 @@ pub mod shadows;
 pub mod stats;
 pub mod user32;
 pub mod terrain;
+pub mod tonemap;
 pub mod walk;
 pub mod walker;
 pub mod wide;
