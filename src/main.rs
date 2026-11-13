@@ -63,6 +63,8 @@ fn main() {
 }
 
 fn run() -> u32 {
+    // first, before other allocations take its place
+    fcop::platform::reserve_memory();
     splash::show();
     splash::status("Looking for the game...");
     let found = match std::env::args().nth(1) {
@@ -152,5 +154,7 @@ fn cache_key(img: &Image) -> Option<[u8; 32]> {
     let mut h = Sha256::new();
     h.update(&own);
     h.update(&img.data);
+    // the guest memory's base, a constant in the code when fixed
+    h.update(fcop::lift::FIXED_BASE.load(std::sync::atomic::Ordering::Relaxed).to_le_bytes());
     Some(h.finalize().into())
 }

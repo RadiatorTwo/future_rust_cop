@@ -634,9 +634,9 @@ impl App {
     /// the focus (Windows and X11 confine it; Wayland and macOS only lock it in place).
     fn catch_cursor(&mut self) {
         let Some(win) = &self.window else { return };
-        let catch = self.focused && CURSOR_HIDDEN.load(Ordering::Relaxed);
+        let catch = self.focused && CURSOR_HIDDEN.load(Ordering::Relaxed) && !free_cursor();
         // hidden while a gamepad chooses in the menu too (`menupad`)
-        let hide = catch || self.focused && self.pad_focus;
+        let hide = catch || self.focused && self.pad_focus && !free_cursor();
         if hide != self.cursor_hidden {
             self.cursor_hidden = hide;
             win.set_cursor_visible(!hide);
@@ -842,4 +842,11 @@ fn vk_of(k: KeyCode) -> Option<(u8, u8)> {
         Pause => (0x13, 0x45),
         _ => return None,
     })
+}
+
+/// The cursor is never caught nor hidden in scripted runs (`FCOP_INPUT`) or with
+/// `FCOP_GRAB=0`: tests and debugging leave the mouse to the user.
+fn free_cursor() -> bool {
+    static FREE: OnceLock<bool> = OnceLock::new();
+    *FREE.get_or_init(|| std::env::var_os("FCOP_INPUT").is_some() || std::env::var_os("FCOP_GRAB").is_some_and(|v| v == "0"))
 }

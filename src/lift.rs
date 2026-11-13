@@ -18,6 +18,11 @@ use std::mem::offset_of;
 
 mod x87;
 
+/// The guest memory's base when it is at `rt::FIXED_BASE` (0: read from `Cpu::mem`, as in the
+/// tests, which reserve memory per guest): a constant in the code, folded into the accesses'
+/// displacement. Part of the compiled code's cache key.
+pub static FIXED_BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Host helpers and the guest function signature, imported into each function.
 pub struct Refs {
     pub lookup: FuncRef,
@@ -183,7 +188,10 @@ impl<'a, 'f> Lifter<'a, 'f> {
         b.append_block_params_for_function_params(entry);
         b.switch_to_block(entry);
         let cpu = b.block_params(entry)[0];
-        let mem = b.ins().load(I64, mf(), cpu, offset_of!(Cpu, mem) as i32);
+        let mem = match FIXED_BASE.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => b.ins().load(I64, mf(), cpu, offset_of!(Cpu, mem) as i32),
+            base => b.ins().iconst(I64, base as i64),
+        };
         let r = std::array::from_fn(|_| b.declare_var(I32));
         let (cf, pf, zf, sf, of) = (b.declare_var(I8), b.declare_var(I8), b.declare_var(I8), b.declare_var(I8), b.declare_var(I8));
         let top = b.declare_var(I32);

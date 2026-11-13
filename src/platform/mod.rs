@@ -37,6 +37,7 @@ pub mod savestate;
 pub mod shadows;
 pub mod stats;
 pub mod user32;
+pub mod terrain;
 pub mod walk;
 pub mod walker;
 pub mod wide;
@@ -737,6 +738,8 @@ fn find_import(dll: &str, name: &str) -> Option<&'static Import> {
 pub const HOOKS: &[(crate::ver::Us, crate::rt::Hook)] = &[
     (walker::GLIDE_WALKER, walker::draw_glide),
     (wide::TERRAIN_VERTEX, wide::terrain_vertex),
+    (terrain::BLOCK_VERTICES, terrain::block_vertices),
+    (terrain::GROUP_TILES, terrain::group_tiles),
     (wide::SPRITE, wide::sprite),
     (wide::POINTS, wide::points),
     (wide::TERRAIN_VISIBLE, wide::terrain_visible),
@@ -765,12 +768,24 @@ pub const HOOKS: &[(crate::ver::Us, crate::rt::Hook)] = &[
     (dsound::SET_VOLUME, dsound::set_volume),
 ];
 
+/// Reserve the guest memory, at `rt::FIXED_BASE` if it is free: before the game is compiled (the
+/// code then takes the base as a constant, `lift::FIXED_BASE`) and early, before other
+/// allocations take the place.
+pub fn reserve_memory() -> &'static Memory {
+    let m = MEM.get_or_init(Memory::reserve_fixed);
+    if m.base as usize == crate::rt::FIXED_BASE {
+        crate::lift::FIXED_BASE.store(m.base as u64, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        log!("guest memory at {:#x}, not {:#x}: its base is read at run time", m.base as usize, crate::rt::FIXED_BASE);
+    }
+    m
+}
+
 /// Load the EXE into a new guest address space, bind its imports, and run it on this thread
 /// (which needs a large stack: guest calls nest on it). Returns the exit code.
 pub fn run_game(img: &Image, game_dir: PathBuf) -> u32 {
     let _ = GAME_DIR.set(game_dir);
-    let _ = MEM.set(Memory::reserve());
-    let m = mem();
+    let m = reserve_memory();
     m.map(IMAGE_BASE, IMAGE_BASE + 0x1000);
     let hdr = &img.data[..0x1000.min(img.data.len())];
     m.slice(IMAGE_BASE, hdr.len()).copy_from_slice(hdr);

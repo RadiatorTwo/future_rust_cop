@@ -535,6 +535,12 @@ small gains are measured with timers in the code, not by fps.
       lists without a difference.
 - [x] Glide vertices in one buffer filled through unsynchronized maps: `flush` ~185 -> ~155 µs
       a picture.
+- [x] Guest memory at a fixed base (a constant in the code) and the hook index in the stub,
+      from recomp_kit: ~657 -> ~688 fps.
+- [x] Terrain pass in Rust (`terrain.rs`: 0x4534f0, 0x453740, 0x4537f0, 0x453930, 0x453e90):
+      ~675 -> ~729 fps; `FCOP_TERRAIN=check` compared 524288 groups without a difference.
+- [-] The kit's x87 work (rounding inline, register cache): `rt_fpu_round` is not among the
+      top 25 of the profile; not worth the lifter's changes here.
 - [-] Present thread from recomp_kit (pictures shown by a thread of ours): slower here (692 ->
       638 fps), dropped.
 - [ ] Left: SwapBuffers ~11% (try NVIDIA's "OpenGL present method: DXGI swapchain"), `flush`'s
