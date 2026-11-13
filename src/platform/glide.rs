@@ -1675,26 +1675,22 @@ pub fn set_view(view: View) {
 }
 
 fn draw_triangle(c: &mut Cpu) -> u32 {
-    let v = [arg(c, 0), arg(c, 1), arg(c, 2)];
-    with(|g, gl| g.add(gl, glow::TRIANGLES, &v));
+    draw(glow::TRIANGLES, &[arg(c, 0), arg(c, 1), arg(c, 2)]);
     0
 }
 
 fn draw_line(c: &mut Cpu) -> u32 {
-    let v = [arg(c, 0), arg(c, 1)];
-    with(|g, gl| g.add(gl, glow::TRIANGLES, &v));
+    draw(glow::TRIANGLES, &[arg(c, 0), arg(c, 1)]);
     0
 }
 
 fn draw_point(c: &mut Cpu) -> u32 {
-    let v = [arg(c, 0)];
-    with(|g, gl| g.add(gl, glow::POINTS, &v));
+    draw(glow::POINTS, &[arg(c, 0)]);
     0
 }
 
 fn clip_window(c: &mut Cpu) -> u32 {
-    let r = [arg(c, 0) as i32, arg(c, 1) as i32, arg(c, 2) as i32, arg(c, 3) as i32];
-    with(|g, gl| g.set(gl, |s| s.clip = r));
+    set_clip([arg(c, 0) as i32, arg(c, 1) as i32, arg(c, 2) as i32, arg(c, 3) as i32]);
     0
 }
 
@@ -1703,14 +1699,12 @@ fn combine(c: &Cpu) -> [u32; 5] {
 }
 
 fn color_combine(c: &mut Cpu) -> u32 {
-    let v = combine(c);
-    with(|g, _| g.cc = v);
+    set_color_combine(combine(c));
     0
 }
 
 fn alpha_combine(c: &mut Cpu) -> u32 {
-    let v = combine(c);
-    with(|g, _| g.ac = v);
+    set_alpha_combine(combine(c));
     0
 }
 
@@ -1725,15 +1719,109 @@ fn tex_combine(c: &mut Cpu) -> u32 {
 }
 
 fn constant_color(c: &mut Cpu) -> u32 {
-    let v = arg(c, 0);
-    with(|g, _| g.constant = v);
+    set_constant(arg(c, 0));
     0
 }
 
 fn alpha_blend(c: &mut Cpu) -> u32 {
-    let b = (arg(c, 0), arg(c, 1));
-    with(|g, gl| g.set(gl, |s| s.blend = b));
+    set_blend((arg(c, 0), arg(c, 1)));
     0
+}
+
+// ---- the calls the display list walker makes (the imports above and `walk.rs`) ----------------
+
+/// Draws the guest vertices (Glide 2 GrVertex) at `verts`: a point, a line or a triangle.
+pub fn draw(mode: u32, verts: &[u32]) {
+    if traced(|| Call::Draw(mode, verts.iter().map(|&v| std::array::from_fn(|k| mem().rd32(v + 4 * k as u32))).collect())) {
+        return;
+    }
+    with(|g, gl| g.add(gl, mode, verts));
+}
+
+pub fn set_clip(r: [i32; 4]) {
+    if traced(|| Call::Clip(r)) {
+        return;
+    }
+    with(|g, gl| g.set(gl, |s| s.clip = r));
+}
+
+pub fn set_color_combine(v: [u32; 5]) {
+    if traced(|| Call::ColorCombine(v)) {
+        return;
+    }
+    with(|g, _| g.cc = v);
+}
+
+pub fn set_alpha_combine(v: [u32; 5]) {
+    if traced(|| Call::AlphaCombine(v)) {
+        return;
+    }
+    with(|g, _| g.ac = v);
+}
+
+pub fn set_constant(v: u32) {
+    if traced(|| Call::Constant(v)) {
+        return;
+    }
+    with(|g, _| g.constant = v);
+}
+
+pub fn set_blend(b: (u32, u32)) {
+    if traced(|| Call::Blend(b)) {
+        return;
+    }
+    with(|g, gl| g.set(gl, |s| s.blend = b));
+}
+
+/// grTexSource with the texture's TMU address.
+pub fn set_tex(addr: u32) {
+    if traced(|| Call::Tex(addr)) {
+        return;
+    }
+    with(|g, _| g.tex = Some(addr));
+}
+
+/// A call above, kept while tracing (`FCOP_WALK=check`: the original walker's calls and ours
+/// compared); a draw keeps its vertices' 15 words.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Call {
+    Draw(u32, Vec<[u32; 15]>),
+    Clip([i32; 4]),
+    ColorCombine([u32; 5]),
+    AlphaCombine([u32; 5]),
+    Constant(u32),
+    Blend((u32, u32)),
+    Tex(u32),
+}
+
+static TRACING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+thread_local! {
+    /// the calls kept, and whether they only are kept (not done)
+    static TRACE: std::cell::RefCell<(Vec<Call>, bool)> = const { std::cell::RefCell::new((Vec::new(), false)) };
+}
+
+/// Keeps the calls from now on; with `dry` they are not done.
+pub fn trace_begin(dry: bool) {
+    TRACE.with_borrow_mut(|t| *t = (Vec::new(), dry));
+    TRACING.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The calls kept since `trace_begin`.
+pub fn trace_end() -> Vec<Call> {
+    TRACING.store(false, std::sync::atomic::Ordering::Relaxed);
+    TRACE.with_borrow_mut(|t| std::mem::take(&mut t.0))
+}
+
+/// Keeps the call while tracing; true when it must not be done.
+fn traced(call: impl FnOnce() -> Call) -> bool {
+    if !TRACING.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    TRACE.with_borrow_mut(|t| {
+        t.0.push(call());
+        t.1
+    })
 }
 
 fn chromakey_mode(c: &mut Cpu) -> u32 {
@@ -1826,8 +1914,7 @@ fn tex_download_mipmap_level_partial(c: &mut Cpu) -> u32 {
 }
 
 fn tex_source(c: &mut Cpu) -> u32 {
-    let addr = arg(c, 1);
-    with(|g, _| g.tex = Some(addr));
+    set_tex(arg(c, 1));
     0
 }
 

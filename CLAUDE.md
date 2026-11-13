@@ -252,6 +252,10 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   header). Precise mode points the resolution's jump table entry (0x43a168) at the plain
   path 0x4397cd, so vertices arrive in 2560x1920 units; text (type 6, game pixels) is drawn in
   its own calls; `glide::set_space` tells the renderer which space. `FCOP_PRECISE=0` off.
+- `walk.rs`: the walker itself in Rust (precise mode; the game's took ~25% of the game thread,
+  ~490 -> ~645 fps standing in the first mission), the same Glide calls in the same order; its
+  locals in the game's stack frame. `FCOP_WALK=0` the game's, `FCOP_WALK=check` runs both and
+  logs where the Glide calls differ (`glide::trace_begin`; 65536 lists the same, 2026-11-13).
 - `light.rs`: three settings, boxes below the gamma slider (the 3DFX Options group three rows
   taller). Texture Coloring (REG_DWORD `TextureColoring`, default on; `FCOP_COLORING=0/1`):
   a textured polygon's colour byte 0x80 = texture as it is, up to 2x brighter; the Glide

@@ -37,6 +37,7 @@ pub mod savestate;
 pub mod shadows;
 pub mod stats;
 pub mod user32;
+pub mod walk;
 pub mod walker;
 pub mod wide;
 pub mod window;
