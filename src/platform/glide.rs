@@ -1585,6 +1585,7 @@ fn buffer_clear(c: &mut Cpu) -> u32 {
 }
 
 fn buffer_swap(_: &mut Cpu) -> u32 {
+    super::sample::start();
     let shown = with(|g, gl| {
         g.flush(gl);
         g.resolve(gl);

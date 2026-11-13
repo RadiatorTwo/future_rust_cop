@@ -32,6 +32,7 @@ pub mod lights;
 pub mod menupad;
 pub mod misc;
 pub mod record;
+pub mod sample;
 pub mod savestate;
 pub mod shadows;
 pub mod user32;
