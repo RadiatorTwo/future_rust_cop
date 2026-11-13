@@ -1,14 +1,15 @@
 //! `FCOP_STATS=1` (on with `FCOP_SAMPLE=1` too): frames a second and frame times, drawn by us
 //! in the window's top left corner, so no overlay tool (RivaTuner) has to hook into our GL.
-//! Counted are the pictures shown (each `Gl::draw`, at its start: the time between two
-//! presents). First line: frames a second and the mean frame time over the last second;
-//! second line: the longest and the 99th percentile frame time of that second and the graph's
-//! top; below, the last 240 frame times as bars (yellow above 1.5 times the mean, red at the
-//! top). Redrawn 10 times a second; not in FCOP_SHOT's pictures.
+//! Counted are the new pictures shown (`picture`: Glide's and 2D frames), not the window's
+//! repaints. The text is the last half second's: frames a second and the mean frame time,
+//! then the longest and the 99th percentile frame time of the last second and the graph's
+//! top. The graph goes by time, as RivaTuner's: one column per 1/60 s, 4 s across, each the
+//! longest frame time in it (a frame longer than a column fills every column it lasted), so it
+//! moves at the same pace at any frame rate; yellow above twice the mean, red above four times.
+//! Redrawn 60 times a second; not in FCOP_SHOT's pictures.
 use super::dialog::draw::glyph;
-use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 pub fn on() -> bool {
@@ -16,74 +17,135 @@ pub fn on() -> bool {
     *ON.get_or_init(|| ["FCOP_STATS", "FCOP_SAMPLE"].iter().any(|v| std::env::var_os(v).is_some_and(|v| v != "0")))
 }
 
-/// Bars in the graph, one pixel each: the picture's width.
+/// Columns of the graph, one pixel each: the picture's width.
 pub const W: usize = 240;
+const COL_MS: f32 = 1000.0 / 60.0;
 const LINE: usize = 10;
 const GRAPH: usize = 48;
 /// The picture's height: two lines of text, a gap, the graph.
 pub const H: usize = 2 * LINE + 2 + GRAPH;
 
 struct Stats {
+    start: Option<Instant>,
     last: Option<Instant>,
-    /// frame times in ms, oldest first: at least the last second and the graph's bars
+    /// frame times in ms of the last second, oldest first, and their sum
     times: VecDeque<f32>,
     total: f32,
+    /// the graph's columns (longest frame time in each), oldest first; `col`: the number of
+    /// columns made so far
+    cols: VecDeque<f32>,
+    col: u64,
+    text: [String; 2],
+    mean: f32,
+    text_at: Option<Instant>,
     drawn: Option<Instant>,
 }
 
-thread_local! {
-    static STATS: RefCell<Stats> = const { RefCell::new(Stats { last: None, times: VecDeque::new(), total: 0.0, drawn: None }) };
+static STATS: Mutex<Stats> = Mutex::new(Stats {
+    start: None,
+    last: None,
+    times: VecDeque::new(),
+    total: 0.0,
+    cols: VecDeque::new(),
+    col: 0,
+    text: [String::new(), String::new()],
+    mean: 0.0,
+    text_at: None,
+    drawn: None,
+});
+
+/// A new picture is shown now.
+pub fn picture() {
+    if !on() {
+        return;
+    }
+    let s = &mut *STATS.lock().unwrap();
+    let now = Instant::now();
+    let start = *s.start.get_or_insert(now);
+    let col_of = |t: Instant| ((t - start).as_secs_f32() * 1000.0 / COL_MS) as u64;
+    let c = col_of(now);
+    while s.col <= c {
+        s.cols.push_back(0.0);
+        s.col += 1;
+        if s.cols.len() > W {
+            s.cols.pop_front();
+        }
+    }
+    let Some(t) = s.last.replace(now) else { return };
+    let ms = (now - t).as_secs_f32() * 1000.0;
+    s.times.push_back(ms);
+    s.total += ms;
+    while s.total - s.times[0] >= 1000.0 {
+        s.total -= s.times.pop_front().unwrap();
+    }
+    // every column the frame lasted
+    let n = s.cols.len() as u64;
+    for k in col_of(t).max(s.col - n)..s.col {
+        let i = (n - (s.col - k)) as usize;
+        s.cols[i] = s.cols[i].max(ms);
+    }
 }
 
-/// A picture is shown now. Returns the display's new pixels (ARGB words, W x H) when it is due.
-pub fn tick() -> Option<Vec<u32>> {
-    STATS.with_borrow_mut(|s| {
-        let now = Instant::now();
-        if let Some(t) = s.last.replace(now) {
-            let ms = (now - t).as_secs_f32() * 1000.0;
-            s.times.push_back(ms);
-            s.total += ms;
-            while s.times.len() > W && s.total - s.times[0] >= 1000.0 {
-                s.total -= s.times.pop_front().unwrap();
-            }
-        }
-        if s.drawn.is_some_and(|d| now - d < Duration::from_millis(100)) {
-            return None;
-        }
-        s.drawn = Some(now);
-        Some(render(&s.times))
-    })
+/// The display's new pixels (ARGB words, W x H) when they are due.
+pub fn pixels() -> Option<Vec<u32>> {
+    let s = &mut *STATS.lock().unwrap();
+    let now = Instant::now();
+    if s.drawn.is_some_and(|d| now - d < Duration::from_millis(16)) {
+        return None;
+    }
+    s.drawn = Some(now);
+    if s.text_at.is_none_or(|d| now - d >= Duration::from_millis(500)) {
+        s.text_at = Some(now);
+        text_of(s);
+    }
+    Some(render(s))
 }
 
-fn render(times: &VecDeque<f32>) -> Vec<u32> {
-    let mut px = vec![0xa000_0000u32; W * H];
-    // the last second
-    let mut second = Vec::new();
-    let mut sum = 0.0;
-    for &t in times.iter().rev() {
-        if sum >= 1000.0 {
+/// The text: frames a second and mean over the last half second, longest and 99th percentile
+/// over the last second.
+fn text_of(s: &mut Stats) {
+    let (mut sum, mut n) = (0.0, 0);
+    for &t in s.times.iter().rev() {
+        if sum >= 500.0 {
             break;
         }
         sum += t;
-        second.push(t);
+        n += 1;
     }
-    let graph: Vec<f32> = times.iter().rev().take(W).rev().copied().collect();
-    let max_graph = graph.iter().copied().fold(0.0f32, f32::max);
-    let top = [1.0f32, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0].into_iter().find(|&t| t >= max_graph).unwrap_or(1000.0);
-    if !second.is_empty() {
-        let mean = sum / second.len() as f32;
-        let max = second.iter().copied().fold(0.0f32, f32::max);
-        second.sort_unstable_by(f32::total_cmp);
-        let p99 = second[((second.len() - 1) as f32 * 0.99).round() as usize];
-        text(&mut px, 2, 1, &format!("{:.0} fps  {mean:.2} ms", second.len() as f32 * 1000.0 / sum), 0xffff_ffff);
-        text(&mut px, 2, 1 + LINE, &format!("max {max:.2}  99% {p99:.2}  top {top:.0} ms"), 0xffc0_c0c0);
-        for (x, &t) in graph.iter().enumerate() {
-            let x = x + W - graph.len();
-            let bar = ((t / top).min(1.0) * GRAPH as f32).round().max(1.0) as usize;
-            let c = if t >= top { 0xffff_4040 } else if t > 1.5 * mean { 0xffff_d040 } else { 0xff40_e040 };
-            for y in H - bar..H {
-                px[y * W + x] = c;
-            }
+    if n == 0 {
+        return;
+    }
+    s.mean = sum / n as f32;
+    let mut second: Vec<f32> = s.times.iter().copied().collect();
+    second.sort_unstable_by(f32::total_cmp);
+    let max = second[second.len() - 1];
+    let p99 = second[((second.len() - 1) as f32 * 0.99).round() as usize];
+    s.text[0] = format!("{:.0} fps  {:.2} ms", n as f32 * 1000.0 / sum, s.mean);
+    s.text[1] = format!("max {max:.2}  99% {p99:.2}");
+}
+
+fn render(s: &Stats) -> Vec<u32> {
+    let mut px = vec![0xa000_0000u32; W * H];
+    let max_graph = s.cols.iter().copied().fold(0.0f32, f32::max);
+    let top = [1.0f32, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0].into_iter().find(|&t| t >= 1.25 * max_graph).unwrap_or(1000.0);
+    text(&mut px, 2, 1, &s.text[0], 0xffff_ffff);
+    text(&mut px, 2, 1 + LINE, &format!("{}  top {top:.0} ms", s.text[1]), 0xffc0_c0c0);
+    let skip = W - s.cols.len();
+    for (x, &t) in s.cols.iter().enumerate() {
+        if t == 0.0 {
+            continue;
+        }
+        let x = x + skip;
+        let bar = ((t / top).min(1.0) * GRAPH as f32).round().max(1.0) as usize;
+        let (line, fill) = if t > 4.0 * s.mean {
+            (0xffff_5050, 0x80c0_3030)
+        } else if t > 2.0 * s.mean {
+            (0xffff_e050, 0x80c0_a030)
+        } else {
+            (0xff60_ff60, 0x8030_a030)
+        };
+        for y in H - bar..H {
+            px[y * W + x] = if y == H - bar { line } else { fill };
         }
     }
     px

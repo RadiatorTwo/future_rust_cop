@@ -191,7 +191,7 @@ impl Gl {
     /// Draw the shown picture and the overlay into the window (w x h), letterboxed; with `shot`,
     /// read back the picture's area as 0RGB pixels.
     pub fn draw(&mut self, w: u32, h: u32, shot: bool) -> Option<(Vec<u32>, u32, u32)> {
-        let stats = super::stats::on().then(super::stats::tick);
+        let stats = super::stats::on().then(super::stats::pixels);
         let gl = &self.gl;
         let (tex, fw, fh, words, gamma) = self.shown;
         let (ox, oy, s) = super::window::fit(fw, fh, w, h);

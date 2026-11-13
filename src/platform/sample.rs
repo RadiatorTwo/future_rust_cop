@@ -1,7 +1,7 @@
 //! `FCOP_SAMPLE=1`: where the game thread spends its time.
 //! A host thread stops the thread that swaps Glide's buffers some 2000 times a second, reads
 //! its instruction pointer and counts it for the recompiled function it is in (the nearest
-//! start below it; hooked originals count for the function before them), or the host module.
+//! start below it; hooked functions by their lifted originals), or the host module.
 //! In system code the thread's stack is copied while it stands and unwound afterwards
 //! (unwinding a stopped thread can wait for a lock it holds), up to the first frame in our
 //! code: "ntdll <- nvoglv64 <- game.exe+off". Every 2 s the top entries are logged.
@@ -39,7 +39,8 @@ fn sample(h: windows_sys::Win32::Foundation::HANDLE) {
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
     use windows_sys::Win32::System::Threading::{ResumeThread, SuspendThread};
     let Some(d) = crate::rt::DISPATCH.get() else { return };
-    let mut starts: Vec<(usize, u32)> = d.table.iter().map(|&(g, p)| (p, g)).collect();
+    // hooked functions: their lifted originals too (compiled after all others)
+    let mut starts: Vec<(usize, u32)> = d.table.iter().map(|&(g, p)| (p, g)).chain(d.hooks.iter().map(|h| (h.2, h.0))).collect();
     starts.sort_unstable();
     let (lo, hi) = (starts.first().map_or(0, |s| s.0), starts.last().map_or(0, |s| s.0) + 0x10000);
     let mut counts: HashMap<String, u32> = HashMap::new();
