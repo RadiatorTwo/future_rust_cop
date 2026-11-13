@@ -37,6 +37,7 @@ pub mod savestate;
 pub mod shadows;
 pub mod stats;
 pub mod user32;
+pub mod terrain;
 pub mod walk;
 pub mod walker;
 pub mod wide;
@@ -737,6 +738,7 @@ fn find_import(dll: &str, name: &str) -> Option<&'static Import> {
 pub const HOOKS: &[(crate::ver::Us, crate::rt::Hook)] = &[
     (walker::GLIDE_WALKER, walker::draw_glide),
     (wide::TERRAIN_VERTEX, wide::terrain_vertex),
+    (terrain::BLOCK_VERTICES, terrain::block_vertices),
     (wide::SPRITE, wide::sprite),
     (wide::POINTS, wide::points),
     (wide::TERRAIN_VISIBLE, wide::terrain_visible),
