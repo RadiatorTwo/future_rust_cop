@@ -25,6 +25,8 @@ pub struct Gl {
     frame: glow::Texture,
     overlay: glow::Texture,
     has_overlay: bool,
+    /// FCOP_STATS' display (`stats.rs`), made at its first picture
+    stats: Option<glow::Texture>,
     video: glow::Texture,
     /// where the video is shown: x, y, width, height as parts of the 4:3 picture
     video_size: Option<(u32, u32)>,
@@ -155,7 +157,7 @@ impl Gl {
         upload(&gl, frame, &vec![0; 640 * 480], 640, 480);
         let overlay = texture(&gl, true);
         let video = texture(&gl, true);
-        let g = Gl { gl, surface, context, blit, vao, frame, overlay, has_overlay: false, video, video_size: None, shown: (frame, 640, 480, true, 1.0) };
+        let g = Gl { gl, surface, context, blit, vao, frame, overlay, has_overlay: false, stats: None, video, video_size: None, shown: (frame, 640, 480, true, 1.0) };
         (win, g)
     }
 
@@ -189,6 +191,7 @@ impl Gl {
     /// Draw the shown picture and the overlay into the window (w x h), letterboxed; with `shot`,
     /// read back the picture's area as 0RGB pixels.
     pub fn draw(&mut self, w: u32, h: u32, shot: bool) -> Option<(Vec<u32>, u32, u32)> {
+        let stats = super::stats::on().then(super::stats::tick);
         let gl = &self.gl;
         let (tex, fw, fh, words, gamma) = self.shown;
         let (ox, oy, s) = super::window::fit(fw, fh, w, h);
@@ -263,7 +266,41 @@ impl Gl {
                 .collect();
             (px, rw as u32, rh as u32)
         });
+        if let Some(new) = stats {
+            self.draw_stats(new, w, h);
+        }
         let _ = self.surface.swap_buffers(&self.context);
         out
+    }
+
+    /// FCOP_STATS' display in the top left corner, twice its size from 900 rows on (`new`: its
+    /// pixels when they changed).
+    fn draw_stats(&mut self, new: Option<Vec<u32>>, w: u32, h: u32) {
+        let gl = &self.gl;
+        let t = *self.stats.get_or_insert_with(|| texture(gl, false));
+        if let Some(px) = new {
+            upload(gl, t, &px, super::stats::W as u32, super::stats::H as u32);
+        }
+        let scale = if h >= 900 { 2.0 } else { 1.0 };
+        let (x0, y0) = (-1.0 + 2.0 * 8.0 / w as f32, 1.0 - 2.0 * 8.0 / h as f32);
+        let (x1, y1) = (x0 + 2.0 * super::stats::W as f32 * scale / w as f32, y0 - 2.0 * super::stats::H as f32 * scale / h as f32);
+        unsafe {
+            gl.color_mask(true, true, true, false);
+            gl.use_program(Some(self.blit));
+            gl.bind_vertex_array(Some(self.vao));
+            gl.active_texture(glow::TEXTURE0);
+            let u = |n: &str| gl.get_uniform_location(self.blit, n);
+            gl.uniform_4_f32(u("rect").as_ref(), x0, y1, x1, y0);
+            gl.uniform_1_i32(u("tex").as_ref(), 0);
+            gl.uniform_1_i32(u("words").as_ref(), 1);
+            gl.uniform_1_i32(u("flip").as_ref(), 0);
+            gl.uniform_1_f32(u("gamma").as_ref(), 1.0);
+            gl.enable(glow::BLEND);
+            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            gl.bind_texture(glow::TEXTURE_2D, Some(t));
+            gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            gl.disable(glow::BLEND);
+            gl.color_mask(true, true, true, true);
+        }
     }
 }

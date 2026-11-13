@@ -35,6 +35,7 @@ pub mod record;
 pub mod sample;
 pub mod savestate;
 pub mod shadows;
+pub mod stats;
 pub mod user32;
 pub mod walker;
 pub mod wide;
