@@ -545,7 +545,10 @@ small gains are measured with timers in the code, not by fps.
       top 25 of the profile; not worth the lifter's changes here.
 - [-] Present thread from recomp_kit (pictures shown by a thread of ours): slower here (692 ->
       638 fps), dropped.
-- [ ] Left: SwapBuffers ~11% (try NVIDIA's "OpenGL present method: DXGI swapchain"), `flush`'s
+- [-] NVIDIA's "Vulkan/OpenGL present method: prefer layered on DXGI swapchain" for fcop.exe
+      (2026-11-14): slower, 792 -> 517 fps, the game thread then waited ~39% in SwapBuffers
+      (was ~14%). Left on Auto.
+- [ ] Left: SwapBuffers ~11%, `flush`'s
       state ~57 µs a picture (unchanged state sent again), the game's own code ~15-20% (the kit's
       fixed memory base and x87 work).
 
