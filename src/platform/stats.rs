@@ -3,10 +3,12 @@
 //! Counted are the new pictures shown (`picture`: Glide's and 2D frames), not the window's
 //! repaints. The text is the last half second's: frames a second and the mean frame time,
 //! then the longest and the 99th percentile frame time of the last second and the graph's
-//! top. The graph goes by time, as RivaTuner's: one column per 1/60 s, 4 s across, each the
-//! mean frame time of the frames ending in it (a frame longer than a column fills every column
-//! it lasted with its time: a hitch stays as tall as it was), so it moves at the same pace at any frame rate; yellow above twice the mean, red above four times.
-//! Redrawn 60 times a second; not in FCOP_SHOT's pictures.
+//! top (at least 10 ms, as RivaTuner's fixed range: small changes stay small). The graph goes
+//! by time, as RivaTuner's: one column per 1/60 s, 4 s across, each the mean frame time of the
+//! frames ending in it (a frame longer than a column fills every column it lasted with its
+//! time: a hitch stays as tall as it was), so it moves at the same pace at any frame rate;
+//! yellow above twice the mean, red above four times. Redrawn 60 times a second; not in
+//! FCOP_SHOT's pictures.
 use super::dialog::draw::glyph;
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
@@ -144,7 +146,7 @@ fn text_of(s: &mut Stats) {
 fn render(s: &Stats) -> Vec<u32> {
     let mut px = vec![0xa000_0000u32; W * H];
     let max_graph = s.cols.iter().map(Col::ms).fold(0.0f32, f32::max);
-    let top = [1.0f32, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0].into_iter().find(|&t| t >= 1.25 * max_graph).unwrap_or(1000.0);
+    let top = [10.0f32, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0].into_iter().find(|&t| t >= 1.25 * max_graph).unwrap_or(1000.0);
     text(&mut px, 2, 1, &s.text[0], 0xffff_ffff);
     text(&mut px, 2, 1 + LINE, &format!("{}  top {top:.0} ms", s.text[1]), 0xffc0_c0c0);
     let skip = W - s.cols.len();
