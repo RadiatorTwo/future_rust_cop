@@ -171,6 +171,9 @@ struct Glide {
     prog: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
+    /// where the next batch goes in `vbo` (bytes): batches are appended, the buffer is only
+    /// made anew (orphaned) when full, so the driver does not allocate at every flush
+    vbo_at: usize,
     /// every texture, 256x256 at most, in one array: rgb premultiplied by coverage and the
     /// coverage, with mipmaps (see the module)
     array: glow::Texture,
@@ -467,6 +470,8 @@ void main() {
 
 /// Words per batched vertex.
 const VERTEX: usize = 22;
+/// The vertex buffer's size: some 40 pictures of the game's ~4000 vertices.
+const VBO_SIZE: usize = 16 << 20;
 
 use super::effects::Effect;
 
@@ -715,6 +720,7 @@ impl Glide {
             let vbo = gl.create_buffer().expect("GL buffer");
             gl.bind_vertex_array(Some(vao));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+            gl.buffer_data_size(glow::ARRAY_BUFFER, VBO_SIZE as i32, glow::STREAM_DRAW);
             for (loc, n, off) in [(0, 2, 0), (1, 4, 8), (2, 2, 24), (3, 4, 32)] {
                 gl.enable_vertex_attrib_array(loc);
                 gl.vertex_attrib_pointer_f32(loc, n, glow::FLOAT, false, 4 * VERTEX as i32, off);
@@ -757,6 +763,7 @@ impl Glide {
                 prog,
                 vao,
                 vbo,
+                vbo_at: 0,
                 array,
                 alpha,
                 stale: false,
@@ -1117,8 +1124,17 @@ impl Glide {
             }
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
             let bytes = std::slice::from_raw_parts(self.batch.as_ptr() as *const u8, self.batch.len() * 4);
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STREAM_DRAW);
-            gl.draw_arrays(self.batch_mode, 0, (self.batch.len() / VERTEX) as i32);
+            if self.vbo_at + bytes.len() > VBO_SIZE {
+                gl.buffer_data_size(glow::ARRAY_BUFFER, VBO_SIZE.max(bytes.len()) as i32, glow::STREAM_DRAW);
+                self.vbo_at = 0;
+            }
+            // the part written was never drawn from since the buffer was made: no wait
+            let flags = glow::MAP_WRITE_BIT | glow::MAP_UNSYNCHRONIZED_BIT | glow::MAP_INVALIDATE_RANGE_BIT;
+            let p = gl.map_buffer_range(glow::ARRAY_BUFFER, self.vbo_at as i32, bytes.len() as i32, flags);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+            gl.unmap_buffer(glow::ARRAY_BUFFER);
+            gl.draw_arrays(self.batch_mode, (self.vbo_at / (4 * VERTEX)) as i32, (self.batch.len() / VERTEX) as i32);
+            self.vbo_at += bytes.len();
             gl.disable(glow::SCISSOR_TEST);
             gl.disable(glow::BLEND);
         }
