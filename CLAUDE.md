@@ -256,6 +256,11 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   ~490 -> ~645 fps standing in the first mission), the same Glide calls in the same order; its
   locals in the game's stack frame. `FCOP_WALK=0` the game's, `FCOP_WALK=check` runs both and
   logs where the Glide calls differ (`glide::trace_begin`; 65536 lists the same, 2026-11-13).
+- `terrain.rs`: the terrain pass in Rust (render_terrain 0x453360's callees, all integer code):
+  0x4534f0 block vertices with 0x453740 inside (widescreen scale and AO points as
+  `wide::terrain_vertex`), 0x4537f0 group tiles with 0x453930 / 0x453e90 (records appended to
+  the display list). ~675 -> ~729 fps standing in the first mission. `FCOP_TERRAIN=0` the game's,
+  `=check` compares the vertex buffer and the records (524288 groups the same, also wide).
 - `light.rs`: three settings, boxes below the gamma slider (the 3DFX Options group three rows
   taller). Texture Coloring (REG_DWORD `TextureColoring`, default on; `FCOP_COLORING=0/1`):
   a textured polygon's colour byte 0x80 = texture as it is, up to 2x brighter; the Glide
