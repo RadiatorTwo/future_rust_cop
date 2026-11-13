@@ -4,8 +4,8 @@
 //! repaints. The text is the last half second's: frames a second and the mean frame time,
 //! then the longest and the 99th percentile frame time of the last second and the graph's
 //! top. The graph goes by time, as RivaTuner's: one column per 1/60 s, 4 s across, each the
-//! longest frame time in it (a frame longer than a column fills every column it lasted), so it
-//! moves at the same pace at any frame rate; yellow above twice the mean, red above four times.
+//! mean frame time of the frames ending in it (a frame longer than a column fills every column
+//! it lasted with its time: a hitch stays as tall as it was), so it moves at the same pace at any frame rate; yellow above twice the mean, red above four times.
 //! Redrawn 60 times a second; not in FCOP_SHOT's pictures.
 use super::dialog::draw::glyph;
 use std::collections::VecDeque;
@@ -31,14 +31,28 @@ struct Stats {
     /// frame times in ms of the last second, oldest first, and their sum
     times: VecDeque<f32>,
     total: f32,
-    /// the graph's columns (longest frame time in each), oldest first; `col`: the number of
-    /// columns made so far
-    cols: VecDeque<f32>,
+    /// the graph's columns, oldest first; `col`: the number of columns made so far
+    cols: VecDeque<Col>,
     col: u64,
     text: [String; 2],
     mean: f32,
     text_at: Option<Instant>,
     drawn: Option<Instant>,
+}
+
+/// A column of the graph: the frames ending in it (sum of their times, count), and the
+/// longest frame it lies within.
+#[derive(Clone, Copy, Default)]
+struct Col {
+    sum: f32,
+    n: u32,
+    long: f32,
+}
+
+impl Col {
+    fn ms(&self) -> f32 {
+        if self.n == 0 { self.long } else { (self.sum / self.n as f32).max(self.long) }
+    }
 }
 
 static STATS: Mutex<Stats> = Mutex::new(Stats {
@@ -65,7 +79,7 @@ pub fn picture() {
     let col_of = |t: Instant| ((t - start).as_secs_f32() * 1000.0 / COL_MS) as u64;
     let c = col_of(now);
     while s.col <= c {
-        s.cols.push_back(0.0);
+        s.cols.push_back(Col::default());
         s.col += 1;
         if s.cols.len() > W {
             s.cols.pop_front();
@@ -78,11 +92,14 @@ pub fn picture() {
     while s.total - s.times[0] >= 1000.0 {
         s.total -= s.times.pop_front().unwrap();
     }
-    // every column the frame lasted
+    // the column it ends in, and every column before it lasted
     let n = s.cols.len() as u64;
-    for k in col_of(t).max(s.col - n)..s.col {
+    let last = s.cols.back_mut().unwrap();
+    last.sum += ms;
+    last.n += 1;
+    for k in col_of(t).max(s.col - n)..s.col - 1 {
         let i = (n - (s.col - k)) as usize;
-        s.cols[i] = s.cols[i].max(ms);
+        s.cols[i].long = s.cols[i].long.max(ms);
     }
 }
 
@@ -126,12 +143,12 @@ fn text_of(s: &mut Stats) {
 
 fn render(s: &Stats) -> Vec<u32> {
     let mut px = vec![0xa000_0000u32; W * H];
-    let max_graph = s.cols.iter().copied().fold(0.0f32, f32::max);
+    let max_graph = s.cols.iter().map(Col::ms).fold(0.0f32, f32::max);
     let top = [1.0f32, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0].into_iter().find(|&t| t >= 1.25 * max_graph).unwrap_or(1000.0);
     text(&mut px, 2, 1, &s.text[0], 0xffff_ffff);
     text(&mut px, 2, 1 + LINE, &format!("{}  top {top:.0} ms", s.text[1]), 0xffc0_c0c0);
     let skip = W - s.cols.len();
-    for (x, &t) in s.cols.iter().enumerate() {
+    for (x, t) in s.cols.iter().map(Col::ms).enumerate() {
         if t == 0.0 {
             continue;
         }
