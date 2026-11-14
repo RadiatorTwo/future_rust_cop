@@ -132,7 +132,7 @@ pub struct Bloom {
     /// for the target's size: the picture's copy, and the levels (half resolution first) with one
     /// framebuffer they are attached to in turn (a framebuffer of their own each: every switch
     /// cost the driver some 7 µs of the game thread)
-    copy: Option<((u32, u32), glow::Texture, glow::Framebuffer, Vec<(glow::Texture, (i32, i32))>, glow::Framebuffer)>,
+    copy: Option<(((u32, u32), u32), glow::Texture, glow::Framebuffer, Vec<(glow::Texture, (i32, i32))>, glow::Framebuffer)>,
 }
 
 impl Bloom {
@@ -166,7 +166,8 @@ impl Bloom {
     }
 
     fn targets(&mut self, gl: &glow::Context, target: (u32, u32)) {
-        if self.copy.as_ref().is_some_and(|c| c.0 == target) {
+        let (format, kind) = super::glide::colour_format();
+        if self.copy.as_ref().is_some_and(|c| c.0 == (target, format)) {
             return;
         }
         self.drop_targets(gl);
@@ -179,7 +180,7 @@ impl Bloom {
                 gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(t), 0);
                 (t, f)
             };
-            let (t, f) = make(target.0 as i32, target.1 as i32, glow::RGBA8, glow::UNSIGNED_BYTE);
+            let (t, f) = make(target.0 as i32, target.1 as i32, format, kind);
             let mut levels = Vec::new();
             let (mut w, mut h) = (target.0 as i32, target.1 as i32);
             for _ in 0..=LEVELS {
@@ -192,7 +193,7 @@ impl Bloom {
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
             gl.bind_texture(glow::TEXTURE_2D, None);
             let chain = gl.create_framebuffer().expect("GL framebuffer");
-            self.copy = Some((target, t, f, levels, chain));
+            self.copy = Some(((target, format), t, f, levels, chain));
         }
     }
 

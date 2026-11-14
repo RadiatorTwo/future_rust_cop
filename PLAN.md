@@ -481,8 +481,12 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
       weighted 1 / (1 + brightness) against flicker), 6 levels down (13 taps), back up (3x3
       tent, each larger level weighted 1.45x more (1.6 was too much over all): the glow reaches around a bright thing, at first it stayed on the explosion itself), added at 0.35 of the bright part (0.12 too subtle, 0.6 and 0.45 too strong). Seen at M2C's start: the wall lamp and the robot's police
       lights glow. Open: the user's look in motion (explosions), strength; cost.
-- [ ] Brightness first: the target in RGBA16F (HDR, Texture Coloring's up to 2x not clipped
-      before the end), else bloom has nothing above white to work with.
+- [x] Brightness first: the target in RGBA16F (HDR, Texture Coloring's up to 2x not clipped
+      before the end), else bloom has nothing above white to work with. Done with tone mapping
+      (2026-11-14, `tonemap.rs`): Off / Soft / AgX / ACES in Advanced Graphics, the pass before
+      the HUD ~39 µs, output 8-bit for every monitor; PlayStation Colors off meanwhile. Seen at
+      M2C's start: the wall lamps' pools stay orange instead of white. Open: the user's choice
+      and look in motion; the dialog checked by hand.
 - [ ] Source: the bright part of the 3D picture (soft threshold) plus the glowing effects
       (step 4's mask, so explosions and police lights bloom, bright walls barely). A mip
       chain down (5-6 levels, 13-tap filter) and back up (tent filter), added at low

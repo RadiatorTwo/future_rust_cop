@@ -158,6 +158,8 @@ struct Glide {
     res: (u32, u32),
     /// the texture drawn into
     target: (u32, u32),
+    /// the target was made in RGBA16F (`colour_format`)
+    target_hdr: bool,
     /// the vertices' coordinate space
     space: (u32, u32),
     view: View,
@@ -222,6 +224,7 @@ struct Glide {
     heat: Option<super::heat::Heat>,
     /// the bloom's pass (`bloom.rs`)
     bloom: Option<super::bloom::Bloom>,
+    tonemap: Option<super::tonemap::Pass>,
 }
 
 /// The depth attachment, and a framebuffer with only the colour of the one drawn into (the
@@ -754,6 +757,8 @@ impl Glide {
             Glide {
                 res: (w, h),
                 target,
+                // made in RGBA8 above: the first resize makes it anew when tone mapping is on
+                target_hdr: false,
                 space: (w, h),
                 view: View::Full,
                 fbo,
@@ -798,6 +803,7 @@ impl Glide {
                 heat_sources: Vec::new(),
                 heat: None,
                 bloom: None,
+                tonemap: None,
             }
         }
     }
@@ -832,7 +838,7 @@ impl Glide {
     fn resize(&mut self, gl: &glow::Context, a: f32, h: u32) {
         let h = h.clamp(240, 4320);
         let w = (h as f32 * a).round() as u32;
-        if (w, h) == self.target {
+        if (w, h) == self.target && self.target_hdr == super::tonemap::hdr() {
             // the samples may have changed in Preferences, the AO in Advanced Graphics
             self.multisample(gl, false);
             self.gbuffer(gl);
@@ -840,9 +846,12 @@ impl Glide {
         }
         self.drop_gbuffer(gl);
         self.target = (w, h);
+        self.target_hdr = super::tonemap::hdr();
+        TARGET_HDR.store(self.target_hdr, Ordering::Relaxed);
+        let (format, kind) = colour_format();
         unsafe {
             gl.bind_texture(glow::TEXTURE_2D, Some(self.color));
-            gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, w as i32, h as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+            gl.tex_image_2d(glow::TEXTURE_2D, 0, format as i32, w as i32, h as i32, 0, glow::RGBA, kind, glow::PixelUnpackData::Slice(None));
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
             gl.disable(glow::SCISSOR_TEST);
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
@@ -872,7 +881,7 @@ impl Glide {
             }
             let rb = gl.create_renderbuffer().expect("GL renderbuffer");
             gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-            gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, samples as i32, glow::RGBA8, self.target.0 as i32, self.target.1 as i32);
+            gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, samples as i32, colour_format().0, self.target.0 as i32, self.target.1 as i32);
             let fbo = gl.create_framebuffer().expect("GL framebuffer");
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
             gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rb));
@@ -1570,6 +1579,9 @@ fn sst_win_close(_: &mut Cpu) -> u32 {
         if let Some(mut s) = g.bloom.take() {
             s.delete(gl);
         }
+        if let Some(mut s) = g.tonemap.take() {
+            s.delete(gl);
+        }
         gl.delete_framebuffer(g.fbo);
         gl.delete_texture(g.color);
         gl.delete_texture(g.array);
@@ -1651,7 +1663,14 @@ pub fn post_3d() {
         let _t = super::fps::timer(super::fps::Phase::Post);
         let lights = std::mem::take(&mut g.lights);
         let heat = std::mem::take(&mut g.heat_sources);
-        let Some(d) = &g.gdepth else { return };
+        let Some(d) = &g.gdepth else {
+            // no depth effect on: only the tone mapping, on the framebuffer drawn into
+            if g.target_hdr {
+                let (target, clip, out) = (g.target, g.scissor_box(g.state.clip), g.draw_fbo());
+                g.tonemap.get_or_insert_with(|| super::tonemap::Pass::new(gl)).run(gl, target, out, clip, super::tonemap::curve());
+            }
+            return;
+        };
         let (tex, ms, colour) = (d.tex, d.ms, d.colour);
         let clip = g.scissor_box(g.state.clip);
         let target = g.target;
@@ -1676,6 +1695,10 @@ pub fn post_3d() {
         }
         if super::bloom::enabled() {
             g.bloom.get_or_insert_with(|| super::bloom::Bloom::new(gl)).run(gl, tex, ms, target, colour, clip);
+        }
+        // last: the picture back into 0..1 (the HUD follows unmapped)
+        if g.target_hdr {
+            g.tonemap.get_or_insert_with(|| super::tonemap::Pass::new(gl)).run(gl, target, colour, clip, super::tonemap::curve());
         }
     });
 }
@@ -1942,6 +1965,17 @@ fn sst_screen_width(c: &mut Cpu) -> u32 {
 
 fn sst_screen_height(_: &mut Cpu) -> u32 {
     with(|g, _| g.res.1).unwrap_or(480)
+}
+
+/// The target was made in RGBA16F (a curve chosen in Advanced Graphics takes effect when the
+/// target is made anew, at the next swap: until then the copies keep its format).
+static TARGET_HDR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The 3D picture's colour target format (internal format, texel type): RGBA16F while it was
+/// made for a tone mapping curve (`tonemap`: values above 1.0 kept), else RGBA8 as before. The
+/// post passes' copies of the picture take it too.
+pub fn colour_format() -> (u32, u32) {
+    if TARGET_HDR.load(Ordering::Relaxed) { (glow::RGBA16F, glow::HALF_FLOAT) } else { (glow::RGBA8, glow::UNSIGNED_BYTE) }
 }
 
 /// The Glide functions we implement; anything else the game asks for gets `not_implemented`.
