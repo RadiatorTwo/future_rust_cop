@@ -847,6 +847,7 @@ impl Glide {
         self.drop_gbuffer(gl);
         self.target = (w, h);
         self.target_hdr = super::tonemap::hdr();
+        TARGET_HDR.store(self.target_hdr, Ordering::Relaxed);
         let (format, kind) = colour_format();
         unsafe {
             gl.bind_texture(glow::TEXTURE_2D, Some(self.color));
@@ -1664,7 +1665,7 @@ pub fn post_3d() {
         let heat = std::mem::take(&mut g.heat_sources);
         let Some(d) = &g.gdepth else {
             // no depth effect on: only the tone mapping, on the framebuffer drawn into
-            if super::tonemap::hdr() {
+            if g.target_hdr {
                 let (target, clip, out) = (g.target, g.scissor_box(g.state.clip), g.draw_fbo());
                 g.tonemap.get_or_insert_with(|| super::tonemap::Pass::new(gl)).run(gl, target, out, clip, super::tonemap::curve());
             }
@@ -1696,7 +1697,7 @@ pub fn post_3d() {
             g.bloom.get_or_insert_with(|| super::bloom::Bloom::new(gl)).run(gl, tex, ms, target, colour, clip);
         }
         // last: the picture back into 0..1 (the HUD follows unmapped)
-        if super::tonemap::hdr() {
+        if g.target_hdr {
             g.tonemap.get_or_insert_with(|| super::tonemap::Pass::new(gl)).run(gl, target, colour, clip, super::tonemap::curve());
         }
     });
@@ -1966,11 +1967,15 @@ fn sst_screen_height(_: &mut Cpu) -> u32 {
     with(|g, _| g.res.1).unwrap_or(480)
 }
 
-/// The 3D picture's colour target format (internal format, texel type): RGBA16F while a tone
-/// mapping curve is chosen (`tonemap`: values above 1.0 kept), else RGBA8 as before. The post
-/// passes' copies of the picture take it too.
+/// The target was made in RGBA16F (a curve chosen in Advanced Graphics takes effect when the
+/// target is made anew, at the next swap: until then the copies keep its format).
+static TARGET_HDR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The 3D picture's colour target format (internal format, texel type): RGBA16F while it was
+/// made for a tone mapping curve (`tonemap`: values above 1.0 kept), else RGBA8 as before. The
+/// post passes' copies of the picture take it too.
 pub fn colour_format() -> (u32, u32) {
-    if super::tonemap::hdr() { (glow::RGBA16F, glow::HALF_FLOAT) } else { (glow::RGBA8, glow::UNSIGNED_BYTE) }
+    if TARGET_HDR.load(Ordering::Relaxed) { (glow::RGBA16F, glow::HALF_FLOAT) } else { (glow::RGBA8, glow::UNSIGNED_BYTE) }
 }
 
 /// The Glide functions we implement; anything else the game asks for gets `not_implemented`.
