@@ -367,7 +367,7 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   `FCOP_TONEMAP=0..3`, combo in Advanced Graphics). Not Off: Glide's colour target and the post
   passes' copies are RGBA16F (`glide::colour_format`), the last pass of `post_3d` (also without
   a G-buffer) maps the view's picture into 0..1 before the HUD; the output stays 8-bit, the
-  shown gamma as before. PlayStation Colors counts as off meanwhile (`light::ps_colors`).
+  shown gamma as before. The PlayStation look's boxes stay as set (Colors too, the user).
   Soft: unchanged up to 0.7, an exponential shoulder above (unit tested); AgX and ACES take the
   values as display values (linear by 2.2). ~39 µs a picture at 1920x1080.
 - Perspective-correct textures (`glide::perspective`; REG_DWORD `PerspectiveTextures`, default
