@@ -118,6 +118,8 @@ const LIT_SMOKE: u32 = FIRST_OURS + 23;
 const HEAT: u32 = FIRST_OURS + 24;
 const BLOOM: u32 = FIRST_OURS + 25;
 const PERSPECTIVE: u32 = FIRST_OURS + 26;
+const TONEMAP_LABEL: u32 = FIRST_OURS + 27;
+const TONEMAP: u32 = FIRST_OURS + 28;
 /// The Controller dialog's "Player1" / "Player2 " titles.
 const PLAYER_TITLES: [u32; 2] = [1025, 1154];
 
@@ -179,10 +181,13 @@ pub fn template(id: u32) -> Template {
     add(Class::Button, HEAT, "Heat Distortion", TABSTOP | 3, [7, 58, w - 14, 9]);
     add(Class::Button, BLOOM, "Bloom", TABSTOP | 3, [7, 70, w - 14, 9]);
     add(Class::Button, PERSPECTIVE, "Perspective-Correct Textures", TABSTOP | 3, [7, 82, w - 14, 9]);
+    // the tone mapping curve (`tonemap`; the list's height is part of the combo's)
+    add(Class::Static, TONEMAP_LABEL, "Tonemapping", 0, [7, 98, 60, 8]);
+    add(Class::ComboBox, TONEMAP, "", TABSTOP | 3, [70, 96, w - 77, 70]);
     // OK (1, the default) and Cancel (2), bottom right
-    add(Class::Button, 1, "OK", TABSTOP | 1, [w - 116, 102, 50, 14]);
-    add(Class::Button, 2, "Cancel", TABSTOP, [w - 57, 102, 50, 14]);
-    Template { style: 0x00c0_0000, title: "Advanced Graphics".into(), rect: [0, 0, w, 122], font: None, items }
+    add(Class::Button, 1, "OK", TABSTOP | 1, [w - 116, 116, 50, 14]);
+    add(Class::Button, 2, "Cancel", TABSTOP, [w - 57, 116, 50, 14]);
+    Template { style: 0x00c0_0000, title: "Advanced Graphics".into(), rect: [0, 0, w, 136], font: None, items }
 }
 
 fn renderer() -> String {
@@ -366,6 +371,12 @@ pub fn init(d: &mut Dialog) {
         }
         if let Some(c) = d.control(PERSPECTIVE) {
             c.check = crate::platform::glide::perspective() as u32;
+        }
+        if let Some(c) = d.control(TONEMAP) {
+            if let Kind::Combo { items, sel, .. } = &mut c.kind {
+                *items = crate::platform::tonemap::CHOICES.iter().map(|&(k, name)| (name.into(), k as u32)).collect();
+                *sel = crate::platform::tonemap::curve() as i32;
+            }
         }
     }
     if d.template == JOIN {
@@ -609,6 +620,13 @@ pub fn ok(d: &mut Dialog) {
         }
         if let Some(on) = d.control(PERSPECTIVE).map(|c| c.check != 0) {
             crate::platform::glide::set_perspective(on);
+        }
+        let curve = d.control(TONEMAP).and_then(|c| match &c.kind {
+            Kind::Combo { items, sel, .. } => items.get(*sel as usize).map(|i| i.1),
+            _ => None,
+        });
+        if let Some(v) = curve {
+            crate::platform::tonemap::set_curve(crate::platform::tonemap::Curve::from_value(v));
         }
     }
 }

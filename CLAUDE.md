@@ -361,7 +361,15 @@ derived from the EXE** (translated code, extracted data). `game_files/` is git-i
   Advanced Graphics, `FCOP_GBUFFER=bloom`). Last pass of `glide::post_3d` (HUD not bloomed): the
   view's picture copied, bright part at half resolution (soft threshold, lower where the depth
   attachment's mask G has an additive effect), a chain of 6 RGBA16F levels down (13 taps) and up
-  (tent, ONE/ONE, larger levels weighted `SPREAD` more), added to the picture at `STRENGTH`. No HDR target yet.
+  (tent, ONE/ONE, larger levels weighted `SPREAD` more), added to the picture at `STRENGTH`. With
+  tone mapping on it works on the HDR target (values above 1.0).
+- `tonemap.rs`: HDR and tone mapping (REG_DWORD `Tonemap` 0 Off (default), 1 Soft, 2 AgX, 3 ACES,
+  `FCOP_TONEMAP=0..3`, combo in Advanced Graphics). Not Off: Glide's colour target and the post
+  passes' copies are RGBA16F (`glide::colour_format`), the last pass of `post_3d` (also without
+  a G-buffer) maps the view's picture into 0..1 before the HUD; the output stays 8-bit, the
+  shown gamma as before. PlayStation Colors counts as off meanwhile (`light::ps_colors`).
+  Soft: unchanged up to 0.7, an exponential shoulder above (unit tested); AgX and ACES take the
+  values as display values (linear by 2.2). ~39 µs a picture at 1920x1080.
 - Perspective-correct textures (`glide::perspective`; REG_DWORD `PerspectiveTextures`, default
   off, `FCOP_PERSPECTIVE=0/1`, box in Advanced Graphics; PLAN.md 2a step 0): the game's are
   affine (oow = 1.0). With the depth (`ao::depths`, which returns whether every vertex is a
