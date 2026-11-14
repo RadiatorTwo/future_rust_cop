@@ -158,6 +158,8 @@ struct Glide {
     res: (u32, u32),
     /// the texture drawn into
     target: (u32, u32),
+    /// the target was made in RGBA16F (`colour_format`)
+    target_hdr: bool,
     /// the vertices' coordinate space
     space: (u32, u32),
     view: View,
@@ -754,6 +756,8 @@ impl Glide {
             Glide {
                 res: (w, h),
                 target,
+                // made in RGBA8 above: the first resize makes it anew when tone mapping is on
+                target_hdr: false,
                 space: (w, h),
                 view: View::Full,
                 fbo,
@@ -832,7 +836,7 @@ impl Glide {
     fn resize(&mut self, gl: &glow::Context, a: f32, h: u32) {
         let h = h.clamp(240, 4320);
         let w = (h as f32 * a).round() as u32;
-        if (w, h) == self.target {
+        if (w, h) == self.target && self.target_hdr == super::tonemap::hdr() {
             // the samples may have changed in Preferences, the AO in Advanced Graphics
             self.multisample(gl, false);
             self.gbuffer(gl);
@@ -840,9 +844,11 @@ impl Glide {
         }
         self.drop_gbuffer(gl);
         self.target = (w, h);
+        self.target_hdr = super::tonemap::hdr();
+        let (format, kind) = colour_format();
         unsafe {
             gl.bind_texture(glow::TEXTURE_2D, Some(self.color));
-            gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, w as i32, h as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+            gl.tex_image_2d(glow::TEXTURE_2D, 0, format as i32, w as i32, h as i32, 0, glow::RGBA, kind, glow::PixelUnpackData::Slice(None));
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
             gl.disable(glow::SCISSOR_TEST);
             gl.clear_color(0.0, 0.0, 0.0, 1.0);
@@ -872,7 +878,7 @@ impl Glide {
             }
             let rb = gl.create_renderbuffer().expect("GL renderbuffer");
             gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-            gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, samples as i32, glow::RGBA8, self.target.0 as i32, self.target.1 as i32);
+            gl.renderbuffer_storage_multisample(glow::RENDERBUFFER, samples as i32, colour_format().0, self.target.0 as i32, self.target.1 as i32);
             let fbo = gl.create_framebuffer().expect("GL framebuffer");
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
             gl.framebuffer_renderbuffer(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::RENDERBUFFER, Some(rb));
@@ -1942,6 +1948,13 @@ fn sst_screen_width(c: &mut Cpu) -> u32 {
 
 fn sst_screen_height(_: &mut Cpu) -> u32 {
     with(|g, _| g.res.1).unwrap_or(480)
+}
+
+/// The 3D picture's colour target format (internal format, texel type): RGBA16F while a tone
+/// mapping curve is chosen (`tonemap`: values above 1.0 kept), else RGBA8 as before. The post
+/// passes' copies of the picture take it too.
+pub fn colour_format() -> (u32, u32) {
+    if super::tonemap::hdr() { (glow::RGBA16F, glow::HALF_FLOAT) } else { (glow::RGBA8, glow::UNSIGNED_BYTE) }
 }
 
 /// The Glide functions we implement; anything else the game asks for gets `not_implemented`.

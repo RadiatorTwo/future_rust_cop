@@ -131,8 +131,8 @@ void main() {
 pub struct Heat {
     progs: [glow::Program; 2],
     vao: glow::VertexArray,
-    /// the copy: its size, texture, framebuffer
-    copy: Option<((u32, u32), glow::Texture, glow::Framebuffer)>,
+    /// the copy: its size and format, texture, framebuffer
+    copy: Option<(((u32, u32), u32), glow::Texture, glow::Framebuffer)>,
     start: std::time::Instant,
 }
 
@@ -163,8 +163,9 @@ impl Heat {
     }
 
     fn copy(&mut self, gl: &glow::Context, target: (u32, u32)) -> (glow::Texture, glow::Framebuffer) {
+        let (format, kind) = super::glide::colour_format();
         if let Some((size, t, f)) = self.copy {
-            if size == target {
+            if size == (target, format) {
                 return (t, f);
             }
         }
@@ -174,12 +175,12 @@ impl Heat {
             for p in [glow::TEXTURE_MIN_FILTER, glow::TEXTURE_MAG_FILTER] {
                 gl.tex_parameter_i32(glow::TEXTURE_2D, p, glow::LINEAR as i32);
             }
-            gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, target.0 as i32, target.1 as i32, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+            gl.tex_image_2d(glow::TEXTURE_2D, 0, format as i32, target.0 as i32, target.1 as i32, 0, glow::RGBA, kind, glow::PixelUnpackData::Slice(None));
             let f = gl.create_framebuffer().expect("GL framebuffer");
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(f));
             gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(t), 0);
             gl.bind_framebuffer(glow::FRAMEBUFFER, None);
-            self.copy = Some((target, t, f));
+            self.copy = Some(((target, format), t, f));
             (t, f)
         }
     }
