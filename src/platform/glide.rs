@@ -224,6 +224,7 @@ struct Glide {
     heat: Option<super::heat::Heat>,
     /// the bloom's pass (`bloom.rs`)
     bloom: Option<super::bloom::Bloom>,
+    tonemap: Option<super::tonemap::Pass>,
 }
 
 /// The depth attachment, and a framebuffer with only the colour of the one drawn into (the
@@ -802,6 +803,7 @@ impl Glide {
                 heat_sources: Vec::new(),
                 heat: None,
                 bloom: None,
+                tonemap: None,
             }
         }
     }
@@ -1576,6 +1578,9 @@ fn sst_win_close(_: &mut Cpu) -> u32 {
         if let Some(mut s) = g.bloom.take() {
             s.delete(gl);
         }
+        if let Some(mut s) = g.tonemap.take() {
+            s.delete(gl);
+        }
         gl.delete_framebuffer(g.fbo);
         gl.delete_texture(g.color);
         gl.delete_texture(g.array);
@@ -1657,7 +1662,14 @@ pub fn post_3d() {
         let _t = super::fps::timer(super::fps::Phase::Post);
         let lights = std::mem::take(&mut g.lights);
         let heat = std::mem::take(&mut g.heat_sources);
-        let Some(d) = &g.gdepth else { return };
+        let Some(d) = &g.gdepth else {
+            // no depth effect on: only the tone mapping, on the framebuffer drawn into
+            if super::tonemap::hdr() {
+                let (target, clip, out) = (g.target, g.scissor_box(g.state.clip), g.draw_fbo());
+                g.tonemap.get_or_insert_with(|| super::tonemap::Pass::new(gl)).run(gl, target, out, clip, super::tonemap::curve());
+            }
+            return;
+        };
         let (tex, ms, colour) = (d.tex, d.ms, d.colour);
         let clip = g.scissor_box(g.state.clip);
         let target = g.target;
@@ -1682,6 +1694,10 @@ pub fn post_3d() {
         }
         if super::bloom::enabled() {
             g.bloom.get_or_insert_with(|| super::bloom::Bloom::new(gl)).run(gl, tex, ms, target, colour, clip);
+        }
+        // last: the picture back into 0..1 (the HUD follows unmapped)
+        if super::tonemap::hdr() {
+            g.tonemap.get_or_insert_with(|| super::tonemap::Pass::new(gl)).run(gl, target, colour, clip, super::tonemap::curve());
         }
     });
 }
