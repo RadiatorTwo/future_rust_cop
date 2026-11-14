@@ -2,8 +2,8 @@
 //! target (values above 1.0 kept: Texture Coloring's light up to 2x, additive effects) and
 //! brought back into 0..1 by the curve before the HUD is drawn. The output stays an ordinary
 //! 8-bit picture: any monitor shows it. Off (the default) is the path before: an 8-bit target,
-//! no pass. While a curve is chosen, PlayStation Colors counts as off (the curve takes over
-//! the colours); Texture Coloring and PlayStation Shading stay as set.
+//! no pass. Texture Coloring, PlayStation Colors and PlayStation Shading stay as set (the
+//! user, 2026-11-14: PlayStation Colors with tone mapping too).
 //!
 //! REG_DWORD `Tonemap` in the game's key: 0 Off, 1 Soft (today's picture up to `KNEE`, a soft
 //! shoulder above), 2 AgX, 3 ACES; `FCOP_TONEMAP=0..3` overrides it. Chosen in Advanced Graphics.

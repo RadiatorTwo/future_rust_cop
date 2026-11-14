@@ -484,7 +484,8 @@ sort, the camera [0x511f48] (`fps.rs`, up to +0x88), the actors (0x50e428).
 - [x] Brightness first: the target in RGBA16F (HDR, Texture Coloring's up to 2x not clipped
       before the end), else bloom has nothing above white to work with. Done with tone mapping
       (2026-11-14, `tonemap.rs`): Off / Soft / AgX / ACES in Advanced Graphics, the pass before
-      the HUD ~39 µs, output 8-bit for every monitor; PlayStation Colors off meanwhile. Seen at
+      the HUD ~39 µs, output 8-bit for every monitor; PlayStation Colors works with it too
+      (first off with it; the user wanted it in, 2026-11-14). Seen at
       M2C's start: the wall lamps' pools stay orange instead of white. Open: the user's choice
       and look in motion; the dialog checked by hand.
 - [ ] Source: the bright part of the 3D picture (soft threshold) plus the glowing effects

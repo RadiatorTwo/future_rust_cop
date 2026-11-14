@@ -147,10 +147,8 @@ pub fn gamma(game: f32) -> f32 {
     if ps_shading() { (game - (GAME_GAMMA_MIN - PS_GAMMA)).max(0.1) } else { game }
 }
 
-/// PlayStation Colors, off while a tone mapping curve is chosen (it takes over the colours; the
-/// stored setting stays).
 pub fn ps_colors() -> bool {
-    PS_COLORS.get() && !super::tonemap::hdr()
+    PS_COLORS.get()
 }
 
 pub fn set_ps_colors(on: bool) {
